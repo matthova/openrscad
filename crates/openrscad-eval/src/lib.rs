@@ -1144,7 +1144,7 @@ impl Interp<'_> {
     }
 
     fn b_cylinder(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["h", "r1", "r2"], args)?;
+        let m = self.bind_named(&["h", "r1", "r2", "center"], args)?;
         let h = m.get("h").and_then(Value::as_number).unwrap_or(1.0);
 
         // r / d apply to both ends; r1/r2/d1/d2 override per end.
@@ -1280,7 +1280,20 @@ impl Interp<'_> {
     }
 
     fn b_text(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["text", "size", "font"], args)?;
+        let m = self.bind_named(
+            &[
+                "text",
+                "size",
+                "font",
+                "direction",
+                "language",
+                "script",
+                "halign",
+                "valign",
+                "spacing",
+            ],
+            args,
+        )?;
         let text = m.get("text").map(Value::to_str).unwrap_or_default();
         let size = m.get("size").and_then(Value::as_number).unwrap_or(10.0);
         // Resolve `font` against the shared font database: the bundled Liberation
@@ -1581,7 +1594,11 @@ impl Interp<'_> {
         if matches!(child, Node::Empty) {
             return Ok(Node::Empty);
         }
-        let m = matrix_from_value(&self.first_positional(args)?);
+        let args = self.bind_named(&["m"], args)?;
+        let m = args
+            .get("m")
+            .map(matrix_from_value)
+            .unwrap_or_else(|| matrix_from_value(&Value::Undef));
         Ok(Node::MultMatrix {
             m,
             child: Box::new(child),
@@ -3379,6 +3396,51 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn cylinder_binds_fourth_positional_center() {
+        // The fourth positional cylinder argument is `center`.
+        match eval("cylinder(10, 2, 3, true);").node {
+            Node::Cylinder {
+                h, r1, r2, center, ..
+            } => {
+                assert_eq!((h, r1, r2), (10.0, 2.0, 3.0));
+                assert!(center);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multmatrix_binds_named_m() {
+        // multmatrix accepts both its positional form and the documented `m=`
+        // form; both must lower to the same transform.
+        let matrix = "[[1,0,0,4],[0,1,0,5],[0,0,1,6],[0,0,0,1]]";
+        assert_eq!(
+            eval(&format!("multmatrix({matrix}) cube(1);")).node,
+            eval(&format!("multmatrix(m={matrix}) cube(1);")).node
+        );
+    }
+
+    #[test]
+    fn text_binds_full_positional_signature_and_named_forms() {
+        // Positional text arguments follow OpenSCAD's complete signature. The
+        // equivalent named call also proves that those forms remain supported.
+        let positional = concat!(
+            "text(\"AB\", 12, \"Liberation Sans\", \"rtl\", \"en\", \"latin\", ",
+            "\"center\", \"top\", 1.25);"
+        );
+        let named = concat!(
+            "text(text=\"AB\", size=12, font=\"Liberation Sans\", direction=\"rtl\", ",
+            "language=\"en\", script=\"latin\", halign=\"center\", valign=\"top\", ",
+            "spacing=1.25);"
+        );
+        let positional = eval(positional);
+        let named = eval(named);
+        assert_eq!(positional.node, named.node);
+        assert!(positional.warnings.is_empty());
+        assert!(named.warnings.is_empty());
     }
 
     fn echoes(src: &str) -> Vec<String> {
