@@ -538,6 +538,96 @@ async fn render_and_push(client: &Client, docs: &Docs, uri: Url) {
         .await;
 }
 
+/// If byte offset `byte` sits inside a double-quoted string whose value is a
+/// `font=` argument, returns the byte offset where the string's contents begin
+/// (just after the opening quote) so a completion can replace what's typed so
+/// far. A light lexer — tracks strings and `//` / `/* */` comments so quotes in
+/// comments don't fool it — rather than a full parse.
+fn font_value_span(text: &str, byte: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let byte = byte.min(bytes.len());
+
+    #[derive(PartialEq)]
+    enum S {
+        Code,
+        Str,
+        Line,
+        Block,
+    }
+    let mut state = S::Code;
+    let mut escaped = false;
+    let mut content_start = 0usize;
+    let mut i = 0usize;
+    while i < byte {
+        let b = bytes[i];
+        match state {
+            S::Code => {
+                if b == b'"' {
+                    state = S::Str;
+                    escaped = false;
+                    content_start = i + 1;
+                } else if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                    state = S::Line;
+                    i += 1;
+                } else if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    state = S::Block;
+                    i += 1;
+                }
+            }
+            S::Str => {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    state = S::Code;
+                }
+            }
+            S::Line => {
+                if b == b'\n' {
+                    state = S::Code;
+                }
+            }
+            S::Block => {
+                if b == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    state = S::Code;
+                    i += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // The cursor is inside an open string iff we ended mid-string.
+    if state != S::Str {
+        return None;
+    }
+    // content_start - 1 is the opening quote; require `font =` before it.
+    preceding_is_font_assign(bytes, content_start - 1).then_some(content_start)
+}
+
+/// True if the tokens immediately before byte `pos` (the opening quote of a
+/// string) are `<ident> =` with the identifier being `font` (case-insensitive) —
+/// i.e. the string is the value of a `font` argument.
+fn preceding_is_font_assign(bytes: &[u8], pos: usize) -> bool {
+    let skip_ws = |mut i: usize| {
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    let mut i = skip_ws(pos);
+    if i == 0 || bytes[i - 1] != b'=' {
+        return false;
+    }
+    i = skip_ws(i - 1);
+    let end = i;
+    while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+        i -= 1;
+    }
+    bytes[i..end].eq_ignore_ascii_case(b"font")
+}
+
 /// A registered live preview: a generation counter for debounce bookkeeping, and
 /// whether to re-render as the buffer changes (vs. on save only).
 struct PreviewState {
@@ -649,7 +739,9 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec!["$".into()]),
+                    // `$` for special vars; `"` so the font list pops as soon as
+                    // the user opens the `font="…"` string.
+                    trigger_characters: Some(vec!["$".into(), "\"".into()]),
                     ..Default::default()
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -747,7 +839,36 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> RpcResult<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
         let text = self.docs.lock().unwrap().get(&uri).cloned();
+
+        // Context-aware: inside a `font="…"` string, offer only the bundled
+        // fonts (see `font_value_span`), replacing whatever's typed so far.
+        if let Some(text) = &text {
+            let idx = LineIndex::new(text);
+            let byte = idx.offset(pos);
+            if let Some(content_start) = font_value_span(text, byte) {
+                let range = idx.range(content_start..byte);
+                let items = openrscad_eval::font_completions()
+                    .into_iter()
+                    .map(|f| CompletionItem {
+                        label: f.value.clone(),
+                        kind: Some(CompletionItemKind::VALUE),
+                        detail: Some(f.detail),
+                        // A family name has a space, which the client's default
+                        // word-prefix filter would choke on; drive filtering and
+                        // insertion off the full value instead.
+                        filter_text: Some(f.value.clone()),
+                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                            range,
+                            new_text: f.value,
+                        })),
+                        ..Default::default()
+                    })
+                    .collect();
+                return Ok(Some(CompletionResponse::Array(items)));
+            }
+        }
 
         let mut items: Vec<CompletionItem> = Vec::new();
 
@@ -926,6 +1047,72 @@ impl LanguageServer for Backend {
             }
         };
         Ok(Some(value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Byte offset of the cursor, marked by `|` in the fixture (which is removed).
+    fn at(fixture: &str) -> (String, usize) {
+        let byte = fixture
+            .find('|')
+            .expect("fixture needs a `|` cursor marker");
+        (fixture.replace('|', ""), byte)
+    }
+
+    #[test]
+    fn detects_font_string() {
+        for src in [
+            r#"text("hi", font="|"#,
+            r#"text("hi", font="Lib|"#,
+            r#"text("hi", font = "Lib|era"#,
+            r#"text("hi",font="|");"#,
+        ] {
+            let (text, byte) = at(src);
+            assert!(
+                font_value_span(&text, byte).is_some(),
+                "should offer fonts in {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn span_starts_after_opening_quote() {
+        let (text, byte) = at(r#"font="Lib|"#);
+        // Content starts right after the `"`, so it covers the typed `Lib`.
+        assert_eq!(font_value_span(&text, byte), Some("font=\"".len()));
+    }
+
+    #[test]
+    fn ignores_non_font_contexts() {
+        for src in [
+            r#"text("hi|", size=5)"#, // the text argument, not font
+            r#"echo("font="|"#,       // `font=` is inside another string, not a token
+            r#"size="|"#,             // different parameter
+            r#"cube(|"#,              // not in a string at all
+            r#"// font="|"#,          // inside a line comment
+            r#"font=5; x="|"#,        // font isn't the assignment for this string
+        ] {
+            let (text, byte) = at(src);
+            assert!(
+                font_value_span(&text, byte).is_none(),
+                "should NOT offer fonts in {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn completions_cover_the_bundled_families() {
+        let values: Vec<String> = openrscad_eval::font_completions()
+            .into_iter()
+            .map(|f| f.value)
+            .collect();
+        assert!(values.contains(&"Liberation Sans".to_string()));
+        assert!(values.contains(&"Liberation Serif".to_string()));
+        assert!(values.contains(&"Liberation Mono".to_string()));
+        assert!(values.contains(&"Liberation Sans:style=Bold Italic".to_string()));
     }
 }
 

@@ -77,4 +77,30 @@ describe("openscadCompletion", () => {
   it("returns null at an empty, non-explicit boundary", () => {
     expect(complete("", 0, false)).toBeNull();
   });
+
+  it("offers bundled fonts inside a `font=\"…\"` string", () => {
+    const doc = 'text("hi", font="";';
+    const r = complete(doc, doc.indexOf('"";') + 1); // cursor between the quotes
+    expect(r).not.toBeNull();
+    const l = r!.options.map((o) => o.label);
+    expect(l).toContain("Liberation Sans");
+    expect(l).toContain("Liberation Serif");
+    expect(l).toContain("Liberation Mono");
+    expect(l).toContain("Liberation Sans:style=Bold Italic");
+    // font-only context: no builtins mixed in.
+    expect(l).not.toContain("cube");
+  });
+
+  it("replaces the partially-typed family (from after the opening quote)", () => {
+    const doc = 'text(font="Lib';
+    const r = complete(doc);
+    expect(r).not.toBeNull();
+    expect(r!.from).toBe(doc.indexOf('"') + 1); // start of the typed value
+    expect(r!.options.some((o) => o.label === "Liberation Sans")).toBe(true);
+  });
+
+  it("does not offer fonts once the string is closed", () => {
+    const l = labels('text(font="Liberation Sans", size=5)');
+    expect(l).not.toContain("Liberation Serif");
+  });
 });
