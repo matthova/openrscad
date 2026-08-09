@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- [#91](https://github.com/matthova/openrscad/pull/91) [`b434016`](https://github.com/matthova/openrscad/commit/b434016a06a33db75c68af444c32506a2f50ac34) Thanks [@matthova](https://github.com/matthova)! - editor: autocomplete available fonts inside `text(font="…")` — the playground and the LSP now suggest the bundled Liberation families (and their bold/italic styles) as you type a `font=` value
+
+- [#90](https://github.com/matthova/openrscad/pull/90) [`3673055`](https://github.com/matthova/openrscad/commit/3673055a1869a4c37150ca5f7a2366d429849ef2) Thanks [@matthova](https://github.com/matthova)! - import binary STL and 3MF meshes in the browser — drop or open one and reference it with `import("file.stl")` (previously only text/ASCII formats loaded outside the desktop app)
+
+- [#92](https://github.com/matthova/openrscad/pull/92) [`fb5f5b3`](https://github.com/matthova/openrscad/commit/fb5f5b35ff965d24444c9c898f870bc0c40b0fc4) Thanks [@matthova](https://github.com/matthova)! - fonts: `text(font="…")` can now use your system fonts, not just the bundled Liberation family. Native (CLI, desktop, and the LSP) reads installed fonts automatically. Both apps add a "System fonts" toggle (Display ▾): the desktop app lists your installed fonts in autocomplete (on by default — no permission needed); the web playground (Chromium browsers) grants access to your local fonts via the Local Font Access API. The `font=` autocomplete lists every available font accordingly (bundled-only where system fonts aren't enabled), and now previews the highlighted font — a pangram sample rendered in that actual typeface — as you scroll the list.
+
+### Patch Changes
+
+- [#88](https://github.com/matthova/openrscad/pull/88) [`61ae97a`](https://github.com/matthova/openrscad/commit/61ae97adf6e387cf3d088b86623ca8b267ea0795) Thanks [@matthova](https://github.com/matthova)! - web: on phones/tablets, hide the hero "Download OpenRSCAD" button instead of turning it into a second "Open the playground" CTA
+
 ## 0.9.2
 
 ### Patch Changes
