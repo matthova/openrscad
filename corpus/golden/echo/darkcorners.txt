@@ -10,3 +10,8 @@ ECHO: 1e+21, 1e-10, 99999, 999999, 1e+7
 ECHO: [1, 2, 3]
 ECHO: [1, [2, 3], 4]
 ECHO: undef, 1
+ECHO: "nan-true"
+ECHO: undef
+ECHO: undef, undef, undef
+ECHO: "ABC"
+ECHO: 10203, 2.02412e+7

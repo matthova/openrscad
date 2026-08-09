@@ -2491,6 +2491,8 @@ fn surface_polyhedron(rows: &[Vec<f64>], center: bool, png: bool) -> Node {
 
 fn index_value(base: &Value, index: &Value) -> Value {
     match (base, index) {
+        // Rust casts NaN to zero; OpenSCAD instead rejects it as an index.
+        (_, Value::Number(n)) if n.is_nan() => Value::Undef,
         (Value::Vector(v), Value::Number(n)) => {
             let i = *n as isize;
             if i >= 0 && (i as usize) < v.len() {
@@ -2532,35 +2534,41 @@ fn chr(args: &[Value]) -> Value {
             .map(|c| c.to_string())
             .unwrap_or_default()
     }
-    match args.first() {
-        Some(Value::Number(n)) => Value::Str(one(*n)),
-        Some(Value::Vector(v)) => {
-            let mut s = String::new();
-            for e in v.iter() {
-                if let Some(n) = e.as_number() {
-                    s.push_str(&one(n));
-                }
-            }
-            Value::Str(s)
-        }
-        Some(r @ Value::Range { .. }) => {
-            let mut s = String::new();
-            if let Ok(vals) = iter_values(r) {
-                for e in vals {
+    fn append(value: &Value, s: &mut String) {
+        match value {
+            Value::Number(n) => s.push_str(&one(*n)),
+            Value::Vector(v) => {
+                for e in v.iter() {
                     if let Some(n) = e.as_number() {
                         s.push_str(&one(n));
                     }
                 }
             }
-            Value::Str(s)
+            r @ Value::Range { .. } => {
+                if let Ok(vals) = iter_values(r) {
+                    for e in vals {
+                        if let Some(n) = e.as_number() {
+                            s.push_str(&one(n));
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => Value::Str(String::new()),
     }
+
+    let mut s = String::new();
+    for arg in args {
+        append(arg, &mut s);
+    }
+    Value::Str(s)
 }
 
 /// Expand a value into the sequence a `for`/comprehension iterates over.
 fn iter_values(v: &Value) -> EResult<Vec<Value>> {
     match v {
+        // An undefined iterable contributes no loop/comprehension iterations.
+        Value::Undef => Ok(Vec::new()),
         Value::Vector(xs) => Ok(xs.to_vec()),
         // Iterating a string yields its characters (OpenSCAD semantics).
         Value::Str(s) => Ok(s.chars().map(|c| Value::Str(c.to_string())).collect()),
@@ -2645,8 +2653,10 @@ fn builtin_fn(name: &str, args: &[Value], warnings: &mut Vec<String>) -> Value {
         },
         "norm" => match args.first() {
             Some(Value::Vector(v)) => {
-                let sum: f64 = v.iter().filter_map(Value::as_number).map(|x| x * x).sum();
-                Value::Number(sum.sqrt())
+                let Some(nums): Option<Vec<f64>> = v.iter().map(Value::as_number).collect() else {
+                    return Value::Undef;
+                };
+                Value::Number(nums.iter().map(|x| x * x).sum::<f64>().sqrt())
             }
             _ => Value::Undef,
         },
@@ -2676,7 +2686,28 @@ fn builtin_fn(name: &str, args: &[Value], warnings: &mut Vec<String>) -> Value {
             Value::Number(1.0),
             Value::Number(0.0),
         ]),
-        "version_num" => Value::Number(20210100.0),
+        "version_num" => match args.first() {
+            None => Value::Number(20210100.0),
+            Some(Value::Vector(v)) if v.len() == 2 || v.len() == 3 => {
+                let Some(year) = v.first().and_then(Value::as_number) else {
+                    return Value::Undef;
+                };
+                let Some(month) = v.get(1).and_then(Value::as_number) else {
+                    return Value::Undef;
+                };
+                let day = match v.get(2) {
+                    Some(v) => {
+                        let Some(day) = v.as_number() else {
+                            return Value::Undef;
+                        };
+                        day
+                    }
+                    None => 0.0,
+                };
+                Value::Number(year * 10_000.0 + month * 100.0 + day)
+            }
+            _ => Value::Undef,
+        },
         "lookup" => lookup(args),
         "search" => search(args),
         "str" => {
@@ -2784,10 +2815,13 @@ fn tan_deg(x: f64) -> f64 {
 
 fn reduce_num(args: &[Value], f: fn(f64, f64) -> f64) -> Value {
     // max(v) over a single vector, or max(a,b,c,...) over scalars.
-    let nums: Vec<f64> = if let [Value::Vector(v)] = args {
-        v.iter().filter_map(Value::as_number).collect()
+    let nums: Option<Vec<f64>> = if let [Value::Vector(v)] = args {
+        v.iter().map(Value::as_number).collect()
     } else {
-        args.iter().filter_map(Value::as_number).collect()
+        args.iter().map(Value::as_number).collect()
+    };
+    let Some(nums) = nums else {
+        return Value::Undef;
     };
     match nums.split_first() {
         Some((first, rest)) => Value::Number(rest.iter().fold(*first, |a, b| f(a, *b))),
@@ -3395,6 +3429,20 @@ mod tests {
     }
 
     #[test]
+    fn nan_truthiness_and_indexing_match_openscad() {
+        // Although is_num(nan) is false, OpenSCAD's boolean conversion treats
+        // NaN as true. It is not, however, a valid list/string/range index.
+        assert_eq!(
+            echoes("echo(!(0/0), (0/0) ? 1 : 2, (0/0) && true, (0/0) || false);"),
+            vec!["ECHO: false, 1, true, true"]
+        );
+        assert_eq!(
+            echoes("echo([10,20][0/0], \"ab\"[0/0], [1:2:5][0/0]);"),
+            vec!["ECHO: undef, undef, undef"]
+        );
+    }
+
+    #[test]
     fn tan_is_exact_at_45_degree_multiples() {
         // OpenSCAD returns exact ±1 / ±inf at these angles (BOSL2 compares with
         // exact `!=`), where a naive radian `tan` leaves a ~1e-16 error.
@@ -3808,6 +3856,14 @@ mod tests {
     }
 
     #[test]
+    fn undef_iterable_has_no_iterations() {
+        assert_eq!(
+            echoes("echo([for (i=undef) i]); for (i=undef) echo(i);"),
+            vec!["ECHO: []"]
+        );
+    }
+
+    #[test]
     fn matrix_multiplication() {
         // OpenSCAD linear-algebra `*`: dot, matrix·vector, vector·matrix, matrix·matrix.
         assert_eq!(echoes("echo([1,2,3]*[4,5,6]);"), vec!["ECHO: 32"]);
@@ -3857,6 +3913,32 @@ mod tests {
             vec!["ECHO: [\"a\", \"b\"]"]
         );
         assert_eq!(echoes("s=\"abc\"; echo(s[1]);"), vec!["ECHO: \"b\""]);
+    }
+
+    #[test]
+    fn strict_numeric_reducers_and_extended_builtins() {
+        // OpenSCAD rejects the whole min/max/norm input when any element cannot
+        // be converted to a number; it does not silently skip bad elements.
+        assert_eq!(
+            echoes(concat!(
+                "echo(max([1,\"x\",3]), min([1,undef,3]), max(1,\"x\",3));",
+                "echo(norm([3,\"x\",4]), norm([3,undef,4]), norm([]));",
+            )),
+            vec!["ECHO: undef, undef, undef", "ECHO: undef, undef, 0"]
+        );
+
+        // chr() concatenates every scalar/vector/range argument. version_num()
+        // accepts a two- or three-component version vector.
+        assert_eq!(
+            echoes(concat!(
+                "echo(chr(65,66), chr([65,\"x\",66],67), chr([65:67],68));",
+                "echo(version_num([1,2]), version_num([1,2,3]), version_num([1]));",
+            )),
+            vec![
+                "ECHO: \"AB\", \"ABC\", \"ABCD\"",
+                "ECHO: 10200, 10203, undef"
+            ]
+        );
     }
 
     #[test]
