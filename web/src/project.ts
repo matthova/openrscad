@@ -6,6 +6,12 @@ import type { ParamValue } from "./customizer";
 export interface File {
   name: string;
   content: string;
+  /** Base64-encoded bytes for a binary asset (an imported binary STL or 3MF).
+   *  When set, this file is a binary import: `content` holds only a
+   *  human-readable placeholder shown in the editor, and these bytes — not the
+   *  placeholder — are what `import()` receives. Kept in localStorage so the
+   *  asset survives a reload, but never put in share links (they'd balloon). */
+  bytes?: string;
   /** Absolute disk path (desktop only); set once a file is opened or saved to
    *  disk. Browser files never have one, so it never enters share links. */
   path?: string;

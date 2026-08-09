@@ -10,6 +10,10 @@ export interface Export2DRequest {
   values: string[];
   fileNames: string[];
   fileContents: string[];
+  /** Binary asset names (imported STL/3MF), parallel to `binData`. */
+  binNames: string[];
+  /** Binary asset bytes as base64, parallel to `binNames`. */
+  binData: string[];
   format: "dxf" | "svg";
 }
 
@@ -21,12 +25,30 @@ export interface Export2DResponse {
 const ready = init();
 
 self.onmessage = async (e: MessageEvent<Export2DRequest>) => {
-  const { source, names, values, fileNames, fileContents, format } = e.data;
+  const {
+    source,
+    names,
+    values,
+    fileNames,
+    fileContents,
+    binNames,
+    binData,
+    format,
+  } = e.data;
   await ready;
   let data = "";
   let error = "";
   try {
-    data = export_2d(source, names, values, fileNames, fileContents, format);
+    data = export_2d(
+      source,
+      names,
+      values,
+      fileNames,
+      fileContents,
+      binNames,
+      binData,
+      format,
+    );
     if (!data) error = "export produced no geometry (is the model 2D?)";
   } catch (err) {
     error = String(err);

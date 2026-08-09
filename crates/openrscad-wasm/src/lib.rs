@@ -230,12 +230,15 @@ impl RenderResult {
 /// string if the model isn't 2D or fails to evaluate (the caller checks
 /// `RenderResult.is_2d` first). `format` is "dxf" or "svg".
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn export_2d(
     source: &str,
     names: Vec<String>,
     values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
     format: &str,
 ) -> String {
     let Ok(program) = openrscad_syntax::parse(source) else {
@@ -249,6 +252,7 @@ pub fn export_2d(
     }
     let resolver = MapResolver {
         files: file_names.into_iter().zip(file_contents).collect(),
+        bins: bins_from_b64(bin_names, bin_data),
     };
     let Ok(eval) = openrscad_eval::eval_program_with_params(&program, &resolver, ".", &overrides)
     else {
@@ -279,20 +283,34 @@ pub fn render(source: &str) -> RenderResult {
 /// literal string (`"30"`, `"true"`, `"\"hi\""`, `"[1,2,3]"`).
 #[wasm_bindgen]
 pub fn render_with_params(source: &str, names: Vec<String>, values: Vec<String>) -> RenderResult {
-    render_with_files(source, names, values, Vec::new(), Vec::new())
+    render_with_files(
+        source,
+        names,
+        values,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
-/// A `FileResolver` over an in-memory map of `path -> source`, for resolving
-/// `include`/`use` in the browser (extra playground files or a bundled library).
+/// A `FileResolver` over in-memory maps for the browser: `path -> source` for
+/// `include`/`use` (and text `import()` of DXF/SVG), plus `path -> bytes` for
+/// `import()` of binary assets (binary STL, 3MF) dropped into the playground.
 struct MapResolver {
     files: std::collections::HashMap<String, String>,
+    bins: std::collections::HashMap<String, Vec<u8>>,
 }
 
 impl MapResolver {
-    /// Resolve a path to a stored key: as written, then normalized against the
-    /// including dir.
-    fn resolve_key(&self, path: &str, from_dir: &str) -> Option<String> {
-        if self.files.contains_key(path) {
+    /// Resolve a path against a map's keys: as written, then normalized against
+    /// the including dir. Shared by the source and binary maps.
+    fn resolve_in<T>(
+        map: &std::collections::HashMap<String, T>,
+        path: &str,
+        from_dir: &str,
+    ) -> Option<String> {
+        if map.contains_key(path) {
             return Some(path.to_string());
         }
         let joined = if from_dir.is_empty() || from_dir == "." {
@@ -300,13 +318,13 @@ impl MapResolver {
         } else {
             format!("{from_dir}/{path}")
         };
-        self.files.contains_key(&joined).then_some(joined)
+        map.contains_key(&joined).then_some(joined)
     }
 }
 
 impl openrscad_eval::FileResolver for MapResolver {
     fn load(&self, path: &str, from_dir: &str) -> Option<openrscad_eval::LoadedFile> {
-        let key = self.resolve_key(path, from_dir)?;
+        let key = Self::resolve_in(&self.files, path, from_dir)?;
         let source = self.files.get(&key)?.clone();
         let dir = key
             .rsplit_once('/')
@@ -319,12 +337,85 @@ impl openrscad_eval::FileResolver for MapResolver {
         })
     }
 
-    /// Bytes for `import()` of a text-based profile (DXF/SVG) held in a tab.
-    /// Binary meshes can't be carried as text tabs, so only text files resolve.
+    /// Bytes for `import()`. Binary assets (STL/3MF) carried in the `bins` map
+    /// win; otherwise fall back to a text tab's bytes (a DXF/SVG profile).
     fn load_bytes(&self, path: &str, from_dir: &str) -> Option<Vec<u8>> {
-        let key = self.resolve_key(path, from_dir)?;
+        if let Some(key) = Self::resolve_in(&self.bins, path, from_dir) {
+            return self.bins.get(&key).cloned();
+        }
+        let key = Self::resolve_in(&self.files, path, from_dir)?;
         self.files.get(&key).map(|s| s.clone().into_bytes())
     }
+}
+
+/// Build the binary-asset map from parallel arrays of names and base64-encoded
+/// bytes. Binary files can't survive the JS→wasm string boundary as raw bytes,
+/// so the browser base64-encodes them; entries that fail to decode are dropped
+/// (the engine then warns "can't open" for that import).
+fn bins_from_b64(
+    names: Vec<String>,
+    b64: Vec<String>,
+) -> std::collections::HashMap<String, Vec<u8>> {
+    names
+        .into_iter()
+        .zip(b64)
+        .filter_map(|(name, data)| base64_decode(&data).map(|bytes| (name, bytes)))
+        .collect()
+}
+
+/// Decode standard base64 (RFC 4648, with `=` padding), ignoring ASCII
+/// whitespace. Returns `None` on any invalid character or malformed length.
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut quad = [0u8; 4];
+    let mut n = 0;
+    let mut pad = 0;
+    for &c in s.as_bytes() {
+        if c.is_ascii_whitespace() {
+            continue;
+        }
+        if c == b'=' {
+            quad[n] = 0;
+            pad += 1;
+            n += 1;
+        } else {
+            if pad > 0 {
+                return None; // data after padding
+            }
+            quad[n] = val(c)?;
+            n += 1;
+        }
+        if n == 4 {
+            if pad > 2 {
+                return None; // a group is at most 2 padding chars
+            }
+            out.push((quad[0] << 2) | (quad[1] >> 4));
+            if pad < 2 {
+                out.push((quad[1] << 4) | (quad[2] >> 2));
+            }
+            if pad < 1 {
+                out.push((quad[2] << 6) | quad[3]);
+            }
+            n = 0;
+            if pad > 0 {
+                break;
+            }
+        }
+    }
+    if n != 0 {
+        return None; // truncated group
+    }
+    Some(out)
 }
 
 /// Like [`render_with_params`], but `include`/`use` resolve against an in-memory
@@ -337,8 +428,19 @@ pub fn render_with_files(
     values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
 ) -> RenderResult {
-    render_impl(source, names, values, file_names, file_contents, false)
+    render_impl(
+        source,
+        names,
+        values,
+        file_names,
+        file_contents,
+        bin_names,
+        bin_data,
+        false,
+    )
 }
 
 /// Like [`render_with_files`], but renders the fast, **non-watertight** preview
@@ -353,16 +455,30 @@ pub fn render_preview_with_files(
     values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
 ) -> RenderResult {
-    render_impl(source, names, values, file_names, file_contents, true)
+    render_impl(
+        source,
+        names,
+        values,
+        file_names,
+        file_contents,
+        bin_names,
+        bin_data,
+        true,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_impl(
     source: &str,
     names: Vec<String>,
     values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
     preview: bool,
 ) -> RenderResult {
     // Parse.
@@ -391,6 +507,7 @@ fn render_impl(
     // Build the in-memory file resolver from the parallel arrays.
     let resolver = MapResolver {
         files: file_names.into_iter().zip(file_contents).collect(),
+        bins: bins_from_b64(bin_names, bin_data),
     };
 
     // Evaluate.
@@ -539,7 +656,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn color_populates_preview_channel() {
         // A plain model: no preview channel (viewer uses `positions`).
-        let plain = render_with_files("cube(2);", vec![], vec![], vec![], vec![]);
+        let plain = render_with_files("cube(2);", vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(plain.ok());
         assert_eq!(plain.groups(), "");
         assert!(plain.preview_positions().is_empty());
@@ -547,6 +664,8 @@ mod tests {
         // A colored model: preview soup + groups JSON populated.
         let colored = render_with_files(
             "color(\"red\") cube(2); color([0,0,1]) translate([5,0,0]) sphere(2);",
+            vec![],
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -565,8 +684,9 @@ mod tests {
         // Two overlapping cubes. The exact render unions them (re-meshing the
         // seam); the preview render concatenates (12 + 12 triangles, no boolean).
         let src = "cube(2); translate([1,0,0]) cube(2);";
-        let exact = render_with_files(src, vec![], vec![], vec![], vec![]);
-        let preview = render_preview_with_files(src, vec![], vec![], vec![], vec![]);
+        let exact = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
+        let preview =
+            render_preview_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(exact.ok() && preview.ok());
         assert_eq!(
             preview.triangle_count(),
@@ -590,6 +710,8 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
+            vec![],
         );
         assert!(r.ok());
         assert!(!r.provenance_positions().is_empty());
@@ -602,7 +724,7 @@ mod tests {
     fn provenance_channel_populated_for_2d() {
         // A 2D model is pickable/highlightable just like 3D: the flat mesh gets a
         // provenance channel with per-statement spans.
-        let r = render_with_files("square(4);", vec![], vec![], vec![], vec![]);
+        let r = render_with_files("square(4);", vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(r.ok());
         assert!(r.is_2d());
         assert!(!r.provenance_positions().is_empty());
@@ -618,7 +740,7 @@ mod tests {
         // still returned and the failure is reported on the geom_errors channel.
         let src = "union() { cube(10); \
                    polyhedron(points=[[0,0,0],[1,0,0],[0,1,0]], faces=[[0,1,2]]); }";
-        let r = render_with_files(src, vec![], vec![], vec![], vec![]);
+        let r = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(
             r.ok(),
             "degraded render should still succeed: {}",
@@ -636,7 +758,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn diagnostics_surface_parse_eval_and_warnings() {
         // Parse error → an error diagnostic with a byte span.
-        let r = render_with_files("cube(", vec![], vec![], vec![], vec![]);
+        let r = render_with_files("cube(", vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(!r.ok());
         assert!(
             r.diagnostics().contains("\"severity\":\"error\""),
@@ -645,7 +767,15 @@ mod tests {
         );
 
         // Eval error (assert) → an error diagnostic.
-        let r = render_with_files("assert(false);", vec![], vec![], vec![], vec![]);
+        let r = render_with_files(
+            "assert(false);",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(!r.ok());
         assert!(
             r.diagnostics().contains("\"severity\":\"error\""),
@@ -654,7 +784,7 @@ mod tests {
         );
 
         // Unknown module → a warning diagnostic; the render still succeeds.
-        let r = render_with_files("nope();", vec![], vec![], vec![], vec![]);
+        let r = render_with_files("nope();", vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(r.ok());
         let d = r.diagnostics();
         assert!(d.contains("\"severity\":\"warning\""), "{d}");
@@ -722,6 +852,8 @@ v = [1, 2, 3];
             vec![],
             vec!["lib.scad".to_string()],
             vec![lib.to_string()],
+            vec![],
+            vec![],
         );
         assert!(r.ok(), "err: {}", r.error());
         assert!((r.volume() - 27.0).abs() < 1e-6, "vol {}", r.volume());
@@ -739,6 +871,8 @@ v = [1, 2, 3];
             vec![],
             vec!["p.dxf".to_string()],
             vec![dxf],
+            vec![],
+            vec![],
         );
         assert!(r.ok(), "err: {}", r.error());
         assert!((r.volume() - 600.0).abs() < 1e-3, "vol {}", r.volume()); // 10*20*3
@@ -748,11 +882,119 @@ v = [1, 2, 3];
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn export_2d_produces_dxf_and_svg() {
         let src = "square([10, 20]);";
-        let dxf = export_2d(src, vec![], vec![], vec![], vec![], "dxf");
+        let dxf = export_2d(src, vec![], vec![], vec![], vec![], vec![], vec![], "dxf");
         assert!(dxf.contains("LWPOLYLINE"), "dxf: {dxf}");
-        let svg = export_2d(src, vec![], vec![], vec![], vec![], "svg");
+        let svg = export_2d(src, vec![], vec![], vec![], vec![], vec![], vec![], "svg");
         assert!(svg.contains("<svg") && svg.contains("<path"), "svg: {svg}");
         // A 3D model yields no 2D export.
-        assert!(export_2d("cube(1);", vec![], vec![], vec![], vec![], "dxf").is_empty());
+        assert!(export_2d(
+            "cube(1);",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "dxf"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn base64_decode_round_trips_rfc_vectors() {
+        // RFC 4648 §10 test vectors, exercising 0/1/2 padding bytes.
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
+        assert_eq!(base64_decode("Zm9vYmE=").unwrap(), b"fooba");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+        // Interspersed newlines (as the browser's chunked encoder may emit) are ignored.
+        assert_eq!(base64_decode("Zm9v\nYmFy").unwrap(), b"foobar");
+        // Full byte range survives.
+        let all: Vec<u8> = (0u8..=255).collect();
+        assert_eq!(base64_decode(&b64_encode(&all)).unwrap(), all);
+        // Malformed inputs are rejected, not silently truncated.
+        assert!(base64_decode("Zg=").is_none()); // truncated group
+        assert!(base64_decode("Zm9v====").is_none()); // over-padded
+        assert!(base64_decode("Zm.9").is_none()); // invalid char
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn imports_binary_stl_from_base64_bin_channel() {
+        // A 2×2×2 cube exported as *binary* STL, carried through the base64 binary
+        // channel and resolved by `import()` — the browser path binary meshes take.
+        let stl = unit_cube_mesh(2.0).to_binary_stl();
+        let r = render_with_files(
+            "import(\"cube.stl\");",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec!["cube.stl".to_string()],
+            vec![b64_encode(&stl)],
+        );
+        assert!(r.ok(), "err: {}", r.error());
+        assert!(r.triangle_count() >= 12, "tris {}", r.triangle_count());
+        assert!((r.volume() - 8.0).abs() < 1e-6, "vol {}", r.volume());
+    }
+
+    /// Standard base64 encoder for tests (mirrors the browser's `btoa` output).
+    fn b64_encode(data: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in data.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            out.push(T[(n >> 18 & 63) as usize] as char);
+            out.push(T[(n >> 12 & 63) as usize] as char);
+            out.push(if chunk.len() > 1 {
+                T[(n >> 6 & 63) as usize] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                T[(n & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+        out
+    }
+
+    /// An axis-aligned cube of side `s` at the origin, as a closed triangle mesh.
+    fn unit_cube_mesh(s: f64) -> openrscad_geom::Mesh {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [s, 0.0, 0.0],
+            [s, s, 0.0],
+            [0.0, s, 0.0],
+            [0.0, 0.0, s],
+            [s, 0.0, s],
+            [s, s, s],
+            [0.0, s, s],
+        ];
+        // Outward-facing winding for each of the 6 faces.
+        let tris = vec![
+            [0, 3, 2],
+            [0, 2, 1], // bottom (z=0)
+            [4, 5, 6],
+            [4, 6, 7], // top (z=s)
+            [0, 1, 5],
+            [0, 5, 4], // y=0
+            [2, 3, 7],
+            [2, 7, 6], // y=s
+            [1, 2, 6],
+            [1, 6, 5], // x=s
+            [0, 4, 7],
+            [0, 7, 3], // x=0
+        ];
+        openrscad_geom::Mesh { verts, tris }
     }
 }

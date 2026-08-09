@@ -168,6 +168,29 @@ surface("wave.dat", center = true);
     ],
   },
   {
+    label: "Import STL",
+    files: [
+      {
+        name: "main.scad",
+        content: `// import() reads a mesh from a file — here tetra.stl (see the tab), a minimal
+// binary STL of a single tetrahedron bundled with this project.
+// Imported meshes are ordinary geometry: transform, color, or CSG them freely.
+color("#f5c518") import("tetra.stl");
+`,
+      },
+      {
+        name: "tetra.stl",
+        content: `// tetra.stl
+// Binary STL asset (0.3 KB) — imported for import("tetra.stl").
+// Its bytes are stored separately; this text is only a placeholder.
+`,
+        // A 4-triangle binary STL (tetrahedron with 10-unit legs, volume 1000/6).
+        bytes:
+          "T3BlblJTQ0FEIG1pbmltYWwgdGV0cmFoZWRyb24AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAOs0TPzrNEz86zRM/AAAgQQAAAAAAAAAAAAAAAAAAIEEAAAAAAAAAAAAAAAAAACBBAAAAAIC/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIEEAAAAAAAAgQQAAAAAAAAAAAAAAAIC/AAAAAAAAAAAAAAAAAAAAAAAAIEEAAAAAAAAAAAAAAAAAAAAAAAAgQQAAAAAAAAAAAAAAAIC/AAAAAAAAAAAAAAAAAAAAAAAAIEEAAAAAAAAgQQAAAAAAAAAAAAA=",
+      },
+    ],
+  },
+  {
     label: "Multi-color rocket (3MF)",
     files: [
       {

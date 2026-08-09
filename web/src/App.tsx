@@ -92,6 +92,7 @@ import { buildObjectRows, type ObjectRow } from "./objectTree";
 import { EXAMPLES } from "./examples";
 import { decodeSharedProject, shareUrl } from "./share";
 import { resolveClosure } from "./library";
+import { bytesToBase64 } from "./bytes";
 import {
   isTauri,
   openExternal,
@@ -127,6 +128,12 @@ const ABOUT_URL = ".";
 
 // Base URL for bundled libraries (public/lib/…), resolved against the page.
 const LIB_BASE = new URL("lib/", document.baseURI).href;
+
+/** Editor extensions gating editability — read-only for binary-asset tabs, whose
+ *  editor shows only a placeholder (the real bytes live in `File.bytes`). */
+function roExts(readOnly: boolean) {
+  return [EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)];
+}
 
 /** The current OS appearance from `prefers-color-scheme`. */
 function currentMode(): ThemeMode {
@@ -291,6 +298,9 @@ export function App() {
   // Editor theme lives in a Compartment so it can be reconfigured live when the
   // OS appearance flips, without recreating the editor.
   const themeComp = useRef(new Compartment());
+  // Editability lives in a Compartment too, so a binary-asset tab (imported STL/
+  // 3MF, whose editor shows only a placeholder) can be made read-only on switch.
+  const editableComp = useRef(new Compartment());
   // Provenance groups from the last render, for editor↔preview linking (the
   // viewer owns the pick geometry; this resolves the cursor → span, code→model).
   const provenanceRef = useRef<ProvenanceGroup[]>([]);
@@ -702,27 +712,34 @@ export function App() {
         );
       }
       const libs = fs.slice(1);
+      // Binary assets (imported STL/3MF) ride a separate base64 byte channel;
+      // text libs (.scad/.dxf/…) go through the source channel as before.
+      const textLibs = libs.filter((f) => f.bytes == null);
+      const binLibs = libs.filter((f) => f.bytes != null);
+      const binNames = binLibs.map((f) => f.name);
+      const binData = binLibs.map((f) => f.bytes as string);
       // Snapshot the source this render will reflect (for renderedSource).
       renderedSourceRef.current = fs[0].content;
       if (engineRef.current instanceof DesktopEngine) {
-        // Native engine resolves include/use from disk (OPENSCADPATH) + the
-        // in-memory tabs; no CDN fetch needed. Only the native engine can read
-        // disk — the OpenSCAD wasm engine (even on desktop) takes the closure path.
+        // Native engine resolves include/use (and binary imports) from disk
+        // (OPENSCADPATH) + the in-memory text tabs; no CDN fetch needed. Only the
+        // native engine can read disk — the OpenSCAD wasm engine (even on
+        // desktop) takes the closure path below.
         engineRef.current.render(
           fs[0].content,
           names,
           values,
-          libs.map((f) => f.name),
-          libs.map((f) => f.content),
+          textLibs.map((f) => f.name),
+          textLibs.map((f) => f.content),
           fastPreviewRef.current,
         );
       } else {
         // Wasm engine (OpenRSCAD or OpenSCAD, in browser or desktop): resolve the
         // include/use closure (fetching libraries), then render with the full
-        // file set. Read `engineRef.current` (not a captured local) so a live
-        // engine swap takes effect on the next render.
+        // file set plus the binary byte channel. Read `engineRef.current` (not a
+        // captured local) so a live engine swap takes effect on the next render.
         const { names: fileNames, contents: fileContents } =
-          await resolveClosure(fs[0].content, libs, LIB_BASE);
+          await resolveClosure(fs[0].content, textLibs, LIB_BASE);
         engineRef.current?.render(
           fs[0].content,
           names,
@@ -730,6 +747,8 @@ export function App() {
           fileNames,
           fileContents,
           fastPreviewRef.current,
+          binNames,
+          binData,
         );
       }
     };
@@ -800,8 +819,15 @@ export function App() {
           // After basicSetup so our HighlightStyle beats the fallback default.
           // Reconfigured live by the [mode] effect below.
           themeComp.current.of(themeExts(initialMode())),
+          editableComp.current.of(
+            roExts(filesRef.current[activeRef.current]?.bytes != null),
+          ),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged && !suppressRef.current) {
+            if (
+              u.docChanged &&
+              !suppressRef.current &&
+              filesRef.current[activeRef.current]?.bytes == null
+            ) {
               const idx = activeRef.current;
               const next = filesRef.current.slice();
               next[idx] = { ...next[idx], content: u.state.doc.toString() };
@@ -1342,6 +1368,9 @@ export function App() {
         to: view.state.doc.length,
         insert: filesRef.current[idx].content,
       },
+      effects: editableComp.current.reconfigure(
+        roExts(filesRef.current[idx].bytes != null),
+      ),
     });
     suppressRef.current = false;
     applyDiagnostics();
@@ -1452,12 +1481,14 @@ export function App() {
     persist();
   }
 
-  // Text extensions we can load in the browser (binary STL/3MF/PNG need a
-  // Vec<u8> channel through the engine — not wired yet). `.stl` is sniffed
-  // below: ASCII STL is text, binary STL joins BINARY_IMPORT.
+  // Text formats loaded as source tabs. `.stl` is sniffed below: ASCII STL is
+  // text, binary STL rides the byte channel (BIN_IMPORT).
   const TEXT_IMPORT = /\.(scad|txt|dat|csv|json|off|obj|amf|dxf|svg)$/i;
   const STL_IMPORT = /\.stl$/i;
-  const BINARY_IMPORT = /\.(3mf|png|jpg|jpeg)$/i;
+  // Binary mesh assets carried through the engine's base64 byte channel.
+  const BIN_IMPORT = /\.3mf$/i;
+  // Formats the engine can't import at all — refused with a message.
+  const UNSUPPORTED_IMPORT = /\.(png|jpe?g)$/i;
 
   /** True if a `.stl` File is binary (80-byte header + uint32 count + 50
    *  bytes/triangle). Binary STLs UTF-8-decode to U+FFFD-mangled garbage that a
@@ -1473,31 +1504,65 @@ export function App() {
     return !head.trimStart().toLowerCase().startsWith("solid");
   }
 
+  /** Human-readable placeholder shown in the editor for an imported binary
+   *  asset — its real bytes live in `File.bytes`, kept out of the text buffer. */
+  function binaryPlaceholder(name: string, size: number): string {
+    const kb =
+      size < 10240 ? (size / 1024).toFixed(1) : Math.round(size / 1024);
+    const ext = (name.split(".").pop() ?? "binary").toUpperCase();
+    return (
+      `// ${name}\n` +
+      `// Binary ${ext} asset (${kb} KB) — imported for import("${name}").\n` +
+      `// Its bytes are stored separately; this text is only a placeholder.\n`
+    );
+  }
+
   /** Import dropped/opened local files (browser). A .scad replaces the pristine
    *  default main so it renders immediately; everything else is added as a tab.
-   *  Binary formats surface a message instead of failing silently. */
+   *  Binary meshes (binary STL, 3MF) are stored as base64 byte assets; formats
+   *  the engine can't read surface a message instead of failing silently. */
   async function importFiles(fileList: FileList | globalThis.File[]) {
     const arr = Array.from(fileList);
-    const binary = arr.filter((f) => BINARY_IMPORT.test(f.name));
+    const unsupported = arr.filter((f) => UNSUPPORTED_IMPORT.test(f.name));
     const text = arr.filter((f) => TEXT_IMPORT.test(f.name));
-    // Sniff each .stl: ASCII is safe to read as text, binary is refused.
+    const bin = arr.filter((f) => BIN_IMPORT.test(f.name));
+    // Sniff each .stl: ASCII is read as source, binary joins the byte channel.
     for (const f of arr.filter((f) => STL_IMPORT.test(f.name))) {
-      if (await stlIsBinary(f)) binary.push(f);
+      if (await stlIsBinary(f)) bin.push(f);
       else text.push(f);
     }
-    if (binary.length) {
-      setImportMsg(
-        `Can't import ${binary
-          .map((f) => f.name)
-          .join(
-            ", ",
-          )} in the browser yet — binary STL/3MF/PNG need the desktop app.`,
+    const msgs: string[] = [];
+    if (unsupported.length) {
+      msgs.push(
+        `Can't import ${unsupported.map((f) => f.name).join(", ")} — only ` +
+          `meshes (STL, 3MF, OFF, OBJ, AMF) and 2D profiles (DXF, SVG) can be imported.`,
       );
     }
-    if (text.length === 0) return;
-    const read = await Promise.all(
-      text.map(async (f) => ({ name: f.name, content: await f.text() })),
+    // Read text as source; read binary as base64 bytes with a placeholder body.
+    const readText = await Promise.all(
+      text.map(async (f) => ({
+        name: f.name,
+        content: await f.text(),
+        bytes: undefined as string | undefined,
+      })),
     );
+    const readBin = await Promise.all(
+      bin.map(async (f) => ({
+        name: f.name,
+        content: binaryPlaceholder(f.name, f.size),
+        bytes: bytesToBase64(new Uint8Array(await f.arrayBuffer())),
+      })),
+    );
+    if (readBin.length) {
+      const first = readBin[0].name;
+      msgs.push(
+        `Imported ${readBin.map((f) => f.name).join(", ")} — reference ` +
+          `${readBin.length > 1 ? "them" : "it"} with import("${first}");`,
+      );
+    }
+    setImportMsg(msgs.join(" "));
+    const read = [...readText, ...readBin];
+    if (read.length === 0) return;
     let next = filesRef.current.slice();
     const isPristine = next[0]?.content === DEFAULT_FILES[0].content;
     let focus = next.length;
@@ -1511,7 +1576,7 @@ export function App() {
         next = [{ name, content: file.content }, ...next.slice(1)];
         focus = 0;
       } else {
-        next.push({ name, content: file.content });
+        next.push({ name, content: file.content, bytes: file.bytes });
         focus = next.length - 1;
       }
     }
@@ -1897,6 +1962,11 @@ export function App() {
     const names = Object.keys(ov);
     const values = names.map((n) => toLiteral(ov[n]));
     const libs = fs.slice(1);
+    // Binary imports ride the base64 byte channel; text libs the source channel.
+    const textLibs = libs.filter((f) => f.bytes == null);
+    const binLibs = libs.filter((f) => f.bytes != null);
+    const binNames = binLibs.map((f) => f.name);
+    const binData = binLibs.map((f) => f.bytes as string);
 
     // On desktop, write bytes we build client-side via a native save dialog;
     // in the browser, trigger an anchor download. Used by the wasm-engine export
@@ -1917,8 +1987,8 @@ export function App() {
         fs[0].content,
         names,
         values,
-        libs.map((f) => f.name),
-        libs.map((f) => f.content),
+        textLibs.map((f) => f.name),
+        textLibs.map((f) => f.content),
       );
       return;
     }
@@ -1927,13 +1997,15 @@ export function App() {
     if (format === "dxf" || format === "svg") {
       try {
         const { names: fileNames, contents: fileContents } =
-          await resolveClosure(fs[0].content, libs, LIB_BASE);
+          await resolveClosure(fs[0].content, textLibs, LIB_BASE);
         const text = await export2dBrowser({
           source: fs[0].content,
           names,
           values,
           fileNames,
           fileContents,
+          binNames,
+          binData,
           format,
         });
         saveExport(new TextEncoder().encode(text), format);
@@ -1952,13 +2024,15 @@ export function App() {
     if (status.preview) {
       try {
         const { names: fileNames, contents: fileContents } =
-          await resolveClosure(fs[0].content, libs, LIB_BASE);
+          await resolveClosure(fs[0].content, textLibs, LIB_BASE);
         pos = await renderMeshExactBrowser({
           source: fs[0].content,
           names,
           values,
           fileNames,
           fileContents,
+          binNames,
+          binData,
         });
       } catch (err) {
         setStatus((s) => ({ ...s, error: `export failed: ${String(err)}` }));
