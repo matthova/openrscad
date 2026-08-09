@@ -11,6 +11,7 @@ mod text;
 mod value;
 mod vm;
 
+pub use text::{font_completions, FontCompletion};
 pub use value::{format_number, Value};
 
 use openrscad_ir::{FragmentSpec, Node, Vec3};

@@ -99,6 +99,65 @@ pub fn resolve_font(font: &str) -> (&'static Face<'static>, bool) {
     (&faces()[idx], known_family)
 }
 
+/// One `font=` value offered for editor autocompletion — see
+/// [`font_completions`].
+pub struct FontCompletion {
+    /// The string to insert between the quotes, e.g. `Liberation Sans` or
+    /// `Liberation Sans:style=Bold`.
+    pub value: String,
+    /// Human-readable family + style, e.g. `Liberation Sans — Bold`.
+    pub detail: String,
+}
+
+/// The `font=` values to offer as editor autocompletions: every bundled face,
+/// rendered as the `Family` string (for the regular style) or the
+/// `Family:style=Style` string OpenSCAD uses. Derived from [`FONTS`] so any
+/// newly bundled face appears automatically. Display-cased for readability;
+/// [`resolve_font`] matches case-insensitively so the casing is cosmetic.
+pub fn font_completions() -> Vec<FontCompletion> {
+    // `FONTS` stores families/styles lowercased and space-stripped; recover a
+    // readable form for display and for the string a user would actually type.
+    fn title_case(s: &str) -> String {
+        s.split(' ')
+            .map(|w| {
+                let mut chars = w.chars();
+                match chars.next() {
+                    Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    fn style_display(style: &str) -> &'static str {
+        match style {
+            "bold" => "Bold",
+            "italic" => "Italic",
+            "bolditalic" => "Bold Italic",
+            _ => "Regular",
+        }
+    }
+
+    FONTS
+        .iter()
+        .map(|f| {
+            let family = title_case(f.family);
+            if f.style == "regular" {
+                FontCompletion {
+                    detail: format!("{family} — Regular"),
+                    value: family,
+                }
+            } else {
+                let style = style_display(f.style);
+                FontCompletion {
+                    value: format!("{family}:style={style}"),
+                    detail: format!("{family} — {style}"),
+                }
+            }
+        })
+        .collect()
+}
+
 /// Parameters for a `text()` call.
 pub struct TextOpts<'a> {
     pub text: &'a str,

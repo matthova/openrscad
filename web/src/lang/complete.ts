@@ -9,6 +9,32 @@ import type {
 import { syntaxTree } from "@codemirror/language";
 import { BUILTINS } from "./builtins";
 
+// The `font=` values offered inside a `text(font="…")` string. Mirrors the
+// bundled Liberation family in crates/openrscad-eval/src/text.rs (and its
+// `font_completions`): each family on its own (Regular) plus the OpenSCAD
+// `Family:style=Style` form for the other styles. Matching is case-insensitive
+// in the engine, so the display casing here is cosmetic.
+const FONT_COMPLETIONS: Completion[] = (() => {
+  const families = ["Liberation Sans", "Liberation Serif", "Liberation Mono"];
+  const styles: [suffix: string, label: string][] = [
+    ["", "Regular"],
+    [":style=Bold", "Bold"],
+    [":style=Italic", "Italic"],
+    [":style=Bold Italic", "Bold Italic"],
+  ];
+  const out: Completion[] = [];
+  for (const family of families) {
+    for (const [suffix, label] of styles) {
+      out.push({
+        label: family + suffix,
+        type: "constant",
+        detail: `${family} — ${label}`,
+      });
+    }
+  }
+  return out;
+})();
+
 // Language keywords not otherwise surfaced as builtins. `if`/`for`/`let` also
 // appear in BUILTINS (with richer signatures), so they're intentionally omitted
 // here to avoid duplicate entries.
@@ -59,6 +85,16 @@ function collectUserSymbols(ctx: CompletionContext): Completion[] {
 export function openscadCompletion(
   ctx: CompletionContext,
 ): CompletionResult | null {
+  // Inside a `font="…"` string, offer the bundled fonts and nothing else. The
+  // match ends at the cursor, so it only fires while the string is still open
+  // (`[^"]*` can't cross the closing quote); `from` is placed just after the
+  // opening quote so a family name with a space replaces cleanly.
+  const fontStr = ctx.matchBefore(/font\s*=\s*"[^"]*/);
+  if (fontStr) {
+    const from = fontStr.from + fontStr.text.indexOf('"') + 1;
+    return { from, options: FONT_COMPLETIONS, validFor: /^[^"]*$/ };
+  }
+
   const word = ctx.matchBefore(/\$?[\w]*/);
   if (!word || (word.from === word.to && !ctx.explicit)) return null;
 
