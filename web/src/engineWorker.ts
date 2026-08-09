@@ -17,6 +17,11 @@ export interface RenderRequest {
   /** Extra file names for include/use resolution, parallel to `fileContents`. */
   fileNames: string[];
   fileContents: string[];
+  /** Binary asset names (imported STL/3MF), parallel to `binData`. */
+  binNames: string[];
+  /** Binary asset bytes as base64, parallel to `binNames`. Carried as base64
+   *  because raw bytes can't cross the string-typed wasm file channel. */
+  binData: string[];
   /** Fast, non-watertight preview: unions are concatenated, skipping the CSG
    *  kernel's costliest work. On-screen only — export/stats need the exact path. */
   preview?: boolean;
@@ -90,8 +95,17 @@ export interface RenderResponse {
 const ready = init();
 
 self.onmessage = async (e: MessageEvent<RenderRequest>) => {
-  const { seq, source, names, values, fileNames, fileContents, preview } =
-    e.data;
+  const {
+    seq,
+    source,
+    names,
+    values,
+    fileNames,
+    fileContents,
+    binNames,
+    binData,
+    preview,
+  } = e.data;
   await ready;
 
   const t0 = performance.now();
@@ -111,8 +125,18 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
           values,
           fileNames,
           fileContents,
+          binNames,
+          binData,
         )
-      : render_with_files(source, names, values, fileNames, fileContents);
+      : render_with_files(
+          source,
+          names,
+          values,
+          fileNames,
+          fileContents,
+          binNames,
+          binData,
+        );
   } catch (err) {
     // A wasm call-stack overflow (V8's limit) surfaces as a RangeError; give a
     // human-readable hint instead of the raw engine message.

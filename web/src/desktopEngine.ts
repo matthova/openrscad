@@ -106,6 +106,8 @@ export class DesktopEngine {
     fileNames: string[] = [],
     fileContents: string[] = [],
     preview = false,
+    // Binary imports (STL/3MF) resolve from disk on the native engine, so it
+    // takes no in-memory byte channel — callers pass only text libs here.
   ) {
     const seq = ++this.seq;
     this.setBusy(true);
@@ -294,6 +296,8 @@ export class DesktopOpenscadEngine {
     fileNames: string[] = [],
     fileContents: string[] = [],
     preview = false,
+    binNames: string[] = [],
+    binData: string[] = [],
   ) {
     if (this.fallback) {
       this.fallback.render(
@@ -303,6 +307,8 @@ export class DesktopOpenscadEngine {
         fileNames,
         fileContents,
         preview,
+        binNames,
+        binData,
       );
       return;
     }
@@ -339,6 +345,8 @@ export class DesktopOpenscadEngine {
             fileNames,
             fileContents,
             preview,
+            binNames,
+            binData,
           );
           return;
         }

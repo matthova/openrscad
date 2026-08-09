@@ -25,6 +25,7 @@
 import type { RenderRequest } from "./engineWorker";
 import { blankResponse } from "./renderResponse";
 import { assembleOpenscadResponse } from "./openscadGeometry";
+import { base64ToBytes } from "./bytes";
 
 const OPENSCAD_VERSION = "OpenSCAD 2025.03.25 (Manifold)";
 
@@ -83,6 +84,8 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
     values,
     fileNames,
     fileContents,
+    binNames,
+    binData,
     openscadUrl,
     preview,
   } = e.data;
@@ -136,6 +139,13 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
       const slash = path.lastIndexOf("/");
       if (slash > 0) mkdirp(FS, path.slice(0, slash));
       FS.writeFile(path, fileContents[i]);
+    }
+    // Binary assets (imported STL/3MF) are written as raw bytes at their paths.
+    for (let i = 0; i < binNames.length; i++) {
+      const path = "/" + binNames[i].replace(/^\/+/, "");
+      const slash = path.lastIndexOf("/");
+      if (slash > 0) mkdirp(FS, path.slice(0, slash));
+      FS.writeFile(path, base64ToBytes(binData[i]));
     }
     // Preview (Fast) mode mirrors OpenSCAD's F5: set `$preview` so `$preview`-
     // aware scripts render their preview form, and export colored OFF so
