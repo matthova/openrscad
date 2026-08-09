@@ -1,26 +1,26 @@
-test_add_scalar
-test_closest_point
-test_fit_to_box
-test_furthest_point
-test_is_vector
-test_max_index
-test_min_index
-test_pointlist_bounds
-test_unit
-test_unit_errors
-test_v_abs
-test_v_ceil
-test_v_div
-test_v_floor
-test_v_lookup
-test_v_mul
-test_v_round
-test_v_theta
-test_vector_angle
-test_vector_angle_errors
-test_vector_axis
-test_vector_bisect
-test_vector_nearest
-test_vector_perp
-test_vector_search
-test_vector_search_tree
+1	test_is_vector
+2	test_v_floor
+3	test_v_ceil
+4	test_v_lookup
+5	test_v_mul
+6	test_v_div
+7	test_v_abs
+8	test_v_theta
+9	test_min_index
+10	test_max_index
+11	test_unit
+12	test_vector_angle
+13	test_vector_axis
+14	test_vector_search
+15	test_vector_search_tree
+16	test_vector_nearest
+17	test_add_scalar
+18	test_pointlist_bounds
+19	test_closest_point
+20	test_furthest_point
+21	test_unit_errors
+22	test_vector_angle_errors
+23	test_v_round
+24	test_vector_bisect
+25	test_vector_perp
+26	test_fit_to_box

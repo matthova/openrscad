@@ -1,66 +1,66 @@
-test_acosh
-test_asinh
-test_atanh
-test_bilerp
-test_binomial
-test_binomial_coefficient
-test_c_conj
-test_c_div
-test_c_ident
-test_c_imag
-test_c_mul
-test_c_norm
-test_c_real
-test_complex
-test_constrain
-test_convolve
-test_cosh
-test_count
-test_cumprod
-test_cumsum
-test_deltas
-test_deriv
-test_deriv2
-test_deriv3
-test_exponential_rands
-test_factorial
-test_factorial_errors
-test_fit_to_range
-test_gcd
-test_gcd_errors
-test_hypot
-test_lcm
-test_lcm_errors
-test_lerp
-test_lerp_errors
-test_lerpn
-test_log2
-test_mean
-test_mean_angle
-test_median
-test_modang
-test_poly_add
-test_poly_div
-test_poly_mult
-test_poly_roots
-test_polynomial
-test_posmod
-test_product
-test_quadratic_roots
-test_quant
-test_quantdn
-test_quantup
-test_rand_int
-test_random_points
-test_random_polygon
-test_rational_approx
-test_real_roots
-test_root_find
-test_sinh
-test_slerp
-test_slerpn
-test_spherical_random_points
-test_sqr
-test_sum
-test_sum_of_sines
-test_tanh
+1	test_quant
+2	test_quantdn
+3	test_quantup
+4	test_constrain
+5	test_posmod
+6	test_modang
+7	test_mean_angle
+8	test_sqr
+9	test_log2
+10	test_rand_int
+12	test_lerp
+13	test_hypot
+14	test_sinh
+15	test_cosh
+16	test_tanh
+17	test_asinh
+18	test_acosh
+19	test_atanh
+20	test_sum
+21	test_cumsum
+22	test_sum_of_sines
+23	test_deltas
+24	test_product
+25	test_mean
+26	test_median
+27	test_convolve
+28	test_factorial
+29	test_binomial
+30	test_binomial_coefficient
+31	test_gcd
+32	test_lcm
+33	test_rational_approx
+34	test_complex
+35	test_c_mul
+36	test_c_div
+37	test_c_conj
+38	test_c_real
+39	test_c_imag
+40	test_c_ident
+41	test_c_norm
+42	test_cumprod
+43	test_deriv
+44	test_deriv2
+45	test_deriv3
+46	test_polynomial
+47	test_poly_roots
+48	test_real_roots
+49	test_quadratic_roots
+50	test_poly_mult
+51	test_poly_div
+52	test_poly_add
+53	test_root_find
+54	test_lerp_errors
+55	test_factorial_errors
+56	test_gcd_errors
+57	test_lcm_errors
+58	test_count
+59	test_lerpn
+60	test_bilerp
+61	test_fit_to_range
+62	test_slerp
+63	test_slerpn
+64	test_random_points
+65	test_exponential_rands
+66	test_spherical_random_points
+67	test_random_polygon

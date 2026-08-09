@@ -10,6 +10,7 @@
 //! `openscad --export-format=echo -o - <file>` (no geometry render).
 
 use openrscad_geom::Mesh;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -79,19 +80,40 @@ const BOSL2_SUBSET: [&str; 15] = [
     "test_regions",
 ];
 
+/// Total `[[test]]` blocks in [`BOSL2_SUBSET`] at the pinned BOSL2 submodule
+/// revision. This is independent of the number that pass: adding, removing, or
+/// silently failing to extract a block must make the gate red.
+const BOSL2_EXPECTED_BLOCKS: usize = 513;
+
+/// Stable identity for one block in the pinned suite. Names alone are not unique
+/// (`test_utility.scadtest` contains two `test_segs` blocks), so baselines and
+/// diagnostics also carry the source file and 1-based block ordinal.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct Bosl2BlockId {
+    file: String,
+    ordinal: usize,
+    name: String,
+}
+
+impl std::fmt::Display for Bosl2BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{:03} `{}`", self.file, self.ordinal, self.name)
+    }
+}
+
 /// One extracted `[[test]]` block: its name, script, and whether it is expected
 /// to evaluate successfully. `expect_success = false` blocks assert that bad
 /// input is *rejected* — they pass when evaluation errors, not when it succeeds.
 struct Bosl2Block {
-    name: String,
+    id: Bosl2BlockId,
     script: String,
     expect_success: bool,
 }
 
 /// Extract every `[[test]]` block from a `.scadtest` file.
-fn extract_tests(raw: &str) -> Vec<Bosl2Block> {
+fn extract_tests(file: &str, raw: &str) -> Vec<Bosl2Block> {
     let mut out = Vec::new();
-    for chunk in raw.split("[[test]]").skip(1) {
+    for (index, chunk) in raw.split("[[test]]").skip(1).enumerate() {
         let name = chunk.find("name = \"").and_then(|i| {
             let rest = &chunk[i + "name = \"".len()..];
             rest.find('"').map(|j| rest[..j].to_string())
@@ -109,7 +131,11 @@ fn extract_tests(raw: &str) -> Vec<Bosl2Block> {
             .contains("expect_success = false");
         if let (Some(name), Some(script)) = (name, script) {
             out.push(Bosl2Block {
-                name,
+                id: Bosl2BlockId {
+                    file: file.to_string(),
+                    ordinal: index + 1,
+                    name,
+                },
                 script,
                 expect_success,
             });
@@ -136,112 +162,321 @@ fn bosl2_block_passes(b: &Bosl2Block, dir_str: &str) -> bool {
     }
 }
 
-/// Run every `[[test]]` block of one file through openrscad; return the sorted names
-/// of the blocks that pass (parse + eval Ok + at least one assert executed) and
-/// the total block count. `Err` = the file is missing/unreadable/corrupt.
-fn bosl2_file_results(dir: &Path, name: &str) -> Result<(Vec<String>, usize), String> {
+struct Bosl2BlockResult {
+    id: Bosl2BlockId,
+    passed: bool,
+}
+
+/// Run every `[[test]]` block of one file through openrscad, preserving source
+/// order and one result per block (including duplicate names). `Err` means the
+/// file is missing, unreadable, or contains no extractable blocks.
+fn bosl2_file_results(dir: &Path, name: &str) -> Result<Vec<Bosl2BlockResult>, String> {
     let raw =
         fs::read_to_string(dir.join(format!("{name}.scadtest"))).map_err(|e| e.to_string())?;
-    let tests = extract_tests(&raw);
+    let tests = extract_tests(name, &raw);
     if tests.is_empty() {
         return Err("no [[test]] blocks (corrupt or wrong format)".into());
     }
     let dir_str = dir.to_string_lossy().into_owned();
-    let mut passing: Vec<String> = tests
-        .iter()
-        .filter(|b| bosl2_block_passes(b, &dir_str))
-        .map(|b| b.name.clone())
-        .collect();
-    passing.sort();
-    passing.dedup();
-    Ok((passing, tests.len()))
+    Ok(tests
+        .into_iter()
+        .map(|block| Bosl2BlockResult {
+            passed: bosl2_block_passes(&block, &dir_str),
+            id: block.id,
+        })
+        .collect())
 }
 
-/// Regenerate the BOSL2 baselines (the set of passing block names per file) from
-/// openrscad's current behavior. Dev-only; needs the submodule checked out.
+/// One per-file passing-baseline line. The file component is carried by the
+/// containing `test_*.txt`; each line stores `<ordinal>\t<name>`.
+fn format_passing_id(id: &Bosl2BlockId) -> String {
+    format!("{}\t{}", id.ordinal, id.name)
+}
+
+fn parse_passing_ids(file: &str, raw: &str) -> Result<BTreeSet<Bosl2BlockId>, String> {
+    let mut ids = BTreeSet::new();
+    for (line_no, line) in raw.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((ordinal, name)) = line.split_once(char::is_whitespace) else {
+            return Err(format!("line {}: expected <ordinal> <name>", line_no + 1));
+        };
+        let ordinal = ordinal
+            .parse::<usize>()
+            .map_err(|_| format!("line {}: invalid ordinal {ordinal:?}", line_no + 1))?;
+        let id = Bosl2BlockId {
+            file: file.to_string(),
+            ordinal,
+            name: name.trim().to_string(),
+        };
+        if id.ordinal == 0 || id.name.is_empty() {
+            return Err(format!("line {}: empty name or zero ordinal", line_no + 1));
+        }
+        if !ids.insert(id.clone()) {
+            return Err(format!("line {}: duplicate identity {id}", line_no + 1));
+        }
+    }
+    Ok(ids)
+}
+
+/// Global expected-failure manifest line: `<file>\t<ordinal>\t<name>`.
+fn format_expected_failure(id: &Bosl2BlockId) -> String {
+    format!("{}\t{}\t{}", id.file, id.ordinal, id.name)
+}
+
+fn parse_expected_failures(raw: &str) -> Result<BTreeSet<Bosl2BlockId>, String> {
+    let mut ids = BTreeSet::new();
+    for (line_no, line) in raw.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.splitn(3, char::is_whitespace);
+        let (Some(file), Some(ordinal), Some(name)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(format!(
+                "line {}: expected <file> <ordinal> <name>",
+                line_no + 1
+            ));
+        };
+        let ordinal = ordinal
+            .parse::<usize>()
+            .map_err(|_| format!("line {}: invalid ordinal {ordinal:?}", line_no + 1))?;
+        let id = Bosl2BlockId {
+            file: file.to_string(),
+            ordinal,
+            name: name.trim().to_string(),
+        };
+        if id.ordinal == 0 || id.name.is_empty() {
+            return Err(format!("line {}: empty name or zero ordinal", line_no + 1));
+        }
+        if !ids.insert(id.clone()) {
+            return Err(format!("line {}: duplicate identity {id}", line_no + 1));
+        }
+    }
+    Ok(ids)
+}
+
+/// Regenerate the per-file passing identities and explicit expected-failure
+/// manifest from openrscad's current behavior. Dev-only; needs the pinned
+/// submodule checked out. Refuses to write a partial or wrong-sized suite.
 fn bless_bosl2(root: &Path) {
     let dir = root.join("corpus/BOSL2/tests");
     let goldens = root.join("corpus/golden/bosl2");
-    fs::create_dir_all(&goldens).unwrap();
+    let mut reports = Vec::new();
+    let mut total_blocks = 0;
     for name in BOSL2_SUBSET {
         match bosl2_file_results(&dir, name) {
-            Ok((passing, total)) => {
-                fs::write(
-                    goldens.join(format!("{name}.txt")),
-                    format!("{}\n", passing.join("\n")),
-                )
-                .unwrap();
-                eprintln!("  {name}: {}/{} blessed", passing.len(), total);
+            Ok(results) => {
+                total_blocks += results.len();
+                reports.push((name, results));
             }
-            Err(e) => eprintln!("  !  {name}: {e}"),
+            Err(e) => {
+                eprintln!("  !  {name}: {e}");
+                eprintln!("refusing to write incomplete BOSL2 baselines");
+                return;
+            }
         }
     }
+    if total_blocks != BOSL2_EXPECTED_BLOCKS {
+        eprintln!(
+            "refusing to write BOSL2 baselines: found {total_blocks} blocks, expected {BOSL2_EXPECTED_BLOCKS}"
+        );
+        return;
+    }
+
+    fs::create_dir_all(&goldens).unwrap();
+    let mut expected_failures = Vec::new();
+    for (name, results) in &reports {
+        let passing: Vec<String> = results
+            .iter()
+            .filter(|r| r.passed)
+            .map(|r| format_passing_id(&r.id))
+            .collect();
+        expected_failures.extend(results.iter().filter(|r| !r.passed).map(|r| r.id.clone()));
+        fs::write(
+            goldens.join(format!("{name}.txt")),
+            format!("{}\n", passing.join("\n")),
+        )
+        .unwrap();
+        eprintln!("  {name}: {}/{} blessed", passing.len(), results.len());
+    }
+    let mut failure_manifest =
+        String::from("# Expected BOSL2 failures: <file> <1-based [[test]] ordinal> <name>\n");
+    for id in &expected_failures {
+        failure_manifest.push_str(&format_expected_failure(id));
+        failure_manifest.push('\n');
+    }
+    fs::write(goldens.join("expected-failures.tsv"), failure_manifest).unwrap();
     eprintln!("blessed BOSL2 baselines into {}", goldens.display());
 }
 
 /// Run BOSL2's function suite through openrscad, block by block, gated against the
-/// committed per-file baseline of passing block names. Returns `true` only if
-/// every file exists, has blocks, and its current passing set exactly matches
-/// its baseline — a **regression** (a baselined block now failing) and an
-/// unblessed **improvement** (a block now passing) both fail, as does a missing
-/// file/golden or a zero-block run (submodule absent → 0/0 is never a pass).
-/// Known-failing blocks are recorded by their absence from the baseline, so the
-/// gate guards them without pretending they pass.
+/// committed per-file passing identities and explicit expected-failure manifest.
+/// Returns `true` only if all 513 file+ordinal+name identities and their outcomes
+/// match exactly. A regression, unblessed improvement, renamed/reordered block,
+/// duplicate-name outcome change, missing file, or malformed baseline is red.
 fn run_bosl2(root: &Path) -> bool {
-    use std::collections::BTreeSet;
     let dir = root.join("corpus/BOSL2/tests");
     let goldens = root.join("corpus/golden/bosl2");
     let mut ok = true;
-    let mut total_pass = 0usize;
-    let mut total_blocks = 0usize;
+    let mut expected_pass = BTreeSet::new();
+    let expected_fail = match fs::read_to_string(goldens.join("expected-failures.tsv")) {
+        Ok(raw) => match parse_expected_failures(&raw) {
+            Ok(ids) => ids,
+            Err(e) => {
+                println!("  ?  malformed expected-failures.tsv: {e}");
+                ok = false;
+                BTreeSet::new()
+            }
+        },
+        Err(e) => {
+            println!("  ?  no expected-failures.tsv ({e}; run `xtask bless-bosl2`)");
+            ok = false;
+            BTreeSet::new()
+        }
+    };
+    let mut current_all = BTreeSet::new();
+    let mut current_pass = BTreeSet::new();
+    let mut reports = Vec::new();
 
     for name in BOSL2_SUBSET {
-        let (passing, total) = match bosl2_file_results(&dir, name) {
-            Ok(r) => r,
+        let results = match bosl2_file_results(&dir, name) {
+            Ok(results) => results,
             Err(e) => {
                 println!("  MISSING {name} ({e})");
                 ok = false;
                 continue;
             }
         };
-        total_pass += passing.len();
-        total_blocks += total;
-
-        let Ok(golden_txt) = fs::read_to_string(goldens.join(format!("{name}.txt"))) else {
-            println!("  ?  {name}: no baseline (run `xtask bless-bosl2`)");
-            ok = false;
-            continue;
-        };
-        let golden: BTreeSet<&str> = golden_txt.lines().filter(|l| !l.is_empty()).collect();
-        let current: BTreeSet<&str> = passing.iter().map(String::as_str).collect();
-        let regressions: Vec<&&str> = golden.difference(&current).collect();
-        let improvements: Vec<&&str> = current.difference(&golden).collect();
-
-        if regressions.is_empty() && improvements.is_empty() {
-            println!("  PASS {name}: {}/{}", passing.len(), total);
-        } else {
-            ok = false;
-            println!(
-                "  FAIL {name}: {}/{} (baseline {})",
-                passing.len(),
-                total,
-                golden.len()
-            );
-            for r in &regressions {
-                println!("     - regression: {r} was passing, now fails");
+        for result in &results {
+            current_all.insert(result.id.clone());
+            if result.passed {
+                current_pass.insert(result.id.clone());
             }
-            for i in &improvements {
-                println!("     + improvement: {i} now passes — run `xtask bless-bosl2`");
+        }
+        reports.push((name, results));
+
+        match fs::read_to_string(goldens.join(format!("{name}.txt"))) {
+            Ok(raw) => match parse_passing_ids(name, &raw) {
+                Ok(ids) => expected_pass.extend(ids),
+                Err(e) => {
+                    println!("  ?  {name}: malformed passing baseline: {e}");
+                    ok = false;
+                }
+            },
+            Err(_) => {
+                println!("  ?  {name}: no passing baseline (run `xtask bless-bosl2`)");
+                ok = false;
             }
         }
     }
 
+    let overlap: Vec<_> = expected_pass.intersection(&expected_fail).collect();
+    if !overlap.is_empty() {
+        ok = false;
+        println!("  ?  baseline marks blocks as both passing and expected-failing:");
+        for id in overlap {
+            println!("     - {id}");
+        }
+    }
+    let expected_all: BTreeSet<_> = expected_pass.union(&expected_fail).cloned().collect();
+    if expected_all.len() != BOSL2_EXPECTED_BLOCKS {
+        ok = false;
+        println!(
+            "  ?  baseline identities: {}, expected {}",
+            expected_all.len(),
+            BOSL2_EXPECTED_BLOCKS
+        );
+    }
+    if current_all.len() != BOSL2_EXPECTED_BLOCKS {
+        ok = false;
+        println!(
+            "  ?  extracted blocks: {}, expected {}",
+            current_all.len(),
+            BOSL2_EXPECTED_BLOCKS
+        );
+    }
+
+    let current_fail: BTreeSet<_> = current_all.difference(&current_pass).cloned().collect();
+    for (name, results) in &reports {
+        let passed = results.iter().filter(|r| r.passed).count();
+        let file_ok = results.iter().all(|r| {
+            (r.passed && expected_pass.contains(&r.id))
+                || (!r.passed && expected_fail.contains(&r.id))
+        });
+        println!(
+            "  {} {name}: {passed}/{}",
+            if file_ok { "PASS" } else { "FAIL" },
+            results.len()
+        );
+        for result in results.iter().filter(|r| !r.passed) {
+            let label = if expected_fail.contains(&result.id) {
+                "XFAIL"
+            } else {
+                "UNEXPECTED-FAIL"
+            };
+            println!("     {label}: {}", result.id);
+        }
+    }
+
+    let missing_ids: Vec<_> = expected_all.difference(&current_all).collect();
+    let new_ids: Vec<_> = current_all.difference(&expected_all).collect();
+    let regressions: Vec<_> = expected_pass.difference(&current_pass).collect();
+    let improvements: Vec<_> = current_pass.difference(&expected_pass).collect();
+    let wrong_failures: Vec<_> = current_fail.difference(&expected_fail).collect();
+
+    if !missing_ids.is_empty() {
+        ok = false;
+        println!("\n  Baseline identities missing from the pinned suite:");
+        for id in missing_ids {
+            println!("     - {id}");
+        }
+    }
+    if !new_ids.is_empty() {
+        ok = false;
+        println!("\n  Unbaselined identities found in the pinned suite:");
+        for id in new_ids {
+            println!("     + {id}");
+        }
+    }
+    if !regressions.is_empty() {
+        ok = false;
+        println!("\n  Regressions (expected pass, now failing or missing):");
+        for id in regressions {
+            println!("     - {id}");
+        }
+    }
+    if !improvements.is_empty() {
+        ok = false;
+        println!("\n  Improvements (expected failure/new block now passing):");
+        for id in improvements {
+            println!("     + {id} — run `xtask bless-bosl2`");
+        }
+    }
+    if !wrong_failures.is_empty() {
+        ok = false;
+        println!("\n  Unexpected failures:");
+        for id in wrong_failures {
+            println!("     - {id}");
+        }
+    }
+
+    let total_blocks = current_all.len();
+    let total_pass = current_pass.len();
+    let expected_failure_count = current_fail.intersection(&expected_fail).count();
+    println!(
+        "\nBOSL2 expected failures: {expected_failure_count}/{}",
+        expected_fail.len()
+    );
     let pct = if total_blocks == 0 {
         0.0
     } else {
         total_pass as f64 / total_blocks as f64 * 100.0
     };
-    println!("\nBOSL2 test blocks: {total_pass}/{total_blocks} ({pct:.0}%)");
+    println!("BOSL2 test blocks: {total_pass}/{total_blocks} ({pct:.0}%)");
     if total_blocks == 0 {
         eprintln!("error: no BOSL2 blocks executed — is the corpus/BOSL2 submodule checked out?");
         ok = false;
@@ -1081,4 +1316,41 @@ fn check_geom(cases: &Path, goldens: &Path) -> bool {
     };
     println!("\ngeom oracle: {pass}/{total} passed ({pct:.0}%)");
     pass == total && total > 0
+}
+
+#[cfg(test)]
+mod bosl2_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_block_names_keep_distinct_identities() {
+        let raw = r#"
+[[test]]
+name = "same_name"
+script = '''assert(true);'''
+[[test]]
+name = "same_name"
+script = '''assert(true);'''
+"#;
+        let blocks = extract_tests("test_duplicate", raw);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].id.ordinal, 1);
+        assert_eq!(blocks[1].id.ordinal, 2);
+        assert_eq!(blocks[0].id.name, blocks[1].id.name);
+        let ids: BTreeSet<_> = blocks.into_iter().map(|block| block.id).collect();
+        assert_eq!(ids.len(), 2, "duplicate names must not collapse identities");
+    }
+
+    #[test]
+    fn identity_baselines_round_trip_and_reject_duplicates() {
+        let raw = "1\ttest_one\n2\ttest_same\n3\ttest_same\n";
+        let ids = parse_passing_ids("test_file", raw).unwrap();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&Bosl2BlockId {
+            file: "test_file".into(),
+            ordinal: 3,
+            name: "test_same".into(),
+        }));
+        assert!(parse_passing_ids("test_file", "1\ttest_one\n1\ttest_one\n").is_err());
+    }
 }
