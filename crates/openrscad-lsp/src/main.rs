@@ -1050,6 +1050,18 @@ impl LanguageServer for Backend {
     }
 }
 
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        docs: Arc::new(Mutex::new(HashMap::new())),
+        previews: Arc::new(Mutex::new(HashMap::new())),
+    });
+    Server::new(stdin, stdout, socket).serve(service).await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1114,16 +1126,4 @@ mod tests {
         assert!(values.contains(&"Liberation Mono".to_string()));
         assert!(values.contains(&"Liberation Sans:style=Bold Italic".to_string()));
     }
-}
-
-#[tokio::main]
-async fn main() {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    let (service, socket) = LspService::new(|client| Backend {
-        client,
-        docs: Arc::new(Mutex::new(HashMap::new())),
-        previews: Arc::new(Mutex::new(HashMap::new())),
-    });
-    Server::new(stdin, stdout, socket).serve(service).await;
 }

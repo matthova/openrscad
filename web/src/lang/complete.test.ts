@@ -78,7 +78,7 @@ describe("openscadCompletion", () => {
     expect(complete("", 0, false)).toBeNull();
   });
 
-  it("offers bundled fonts inside a `font=\"…\"` string", () => {
+  it('offers bundled fonts inside a `font="…"` string', () => {
     const doc = 'text("hi", font="";';
     const r = complete(doc, doc.indexOf('"";') + 1); // cursor between the quotes
     expect(r).not.toBeNull();
