@@ -14,6 +14,9 @@ export interface Export2DRequest {
   binNames: string[];
   /** Binary asset bytes as base64, parallel to `binNames`. */
   binData: string[];
+  /** System-font files (base64) to register before rendering, so 2D text export
+   *  honors the user's installed fonts. Empty unless system fonts are enabled. */
+  fontBlobs: string[];
   format: "dxf" | "svg";
 }
 
@@ -33,6 +36,7 @@ self.onmessage = async (e: MessageEvent<Export2DRequest>) => {
     fileContents,
     binNames,
     binData,
+    fontBlobs,
     format,
   } = e.data;
   await ready;
@@ -47,6 +51,7 @@ self.onmessage = async (e: MessageEvent<Export2DRequest>) => {
       fileContents,
       binNames,
       binData,
+      fontBlobs,
       format,
     );
     if (!data) error = "export produced no geometry (is the model 2D?)";

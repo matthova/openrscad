@@ -246,6 +246,13 @@ fn run() -> Result<()> {
     let src = std::fs::read_to_string(&cli.input)
         .with_context(|| format!("reading {}", cli.input.display()))?;
 
+    // Make the OS's installed fonts available to `text(font="…")` (matching
+    // OpenSCAD's fontconfig behavior). Only pay the font-dir scan when the model
+    // might actually use `text()`; the bundled Liberation family is always there.
+    if src.contains("text") {
+        openrscad_eval::register_system_fonts();
+    }
+
     // Parse.
     let program = openrscad_syntax::parse(&src)
         .map_err(|e| anyhow::anyhow!("parse error at {:?}: {}", e.span, e.message))?;

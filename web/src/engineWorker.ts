@@ -22,6 +22,11 @@ export interface RenderRequest {
   /** Binary asset bytes as base64, parallel to `binNames`. Carried as base64
    *  because raw bytes can't cross the string-typed wasm file channel. */
   binData: string[];
+  /** System-font files (base64) to register before rendering, so `text(font="…")`
+   *  can use the user's installed fonts. One entry per font file; the engine
+   *  dedupes reloads. Empty unless the user enabled system fonts (see
+   *  systemFonts.ts). Ignored by the OpenSCAD worker (it has its own fonts). */
+  fontBlobs: string[];
   /** Fast, non-watertight preview: unions are concatenated, skipping the CSG
    *  kernel's costliest work. On-screen only — export/stats need the exact path. */
   preview?: boolean;
@@ -104,6 +109,7 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
     fileContents,
     binNames,
     binData,
+    fontBlobs,
     preview,
   } = e.data;
   await ready;
@@ -127,6 +133,7 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
           fileContents,
           binNames,
           binData,
+          fontBlobs,
         )
       : render_with_files(
           source,
@@ -136,6 +143,7 @@ self.onmessage = async (e: MessageEvent<RenderRequest>) => {
           fileContents,
           binNames,
           binData,
+          fontBlobs,
         );
   } catch (err) {
     // A wasm call-stack overflow (V8's limit) surfaces as a RangeError; give a

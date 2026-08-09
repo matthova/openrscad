@@ -239,8 +239,10 @@ pub fn export_2d(
     file_contents: Vec<String>,
     bin_names: Vec<String>,
     bin_data: Vec<String>,
+    font_blobs: Vec<String>,
     format: &str,
 ) -> String {
+    register_font_blobs(font_blobs);
     let Ok(program) = openrscad_syntax::parse(source) else {
         return String::new();
     };
@@ -287,6 +289,7 @@ pub fn render_with_params(source: &str, names: Vec<String>, values: Vec<String>)
         source,
         names,
         values,
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),
@@ -345,6 +348,20 @@ impl openrscad_eval::FileResolver for MapResolver {
         }
         let key = Self::resolve_in(&self.files, path, from_dir)?;
         self.files.get(&key).map(|s| s.clone().into_bytes())
+    }
+}
+
+/// Register fonts supplied by the browser (Local Font Access API blobs) into the
+/// engine's shared font database so `text(font="…")` can use system fonts. Each
+/// entry is one font file (`.ttf`/`.otf`/`.ttc`) base64-encoded — raw bytes
+/// can't cross the string-typed wasm boundary. Identical files are deduped
+/// engine-side, so re-sending a model's fonts every render is cheap. Entries
+/// that fail to decode are skipped (the font then falls back to Liberation).
+fn register_font_blobs(font_blobs: Vec<String>) {
+    for b64 in &font_blobs {
+        if let Some(bytes) = base64_decode(b64) {
+            openrscad_eval::register_font_data(bytes);
+        }
     }
 }
 
@@ -422,6 +439,7 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 /// set of files (`file_names[i]` → `file_contents[i]`) — the playground's other
 /// files and/or a bundled library.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn render_with_files(
     source: &str,
     names: Vec<String>,
@@ -430,6 +448,7 @@ pub fn render_with_files(
     file_contents: Vec<String>,
     bin_names: Vec<String>,
     bin_data: Vec<String>,
+    font_blobs: Vec<String>,
 ) -> RenderResult {
     render_impl(
         source,
@@ -439,6 +458,7 @@ pub fn render_with_files(
         file_contents,
         bin_names,
         bin_data,
+        font_blobs,
         false,
     )
 }
@@ -449,6 +469,7 @@ pub fn render_with_files(
 /// stats and export still use the exact path. Differences/intersections/hulls
 /// still resolve exactly, so holes and clips look correct.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn render_preview_with_files(
     source: &str,
     names: Vec<String>,
@@ -457,6 +478,7 @@ pub fn render_preview_with_files(
     file_contents: Vec<String>,
     bin_names: Vec<String>,
     bin_data: Vec<String>,
+    font_blobs: Vec<String>,
 ) -> RenderResult {
     render_impl(
         source,
@@ -466,6 +488,7 @@ pub fn render_preview_with_files(
         file_contents,
         bin_names,
         bin_data,
+        font_blobs,
         true,
     )
 }
@@ -479,8 +502,12 @@ fn render_impl(
     file_contents: Vec<String>,
     bin_names: Vec<String>,
     bin_data: Vec<String>,
+    font_blobs: Vec<String>,
     preview: bool,
 ) -> RenderResult {
+    // Register any browser-supplied system fonts before evaluating `text()`.
+    register_font_blobs(font_blobs);
+
     // Parse.
     let program = match openrscad_syntax::parse(source) {
         Ok(p) => p,
@@ -656,7 +683,16 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn color_populates_preview_channel() {
         // A plain model: no preview channel (viewer uses `positions`).
-        let plain = render_with_files("cube(2);", vec![], vec![], vec![], vec![], vec![], vec![]);
+        let plain = render_with_files(
+            "cube(2);",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(plain.ok());
         assert_eq!(plain.groups(), "");
         assert!(plain.preview_positions().is_empty());
@@ -664,6 +700,7 @@ mod tests {
         // A colored model: preview soup + groups JSON populated.
         let colored = render_with_files(
             "color(\"red\") cube(2); color([0,0,1]) translate([5,0,0]) sphere(2);",
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -684,9 +721,9 @@ mod tests {
         // Two overlapping cubes. The exact render unions them (re-meshing the
         // seam); the preview render concatenates (12 + 12 triangles, no boolean).
         let src = "cube(2); translate([1,0,0]) cube(2);";
-        let exact = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
+        let exact = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
         let preview =
-            render_preview_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
+            render_preview_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(exact.ok() && preview.ok());
         assert_eq!(
             preview.triangle_count(),
@@ -712,6 +749,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert!(r.ok());
         assert!(!r.provenance_positions().is_empty());
@@ -724,7 +762,16 @@ mod tests {
     fn provenance_channel_populated_for_2d() {
         // A 2D model is pickable/highlightable just like 3D: the flat mesh gets a
         // provenance channel with per-statement spans.
-        let r = render_with_files("square(4);", vec![], vec![], vec![], vec![], vec![], vec![]);
+        let r = render_with_files(
+            "square(4);",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(r.ok());
         assert!(r.is_2d());
         assert!(!r.provenance_positions().is_empty());
@@ -740,7 +787,7 @@ mod tests {
         // still returned and the failure is reported on the geom_errors channel.
         let src = "union() { cube(10); \
                    polyhedron(points=[[0,0,0],[1,0,0],[0,1,0]], faces=[[0,1,2]]); }";
-        let r = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![]);
+        let r = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
         assert!(
             r.ok(),
             "degraded render should still succeed: {}",
@@ -758,7 +805,16 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn diagnostics_surface_parse_eval_and_warnings() {
         // Parse error → an error diagnostic with a byte span.
-        let r = render_with_files("cube(", vec![], vec![], vec![], vec![], vec![], vec![]);
+        let r = render_with_files(
+            "cube(",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(!r.ok());
         assert!(
             r.diagnostics().contains("\"severity\":\"error\""),
@@ -775,6 +831,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert!(!r.ok());
         assert!(
@@ -784,7 +841,16 @@ mod tests {
         );
 
         // Unknown module → a warning diagnostic; the render still succeeds.
-        let r = render_with_files("nope();", vec![], vec![], vec![], vec![], vec![], vec![]);
+        let r = render_with_files(
+            "nope();",
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
         assert!(r.ok());
         let d = r.diagnostics();
         assert!(d.contains("\"severity\":\"warning\""), "{d}");
@@ -854,6 +920,7 @@ v = [1, 2, 3];
             vec![lib.to_string()],
             vec![],
             vec![],
+            vec![],
         );
         assert!(r.ok(), "err: {}", r.error());
         assert!((r.volume() - 27.0).abs() < 1e-6, "vol {}", r.volume());
@@ -873,6 +940,7 @@ v = [1, 2, 3];
             vec![dxf],
             vec![],
             vec![],
+            vec![],
         );
         assert!(r.ok(), "err: {}", r.error());
         assert!((r.volume() - 600.0).abs() < 1e-3, "vol {}", r.volume()); // 10*20*3
@@ -882,13 +950,34 @@ v = [1, 2, 3];
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn export_2d_produces_dxf_and_svg() {
         let src = "square([10, 20]);";
-        let dxf = export_2d(src, vec![], vec![], vec![], vec![], vec![], vec![], "dxf");
+        let dxf = export_2d(
+            src,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "dxf",
+        );
         assert!(dxf.contains("LWPOLYLINE"), "dxf: {dxf}");
-        let svg = export_2d(src, vec![], vec![], vec![], vec![], vec![], vec![], "svg");
+        let svg = export_2d(
+            src,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "svg",
+        );
         assert!(svg.contains("<svg") && svg.contains("<path"), "svg: {svg}");
         // A 3D model yields no 2D export.
         assert!(export_2d(
             "cube(1);",
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -935,6 +1024,7 @@ v = [1, 2, 3];
             vec![],
             vec!["cube.stl".to_string()],
             vec![b64_encode(&stl)],
+            vec![],
         );
         assert!(r.ok(), "err: {}", r.error());
         assert!(r.triangle_count() >= 12, "tris {}", r.triangle_count());

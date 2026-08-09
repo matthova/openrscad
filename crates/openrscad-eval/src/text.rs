@@ -1,102 +1,198 @@
-//! `text()` — turn a string into 2D glyph outlines (contours) using the bundled
-//! Liberation family (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic, SIL OFL)
-//! — the exact files OpenSCAD ships — so `font=` selects the same face and glyph
-//! shapes match. Outlines come from `ttf-parser`; Bézier segments are flattened
-//! to line segments.
+//! `text()` — turn a string into 2D glyph outlines (contours). Fonts live in a
+//! shared [`fontdb`] database: the bundled Liberation family (Sans/Serif/Mono ×
+//! Regular/Bold/Italic/BoldItalic, SIL OFL — the exact files OpenSCAD ships) is
+//! *always* loaded, so `font=` on those families selects the same face and glyph
+//! shapes match OpenSCAD byte-for-byte, native and in the browser alike. Hosts
+//! may additionally register OS fonts ([`register_system_fonts`], native) or raw
+//! font bytes ([`register_font_data`], the browser's Local Font Access blobs) so
+//! `text(font="…")` can use system fonts too. Outlines come from `ttf-parser`;
+//! Bézier segments are flattened to line segments.
 //!
 //! The result is a set of contours (outer boundaries and holes) that become a
 //! `Node::Polygon`; even-odd triangulation in `openrscad-geom` turns them into a
 //! filled 2D region (with holes) that can be rendered or extruded.
+//!
+//! The database is a process-wide singleton so the parts that can't thread host
+//! config through (the evaluator's `text()` handler) still see registered fonts.
+//! It starts with *only* the bundled faces, keeping plain `cargo test` and the
+//! geometry oracle deterministic — system fonts appear only once a host opts in.
 
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use ttf_parser::Face;
 
-/// One bundled Liberation face. The whole family (SIL Open Font License) is
-/// bundled — the exact Liberation 2.00.1 files OpenSCAD ships — so `text(font=)`
-/// works identically native and in the browser *and* matches OpenSCAD's glyph
-/// shapes byte-for-byte. `family`/`style` are lowercase, `style` space-stripped
-/// (`bolditalic`). See `fonts/LICENSE`.
-struct BundledFont {
-    family: &'static str,
-    style: &'static str,
-    bytes: &'static [u8],
-}
+use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 
-macro_rules! font {
-    ($family:literal, $style:literal, $file:literal) => {
-        BundledFont {
-            family: $family,
-            style: $style,
-            bytes: include_bytes!(concat!("../fonts/", $file)),
-        }
-    };
-}
+/// The family used when `font=` is empty or the requested family isn't found.
+const DEFAULT_FAMILY: &str = "Liberation Sans";
 
-static FONTS: &[BundledFont] = &[
-    font!("liberation sans", "regular", "LiberationSans-Regular.ttf"),
-    font!("liberation sans", "bold", "LiberationSans-Bold.ttf"),
-    font!("liberation sans", "italic", "LiberationSans-Italic.ttf"),
-    font!(
-        "liberation sans",
-        "bolditalic",
-        "LiberationSans-BoldItalic.ttf"
-    ),
-    font!("liberation serif", "regular", "LiberationSerif-Regular.ttf"),
-    font!("liberation serif", "bold", "LiberationSerif-Bold.ttf"),
-    font!("liberation serif", "italic", "LiberationSerif-Italic.ttf"),
-    font!(
-        "liberation serif",
-        "bolditalic",
-        "LiberationSerif-BoldItalic.ttf"
-    ),
-    font!("liberation mono", "regular", "LiberationMono-Regular.ttf"),
-    font!("liberation mono", "bold", "LiberationMono-Bold.ttf"),
-    font!("liberation mono", "italic", "LiberationMono-Italic.ttf"),
-    font!(
-        "liberation mono",
-        "bolditalic",
-        "LiberationMono-BoldItalic.ttf"
-    ),
+/// The bundled Liberation faces (SIL Open Font License; the exact Liberation
+/// 2.00.1 files OpenSCAD ships). Always loaded into the database so glyphs match
+/// OpenSCAD byte-for-byte everywhere. See `fonts/LICENSE`.
+static BUNDLED_FILES: &[&[u8]] = &[
+    include_bytes!("../fonts/LiberationSans-Regular.ttf"),
+    include_bytes!("../fonts/LiberationSans-Bold.ttf"),
+    include_bytes!("../fonts/LiberationSans-Italic.ttf"),
+    include_bytes!("../fonts/LiberationSans-BoldItalic.ttf"),
+    include_bytes!("../fonts/LiberationSerif-Regular.ttf"),
+    include_bytes!("../fonts/LiberationSerif-Bold.ttf"),
+    include_bytes!("../fonts/LiberationSerif-Italic.ttf"),
+    include_bytes!("../fonts/LiberationSerif-BoldItalic.ttf"),
+    include_bytes!("../fonts/LiberationMono-Regular.ttf"),
+    include_bytes!("../fonts/LiberationMono-Bold.ttf"),
+    include_bytes!("../fonts/LiberationMono-Italic.ttf"),
+    include_bytes!("../fonts/LiberationMono-BoldItalic.ttf"),
 ];
 
-/// The parsed faces, one per [`FONTS`] entry (same order), parsed once.
-fn faces() -> &'static [Face<'static>] {
-    static FACES: OnceLock<Vec<Face<'static>>> = OnceLock::new();
-    FACES.get_or_init(|| {
-        FONTS
-            .iter()
-            .map(|f| Face::parse(f.bytes, 0).expect("bundled font parses"))
-            .collect()
+/// The process-wide font database, seeded with the bundled Liberation faces.
+fn db() -> &'static RwLock<Database> {
+    static DB: OnceLock<RwLock<Database>> = OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = Database::new();
+        for &bytes in BUNDLED_FILES {
+            db.load_font_data(bytes.to_vec());
+        }
+        // Empty `font=` maps to the sans-serif default; make that Liberation Sans.
+        db.set_sans_serif_family(DEFAULT_FAMILY);
+        RwLock::new(db)
     })
 }
 
-/// Resolve an OpenSCAD `font` string (`"Family"` or `"Family:style=Style"`) to a
-/// bundled face. Returns the face and whether the requested *family* is one we
-/// bundle — `false` means we fell back to Liberation Sans and the caller should
-/// warn. An unavailable style within a known family silently uses that family's
-/// regular. Matching is case-insensitive; the style's spaces are ignored.
-pub fn resolve_font(font: &str) -> (&'static Face<'static>, bool) {
+/// Load the operating system's installed fonts into the shared database so
+/// `text(font="…")` and [`font_completions`] can use them. Native only (the
+/// browser has no filesystem — see [`register_font_data`]). Idempotent: the
+/// first call scans, later calls are no-ops. Hosts that want reproducible,
+/// machine-independent output (e.g. the geometry oracle) simply never call it.
+pub fn register_system_fonts() {
+    // Filesystem font loading is native-only (the `fs` fontdb feature); on wasm
+    // this is a no-op — the browser supplies fonts via [`register_font_data`].
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static LOADED: AtomicBool = AtomicBool::new(false);
+        if LOADED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Ok(mut db) = db().write() {
+            db.load_system_fonts();
+        }
+    }
+}
+
+/// Register a font from raw file bytes (a `.ttf`/`.otf`/`.ttc`), making all of
+/// its faces available to `text(font="…")` and [`font_completions`]. This is how
+/// the browser supplies fonts obtained via the Local Font Access API. Identical
+/// files passed more than once are loaded only once. Returns the number of faces
+/// newly added.
+pub fn register_font_data(bytes: Vec<u8>) -> usize {
+    // Dedup identical files: the browser hands us one blob per *face*, but a
+    // collection (`.ttc`) yields the same bytes for every face it contains, and
+    // the same model may be re-rendered many times. A content hash keeps us from
+    // reloading (and re-parsing) the same file over and over.
+    static SEEN: OnceLock<RwLock<rustc_hash::FxHashSet<u64>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| RwLock::new(rustc_hash::FxHashSet::default()));
+    let hash = fnv1a(&bytes);
+    if let Ok(mut s) = seen.write() {
+        if !s.insert(hash) {
+            return 0;
+        }
+    }
+    let Ok(mut db) = db().write() else {
+        return 0;
+    };
+    let before = db.len();
+    db.load_font_data(bytes);
+    db.len().saturating_sub(before)
+}
+
+/// FNV-1a hash of a byte slice, for cheap file dedup in [`register_font_data`].
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// Parse an OpenSCAD `font` string (`"Family"` or `"Family:style=Style"`) into a
+/// family name and the weight/slant the style requests. An empty family means
+/// the default (Liberation Sans). Matching is case-insensitive; the style's
+/// spaces are ignored, and `bold`/`italic` may appear in either order.
+fn parse_font(font: &str) -> (String, Weight, Style) {
     let (family_part, attrs) = font.split_once(':').unwrap_or((font, ""));
-    let family = family_part.trim().to_ascii_lowercase();
+    let family = family_part.trim().to_string();
     let style = attrs
         .split(':')
         .find_map(|a| a.trim().strip_prefix("style="))
         .map(|s| s.trim().to_ascii_lowercase().replace(' ', ""))
         .unwrap_or_default();
-    let style = if style.is_empty() { "regular" } else { &style };
+    let weight = if style.contains("bold") {
+        Weight::BOLD
+    } else {
+        Weight::NORMAL
+    };
+    let slant = if style.contains("italic") {
+        Style::Italic
+    } else if style.contains("oblique") {
+        Style::Oblique
+    } else {
+        Style::Normal
+    };
+    (family, weight, slant)
+}
 
-    let find = |fam: &str, sty: &str| FONTS.iter().position(|f| f.family == fam && f.style == sty);
-    // Empty family means the default (Liberation Sans) — a match, not a fallback.
-    let family = if family.is_empty() {
-        "liberation sans"
+/// Resolve a `font` string against the shared database and run `f` with the
+/// matched [`Face`] and whether the requested *family* exists. An unknown family
+/// falls back to Liberation Sans and reports `false` so the caller can warn; an
+/// unavailable *style* within a known family silently uses the closest face
+/// fontdb offers. The bundled Liberation Sans is always present, so a face is
+/// always produced.
+fn with_face<T>(font: &str, f: impl FnOnce(&Face, bool) -> T) -> T {
+    let (family, weight, slant) = parse_font(font);
+    let db = db().read().expect("font db lock");
+
+    let requested = if family.is_empty() {
+        DEFAULT_FAMILY
     } else {
         &family
     };
-    let known_family = FONTS.iter().any(|f| f.family == family);
-    let idx = find(family, style)
-        .or_else(|| find(family, "regular"))
-        .unwrap_or(0);
-    (&faces()[idx], known_family)
+    let known = family.is_empty()
+        || db.faces().any(|fi| {
+            fi.families
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(requested))
+        });
+
+    let query = |fam: &str| {
+        db.query(&Query {
+            families: &[Family::Name(fam)],
+            weight,
+            stretch: Stretch::Normal,
+            style: slant,
+        })
+    };
+    let id = query(requested)
+        .or_else(|| query(DEFAULT_FAMILY))
+        .expect("bundled Liberation Sans is always available");
+
+    db.with_face_data(id, |data, index| {
+        let face = Face::parse(data, index).expect("registered font parses");
+        f(&face, known)
+    })
+    .expect("resolved font id is valid")
+}
+
+/// The coarse OpenSCAD `:style=` bucket for a fontdb face, chosen so a value from
+/// [`font_completions`] resolves back (via [`with_face`]) to the same bucket.
+fn style_label(weight: Weight, style: Style) -> &'static str {
+    let bold = weight.0 >= Weight::BOLD.0;
+    let italic = !matches!(style, Style::Normal);
+    match (bold, italic) {
+        (true, true) => "Bold Italic",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (false, false) => "Regular",
+    }
 }
 
 /// One `font=` value offered for editor autocompletion — see
@@ -109,60 +205,40 @@ pub struct FontCompletion {
     pub detail: String,
 }
 
-/// The `font=` values to offer as editor autocompletions: every bundled face,
-/// rendered as the `Family` string (for the regular style) or the
-/// `Family:style=Style` string OpenSCAD uses. Derived from [`FONTS`] so any
-/// newly bundled face appears automatically. Display-cased for readability;
-/// [`resolve_font`] matches case-insensitively so the casing is cosmetic.
+/// The `font=` values to offer as editor autocompletions: every face currently
+/// in the shared database (bundled Liberation plus any [`register_system_fonts`]
+/// / [`register_font_data`] additions), as the `Family` string (for the regular
+/// style) or the `Family:style=Style` string OpenSCAD uses. Deduped by
+/// family+style bucket and sorted for stable ordering.
 pub fn font_completions() -> Vec<FontCompletion> {
-    // `FONTS` stores families/styles lowercased and space-stripped; recover a
-    // readable form for display and for the string a user would actually type.
-    fn title_case(s: &str) -> String {
-        s.split(' ')
-            .map(|w| {
-                let mut chars = w.chars();
-                match chars.next() {
-                    Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
-                    None => String::new(),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-    fn style_display(style: &str) -> &'static str {
-        match style {
-            "bold" => "Bold",
-            "italic" => "Italic",
-            "bolditalic" => "Bold Italic",
-            _ => "Regular",
+    let db = db().read().expect("font db lock");
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for fi in db.faces() {
+        let Some((family, _)) = fi.families.first() else {
+            continue;
+        };
+        let style = style_label(fi.weight, fi.style);
+        if !seen.insert((family.to_ascii_lowercase(), style)) {
+            continue;
         }
+        let value = if style == "Regular" {
+            family.clone()
+        } else {
+            format!("{family}:style={style}")
+        };
+        out.push(FontCompletion {
+            value,
+            detail: format!("{family} — {style}"),
+        });
     }
-
-    FONTS
-        .iter()
-        .map(|f| {
-            let family = title_case(f.family);
-            if f.style == "regular" {
-                FontCompletion {
-                    detail: format!("{family} — Regular"),
-                    value: family,
-                }
-            } else {
-                let style = style_display(f.style);
-                FontCompletion {
-                    value: format!("{family}:style={style}"),
-                    detail: format!("{family} — {style}"),
-                }
-            }
-        })
-        .collect()
+    out.sort_by(|a, b| a.value.cmp(&b.value));
+    out
 }
 
-/// Parameters for a `text()` call.
-pub struct TextOpts<'a> {
+/// Parameters for a `text()` call, minus the font (resolved by [`render_text`]).
+pub struct TextParams<'a> {
     pub text: &'a str,
-    /// The resolved font face (see [`resolve_font`]).
-    pub face: &'a Face<'a>,
     pub size: f64,
     pub halign: &'a str,
     pub valign: &'a str,
@@ -170,6 +246,39 @@ pub struct TextOpts<'a> {
     pub direction: &'a str,
     /// Segments per Bézier curve (from `$fn`, clamped).
     pub segments: usize,
+}
+
+/// Build the glyph contours for `text(font=…, …)` as `(points, paths, known)`.
+/// `known` is whether the requested family exists (see [`with_face`]); `false`
+/// means the caller should warn that it fell back to Liberation Sans.
+pub fn render_text(font: &str, params: &TextParams) -> (Vec<[f64; 2]>, Vec<Vec<u32>>, bool) {
+    with_face(font, |face, known| {
+        let (points, paths) = text_contours(&TextOpts {
+            text: params.text,
+            face,
+            size: params.size,
+            halign: params.halign,
+            valign: params.valign,
+            spacing: params.spacing,
+            direction: params.direction,
+            segments: params.segments,
+        });
+        (points, paths, known)
+    })
+}
+
+/// Parameters for [`text_contours`]: a [`TextParams`] plus the resolved face.
+struct TextOpts<'a> {
+    text: &'a str,
+    /// The resolved font face.
+    face: &'a Face<'a>,
+    size: f64,
+    halign: &'a str,
+    valign: &'a str,
+    spacing: f64,
+    direction: &'a str,
+    /// Segments per Bézier curve (from `$fn`, clamped).
+    segments: usize,
 }
 
 /// Flattens a glyph's outline into contours (in font units).
@@ -246,7 +355,7 @@ impl ttf_parser::OutlineBuilder for Outliner {
 /// Build the glyph contours for `opts` as `(points, paths)` suitable for a
 /// `Node::Polygon`. Coordinates are in mm; the baseline is at y=0 for
 /// `valign="baseline"`.
-pub fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
+fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
     let face = opts.face;
     let upem = face.units_per_em() as f64;
     if upem <= 0.0 {
@@ -320,34 +429,73 @@ pub fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
 mod tests {
     use super::*;
 
-    fn advance(f: &Face, c: char) -> u16 {
-        f.glyph_hor_advance(f.glyph_index(c).unwrap()).unwrap()
+    /// Horizontal advance of `c` in the face `font` resolves to.
+    fn advance(font: &str, c: char) -> u16 {
+        with_face(font, |f, _| {
+            f.glyph_hor_advance(f.glyph_index(c).unwrap()).unwrap()
+        })
+    }
+    /// Whether the requested family exists in the (bundled-only, in tests) db.
+    fn known(font: &str) -> bool {
+        with_face(font, |_, k| k)
     }
 
     #[test]
     fn resolve_font_selects_family_and_reports_unknown() {
-        // A known family resolves and reports availability; an unknown one falls
-        // back to Liberation Sans and reports `false` so the caller can warn.
-        assert!(resolve_font("Liberation Serif").1);
-        assert!(resolve_font("Liberation Mono").1);
-        assert!(resolve_font("").1); // empty == default Liberation Sans
-        assert!(!resolve_font("Arial").1);
+        // The db starts with only the bundled Liberation faces (tests never call
+        // register_system_fonts), so this is deterministic. A known family
+        // resolves and reports availability; an unknown one falls back to
+        // Liberation Sans and reports `false` so the caller can warn.
+        assert!(known("Liberation Serif"));
+        assert!(known("Liberation Mono"));
+        assert!(known("")); // empty == default Liberation Sans
+        assert!(!known("Arial"));
 
         // Mono is fixed-width; Sans is proportional — proves distinct faces.
-        let mono = resolve_font("Liberation Mono").0;
-        let sans = resolve_font("Liberation Sans").0;
-        assert_eq!(advance(mono, 'i'), advance(mono, 'M'));
-        assert_ne!(advance(sans, 'i'), advance(sans, 'M'));
+        assert_eq!(
+            advance("Liberation Mono", 'i'),
+            advance("Liberation Mono", 'M')
+        );
+        assert_ne!(
+            advance("Liberation Sans", 'i'),
+            advance("Liberation Sans", 'M')
+        );
     }
 
     #[test]
     fn resolve_font_style_matching_is_case_and_space_insensitive() {
         // "Bold Italic", "bolditalic", mixed case all select the same face.
-        let a = resolve_font("Liberation Sans:style=Bold Italic").0;
-        let b = resolve_font("liberation sans:style=bolditalic").0;
-        let regular = resolve_font("Liberation Sans").0;
-        assert_eq!(advance(a, 'A'), advance(b, 'A'));
+        let a = advance("Liberation Sans:style=Bold Italic", 'A');
+        let b = advance("liberation sans:style=bolditalic", 'A');
+        let regular = advance("Liberation Sans", 'A');
+        assert_eq!(a, b);
         // The styled face is genuinely different from regular.
-        assert_ne!(advance(a, 'A'), advance(regular, 'A'));
+        assert_ne!(a, regular);
+    }
+
+    #[test]
+    fn register_font_data_dedups_identical_files() {
+        // The browser hands us one blob per face, so a collection (or a re-render)
+        // re-sends the same bytes; the content-hash guard must load a given file
+        // at most once. (We reuse a bundled TTF as a convenient real font file.)
+        let bytes = BUNDLED_FILES[0].to_vec();
+        let _ = register_font_data(bytes.clone());
+        assert_eq!(
+            register_font_data(bytes),
+            0,
+            "an identical file must not be reloaded"
+        );
+    }
+
+    #[test]
+    fn font_completions_include_bundled_families_and_styles() {
+        let values: Vec<String> = font_completions().into_iter().map(|c| c.value).collect();
+        // Regular is the bare family; other styles use the `:style=` form.
+        assert!(values.iter().any(|v| v == "Liberation Sans"));
+        assert!(values
+            .iter()
+            .any(|v| v == "Liberation Mono:style=Bold Italic"));
+        // Every completion value round-trips: it names a known family.
+        assert!(values.iter().all(|v| known(v)));
     }
 }

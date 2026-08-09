@@ -62,6 +62,7 @@ export function renderMeshExactBrowser(job: {
   fileContents: string[];
   binNames?: string[];
   binData?: string[];
+  fontBlobs?: string[];
 }): Promise<Float32Array> {
   return new Promise((resolve, reject) => {
     const w = new Worker(new URL("./engineWorker.ts", import.meta.url), {
@@ -81,6 +82,7 @@ export function renderMeshExactBrowser(job: {
       preview: false,
       binNames: [],
       binData: [],
+      fontBlobs: [],
       ...job,
     } satisfies RenderRequest);
   });
@@ -95,6 +97,7 @@ interface Job {
   fileContents: string[];
   binNames: string[];
   binData: string[];
+  fontBlobs: string[];
   preview: boolean;
 }
 
@@ -168,6 +171,7 @@ export class Engine {
           job.preview,
           job.binNames,
           job.binData,
+          job.fontBlobs,
         );
       }
     };
@@ -182,6 +186,7 @@ export class Engine {
     preview = false,
     binNames: string[] = [],
     binData: string[] = [],
+    fontBlobs: string[] = [],
   ) {
     if (this.busy) {
       // Cancel the in-flight render by terminating; respawn fresh.
@@ -203,6 +208,7 @@ export class Engine {
       fileContents,
       binNames,
       binData,
+      fontBlobs,
       preview,
       ...this.requestExtra(),
     } satisfies RenderRequest);

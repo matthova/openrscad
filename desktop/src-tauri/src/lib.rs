@@ -234,6 +234,12 @@ fn eval_and_render(
     ),
     EngineError,
 > {
+    // Make the OS's installed fonts available to `text(font="…")` (matching
+    // OpenSCAD's fontconfig behavior). Only pay the font-dir scan when the model
+    // might actually use `text()`; the bundled Liberation family is always there.
+    if source.contains("text") {
+        openrscad_eval::register_system_fonts();
+    }
     let program = openrscad_syntax::parse(source).map_err(|e| {
         let message = format!("parse error: {}", e.message);
         EngineError {
@@ -476,6 +482,41 @@ fn save_model(
 #[tauri::command]
 fn engine_version() -> String {
     format!("openrscad-desktop {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// One `font=` autocomplete entry for the frontend (serde camelCase).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FontEntry {
+    /// The string to insert between the quotes (`Family` or `Family:style=Style`).
+    value: String,
+    /// Human-readable `Family — Style` label.
+    detail: String,
+}
+
+/// Enumerate the OS's installed fonts (plus the bundled Liberation family) as
+/// `font=` autocomplete entries. The native engine already *renders* with these
+/// (it reads font files from disk in `eval_and_render`); this exposes the same
+/// set to the editor's `text(font="…")` autocomplete. The browser gets this list
+/// from the Local Font Access API, but the desktop webview (WKWebView on macOS)
+/// doesn't implement it — so the desktop frontend calls this instead.
+///
+/// Async + `spawn_blocking` so the first-time system-font scan doesn't block the
+/// UI thread; `register_system_fonts` is cached, so later calls are instant.
+#[tauri::command]
+async fn list_fonts() -> Vec<FontEntry> {
+    tauri::async_runtime::spawn_blocking(|| {
+        openrscad_eval::register_system_fonts();
+        openrscad_eval::font_completions()
+            .into_iter()
+            .map(|c| FontEntry {
+                value: c.value,
+                detail: c.detail,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Watch `target`'s directory and call `on_change(content)` whenever the file is
@@ -1072,7 +1113,8 @@ pub fn run() {
             take_pending_open,
             parameters,
             open_file,
-            engine_version
+            engine_version,
+            list_fonts
         ])
         .build(tauri::generate_context!())
         .expect("error while building OpenRSCAD desktop");

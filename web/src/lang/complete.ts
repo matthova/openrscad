@@ -8,6 +8,7 @@ import type {
 } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
 import { BUILTINS } from "./builtins";
+import { systemFontCompletions, fontInfo } from "../systemFonts";
 
 // The `font=` values offered inside a `text(font="…")` string. Mirrors the
 // bundled Liberation family in crates/openrscad-eval/src/text.rs (and its
@@ -29,6 +30,7 @@ const FONT_COMPLETIONS: Completion[] = (() => {
         label: family + suffix,
         type: "constant",
         detail: `${family} — ${label}`,
+        info: fontInfo,
       });
     }
   }
@@ -92,7 +94,13 @@ export function openscadCompletion(
   const fontStr = ctx.matchBefore(/font\s*=\s*"[^"]*/);
   if (fontStr) {
     const from = fontStr.from + fontStr.text.indexOf('"') + 1;
-    return { from, options: FONT_COMPLETIONS, validFor: /^[^"]*$/ };
+    // Bundled Liberation first, then any installed system fonts the user has
+    // granted access to (empty until enabled — see systemFonts.ts). Dedup by
+    // label so a system Liberation doesn't double the bundled entries.
+    const byLabel = new Map<string, Completion>();
+    for (const c of FONT_COMPLETIONS) byLabel.set(c.label, c);
+    for (const c of systemFontCompletions()) byLabel.set(c.label, c);
+    return { from, options: [...byLabel.values()], validFor: /^[^"]*$/ };
   }
 
   const word = ctx.matchBefore(/\$?[\w]*/);
