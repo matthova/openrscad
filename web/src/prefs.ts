@@ -164,9 +164,7 @@ export function loadPrefs(): Prefs {
           : DEFAULTS.fastPreview,
       engine: p.engine === "openscad" ? "openscad" : DEFAULTS.engine,
       systemFonts:
-        typeof p.systemFonts === "boolean"
-          ? p.systemFonts
-          : systemFontsDefault,
+        typeof p.systemFonts === "boolean" ? p.systemFonts : systemFontsDefault,
       quality: QUALITIES.includes(p.quality as Quality)
         ? (p.quality as Quality)
         : DEFAULTS.quality,

@@ -122,8 +122,9 @@ describe("systemFonts on desktop (Tauri)", () => {
   });
 
   function enterTauri() {
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ =
-      {};
+    (
+      window as unknown as { __TAURI_INTERNALS__: unknown }
+    ).__TAURI_INTERNALS__ = {};
   }
 
   it("reports support inside the desktop shell without queryLocalFonts", () => {
@@ -148,7 +149,9 @@ describe("systemFonts on desktop (Tauri)", () => {
     expect(labels).toEqual(["Helvetica", "Helvetica:style=Bold", "Menlo"]);
 
     // The native engine reads font files from disk, so the frontend sends none.
-    expect(await fontBlobsForSource('text("x", font="Helvetica");')).toEqual([]);
+    expect(await fontBlobsForSource('text("x", font="Helvetica");')).toEqual(
+      [],
+    );
   });
 
   it("fails gracefully when the native command errors", async () => {
