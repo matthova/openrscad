@@ -68,14 +68,16 @@ async function wirePrimaryDownload() {
   if (!btn) return;
 
   const target = await pickTarget();
-  btn.textContent = target.label;
-  if (target.asset) {
-    btn.href = `${DL}/${target.asset}`;
-  } else {
-    // No desktop build for this device — the button opens the playground. Use a
-    // relative link so it resolves to /openrscad/playground under the subpath.
-    btn.href = "playground";
+  if (!target.asset) {
+    // No desktop build for this device (phone/tablet). The hero already has a
+    // ghost "Open the playground" button, so upgrading this one would show that
+    // CTA twice — hide it instead and let the note explain desktop availability.
+    btn.hidden = true;
+    if (note) note.textContent = target.note;
+    return;
   }
+  btn.textContent = target.label;
+  btn.href = `${DL}/${target.asset}`;
   if (note) note.textContent = target.note;
 
   // Highlight the matching card in the OS grid so the autodetected choice and
