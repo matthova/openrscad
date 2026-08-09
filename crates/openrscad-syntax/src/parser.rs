@@ -110,7 +110,7 @@ impl<'a> Parser<'a> {
         loop {
             match self.tokens.get(self.pos) {
                 Some(s) if s.token == Token::Gt => {
-                    let path = self.src[start..s.span.start].trim().to_string();
+                    let path = self.src[start..s.span.start].to_string();
                     self.pos += 1;
                     return Ok(path);
                 }
