@@ -434,8 +434,13 @@ fn save_model(
                 &overrides(&param_names, &param_values),
             )
             .map_err(|e| format!("evaluation error: {}", e.message))?;
-            let contours = openrscad_geom::render_contours(&out.node)
-                .ok_or_else(|| "export requires a 2D model".to_string())?;
+            let kernel = openrscad_geom::ManifoldKernel::new();
+            let contours = {
+                let mut geom_cache = cache.lock().unwrap();
+                openrscad_geom::render_contours_cached(&out.node, &kernel, &mut geom_cache)
+            }
+            .map_err(|e| format!("geometry error: {e}"))?
+            .ok_or_else(|| "export requires a 2D model".to_string())?;
             let text = if format == "dxf" {
                 openrscad_geom::export_dxf(&contours)
             } else {

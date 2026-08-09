@@ -16,10 +16,55 @@ pub use shape2d::Contour;
 pub use tessellate::{cube, cylinder, fragments, polyhedron, sphere};
 pub use vector2d::{export_dxf, export_svg, import_dxf, import_svg};
 
-/// Render a node's 2D profile as even-odd contours, or `None` if it isn't a 2D
-/// object. Used by the CLI/engine to export 2D geometry to DXF/SVG.
+/// Render a node's 2D profile as even-odd contours with the target's default
+/// geometry kernel, or `None` if it isn't a 2D object (or projection lowering
+/// fails). This backwards-compatible convenience API is used by embedders that
+/// cannot surface geometry errors; first-party callers should prefer
+/// [`render_contours_with`].
 pub fn render_contours(node: &Node) -> Option<Vec<Contour>> {
-    is_2d(node).then(|| shape2d::render2d(node))
+    #[cfg(not(target_arch = "wasm32"))]
+    let kernel = ManifoldKernel::new();
+    #[cfg(target_arch = "wasm32")]
+    let kernel = RustManifoldKernel::new();
+    render_contours_with(node, &kernel).ok().flatten()
+}
+
+/// Render a node's 2D profile with an explicit geometry kernel.
+///
+/// Unlike the old kernel-free contour walk, this lowers every `projection()`
+/// to a polygon first, so a bare projection can be exported directly to
+/// DXF/SVG. Hard geometry failures are returned to the caller.
+pub fn render_contours_with(
+    node: &Node,
+    kernel: &dyn Kernel,
+) -> Result<Option<Vec<Contour>>, GeomError> {
+    let mut cache = GeomCache::new();
+    render_contours_cached(node, kernel, &mut cache)
+}
+
+/// Cached form of [`render_contours_with`], for hosts that share a geometry
+/// cache between preview/render and vector export.
+pub fn render_contours_cached(
+    node: &Node,
+    kernel: &dyn Kernel,
+    cache: &mut GeomCache,
+) -> Result<Option<Vec<Contour>>, GeomError> {
+    if !is_2d(node) {
+        return Ok(None);
+    }
+    let mut hashes = HashMap::new();
+    hash_all(node, &mut hashes);
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+    let mut ctx = Ctx {
+        kernel,
+        cache,
+        mode: RenderMode::Exact,
+        hashes: &hashes,
+        warnings: &mut warnings,
+        errors: &mut errors,
+    };
+    render2d_lowered(node, &mut ctx).map(Some)
 }
 
 use openrscad_ir::{Node, Vec3};
@@ -921,7 +966,14 @@ fn lower_projections(node: &Node, ctx: &mut Ctx) -> Result<Node, GeomError> {
             auto: *auto,
             child: lower(child, ctx)?,
         },
-        // Transparent: keep the wrapper so provenance survives, lower the child.
+        // Display/provenance wrappers are transparent to 2D geometry. Keep the
+        // wrapper, but still lower a projection immediately beneath it.
+        Color { rgba, child } => Color {
+            rgba: *rgba,
+            child: lower(child, ctx)?,
+        },
+        Highlight(child) => Highlight(lower(child, ctx)?),
+        Background(child) => Background(lower(child, ctx)?),
         Provenance { span, child } => Provenance {
             span: span.clone(),
             child: lower(child, ctx)?,
@@ -1932,6 +1984,47 @@ mod tests {
             "area {}",
             flat_area(&m)
         );
+    }
+
+    #[test]
+    fn bare_projection_contour_export_not_dropped() {
+        // The mesh renderer already handled a bare projection, but the old
+        // DXF/SVG contour API called kernel-free `render2d` directly and got an
+        // empty set. The kernel-aware API must expose the 10×20 footprint.
+        let node = Node::Projection {
+            cut: false,
+            child: Box::new(Node::Cube {
+                size: [10.0, 20.0, 30.0],
+                center: false,
+            }),
+        };
+        let contours = render_contours_with(&node, &RustManifoldKernel::new())
+            .unwrap()
+            .expect("projection is a 2D object");
+        assert!(!contours.is_empty());
+        let mesh = shape2d::flat_mesh(&contours);
+        assert!((flat_area(&mesh) - 200.0).abs() < 1e-3);
+
+        // Keep the original public API useful for downstream embedders too.
+        assert!(!render_contours(&node).unwrap().is_empty());
+    }
+
+    #[test]
+    fn projection_under_color_lowers_for_contour_export() {
+        let node = Node::Color {
+            rgba: [1.0, 0.0, 0.0, 1.0],
+            child: Box::new(Node::Projection {
+                cut: false,
+                child: Box::new(Node::Cube {
+                    size: [4.0, 6.0, 8.0],
+                    center: false,
+                }),
+            }),
+        };
+        let contours = render_contours_with(&node, &RustManifoldKernel::new())
+            .unwrap()
+            .unwrap();
+        assert!((flat_area(&shape2d::flat_mesh(&contours)) - 24.0).abs() < 1e-3);
     }
 
     /// A projection reached through the `render2d` path (here under `hull`) must
