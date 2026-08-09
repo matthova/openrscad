@@ -132,8 +132,7 @@ body.mk {
 .mk-logo {
   width: 20px;
   height: 20px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
+  color: var(--accent);
   flex-shrink: 0;
 }
 .mk-nav-links {
