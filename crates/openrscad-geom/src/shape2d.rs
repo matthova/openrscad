@@ -946,15 +946,42 @@ pub fn linear_extrude(
 /// `rotate_extrude` of the contours around the Z axis.
 pub fn rotate_extrude(contours: &[Contour], angle: f64, frags: FragmentSpec) -> Mesh {
     let mut mesh = Mesh::new();
-    let max_r = contours
-        .iter()
-        .flat_map(|c| c.iter())
-        .map(|p| p[0])
-        .fold(0.0_f64, f64::max);
-    let full = (angle.abs() - 360.0).abs() < 1e-9 || angle.abs() >= 360.0;
-    let steps = fragments(max_r, frags).max(3);
+
+    // OpenSCAD accepts a profile wholly on either side of the Y axis, but not
+    // one that crosses it.  Treat the whole contour set as one profile: two
+    // disjoint contours on opposite sides are invalid for the same reason as a
+    // single crossing contour.  Points on the axis are allowed.
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    for p in contours.iter().flatten() {
+        min_x = min_x.min(p[0]);
+        max_x = max_x.max(p[0]);
+    }
+    if min_x < 0.0 && max_x > 0.0 {
+        return mesh;
+    }
+
+    // Resolution is based on distance from the axis, not signed X.  Using the
+    // signed maximum collapsed a wholly-negative profile to the minimum three
+    // fragments even when `$fn` requested more.
+    let max_r = min_x.abs().max(max_x.abs());
+
+    // A revolution never covers more than one turn.  Preserve the sign (sweep
+    // direction), but clamp larger magnitudes to a full revolution.  A zero
+    // sweep is empty rather than a pair of coincident end caps.
+    let sweep = angle.clamp(-360.0, 360.0);
+    if sweep.abs() < 1e-12 {
+        return mesh;
+    }
+    let full = (sweep.abs() - 360.0).abs() < 1e-9;
+    let full_steps = fragments(max_r, frags).max(3);
+    let steps = if full {
+        full_steps
+    } else {
+        ((full_steps as f64 * sweep.abs() / 360.0).ceil() as u32).max(1)
+    };
     for c in contours {
-        revolve_one(&mut mesh, c, angle, steps, full);
+        revolve_one(&mut mesh, c, sweep, steps, full);
     }
     mesh.ensure_outward();
     mesh
@@ -1010,6 +1037,60 @@ fn revolve_one(mesh: &mut Mesh, contour: &[Point2], angle: f64, steps: u32, full
                 ring(steps, tri[2]),
             ]);
         }
+    }
+}
+
+#[cfg(test)]
+mod rotate_extrude_tests {
+    use super::*;
+
+    fn rect(x0: f64, x1: f64) -> Contour {
+        vec![[x0, 0.0], [x1, 0.0], [x1, 3.0], [x0, 3.0]]
+    }
+
+    fn spec(fn_: f64) -> FragmentSpec {
+        FragmentSpec {
+            fn_,
+            ..FragmentSpec::default()
+        }
+    }
+
+    #[test]
+    fn rotate_extrude_negative_x_keeps_side_and_resolution() {
+        let mesh = rotate_extrude(&[rect(-12.0, -10.0)], 90.0, spec(24.0));
+        let (lo, hi) = mesh.bbox().expect("negative-X profile should revolve");
+
+        // 90° of a 24-fragment circle is six sectors: 6 * 4 profile edges * 2
+        // wall triangles, plus two triangles on each end cap.
+        assert_eq!(mesh.tris.len(), 52);
+        assert!((lo[0] + 12.0).abs() < 1e-9 && hi[0].abs() < 1e-9);
+        assert!((lo[1] + 12.0).abs() < 1e-9 && hi[1].abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotate_extrude_rejects_profile_crossing_axis() {
+        let mesh = rotate_extrude(&[rect(-1.0, 1.0)], 360.0, spec(24.0));
+        assert!(mesh.is_empty());
+    }
+
+    #[test]
+    fn rotate_extrude_partial_sweep_scales_fragments() {
+        let mesh = rotate_extrude(&[rect(10.0, 12.0)], 90.0, spec(24.0));
+        assert_eq!(mesh.tris.len(), 52);
+        assert_eq!(mesh.verts.len(), 28); // seven rings of four profile points
+    }
+
+    #[test]
+    fn rotate_extrude_clamps_sweep_to_one_turn() {
+        let contour = rect(10.0, 12.0);
+        let full = rotate_extrude(std::slice::from_ref(&contour), 360.0, spec(24.0));
+        let over = rotate_extrude(&[contour], 450.0, spec(24.0));
+        assert_eq!(over, full);
+    }
+
+    #[test]
+    fn rotate_extrude_zero_sweep_is_empty() {
+        assert!(rotate_extrude(&[rect(10.0, 12.0)], 0.0, spec(24.0)).is_empty());
     }
 }
 
