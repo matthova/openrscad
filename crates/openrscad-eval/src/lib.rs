@@ -283,6 +283,9 @@ struct Interp<'a> {
     /// scope chain (so `children()` evaluates them at the call site), and the
     /// caller's `in_main` flag (so their spans attribute correctly).
     children_stack: Vec<(Vec<Spanned<Stmt>>, Vec<ScopeRef>, bool)>,
+    /// Active user-module instantiations, outermost to innermost. Built-in
+    /// modules do not participate in OpenSCAD's `$parent_modules` stack.
+    module_stack: Vec<String>,
     /// `include`/`use` file resolver.
     resolver: &'a dyn FileResolver,
     /// Directory of the file currently being evaluated (for relative includes).
@@ -413,6 +416,7 @@ fn eval_program_impl(
         in_main: true,
         cur_span: None,
         children_stack: Vec::new(),
+        module_stack: Vec::new(),
         resolver,
         cur_dir: base_dir.to_string(),
         loading: HashSet::new(),
@@ -849,6 +853,42 @@ impl Interp<'_> {
         Ok(())
     }
 
+    /// Legacy `intersection_for(...)`: evaluate the child once per Cartesian
+    /// binding combination, then intersect those per-iteration child groups.
+    /// Later binding expressions see earlier named bindings.
+    fn b_intersection_for(&mut self, args: &[Arg], children: &[Spanned<Stmt>]) -> EResult<Node> {
+        let mut operands = Vec::new();
+        if !args.is_empty() {
+            self.intersection_for_rec(args, children, &mut operands)?;
+        }
+        Ok(Node::Intersection(operands))
+    }
+
+    fn intersection_for_rec(
+        &mut self,
+        args: &[Arg],
+        children: &[Spanned<Stmt>],
+        operands: &mut Vec<Node>,
+    ) -> EResult<()> {
+        let Some((arg, rest)) = args.split_first() else {
+            operands.push(Node::group(self.eval_children(children)?));
+            return Ok(());
+        };
+
+        let values = iter_values(&self.eval_expr(&arg.value)?)?;
+        for value in values {
+            self.burn()?;
+            self.push_scope();
+            if let Some(name) = &arg.name {
+                self.set_var(name, value);
+            }
+            let result = self.intersection_for_rec(rest, children, operands);
+            self.pop_scope();
+            result?;
+        }
+        Ok(())
+    }
+
     fn eval_module_call(
         &mut self,
         modifier: Option<Modifier>,
@@ -972,6 +1012,7 @@ impl Interp<'_> {
             "union" => Ok(Node::Union(self.eval_children(children)?)),
             "difference" => Ok(Node::Difference(self.eval_children(children)?)),
             "intersection" => Ok(Node::Intersection(self.eval_children(children)?)),
+            "intersection_for" => self.b_intersection_for(args, children),
             "hull" => Ok(Node::Hull(self.eval_children(children)?)),
             "minkowski" => Ok(Node::Minkowski(self.eval_children(children)?)),
             "import" => self.b_import(args),
@@ -982,7 +1023,7 @@ impl Interp<'_> {
             "children" => self.b_children(args),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
-                    self.instantiate_module(&def, args, children)
+                    self.instantiate_module(name, &def, args, children)
                 } else {
                     self.warn(format!("Ignoring unknown module '{name}'"));
                     Ok(Node::Empty)
@@ -1000,6 +1041,7 @@ impl Interp<'_> {
 
     fn instantiate_module(
         &mut self,
+        name: &str,
         def: &Rc<ModClosure>,
         args: &[Arg],
         children: &[Spanned<Stmt>],
@@ -1028,11 +1070,17 @@ impl Interp<'_> {
         self.set_var("$children", Value::Number(slots.len() as f64));
         self.children_stack
             .push((children.to_vec(), caller_scopes, self.in_main));
+        self.module_stack.push(name.to_string());
+        self.set_var(
+            "$parent_modules",
+            Value::Number(self.module_stack.len() as f64),
+        );
         // The body's spans index into the file the module was defined in, so only
         // attribute diagnostics to them when that file is the main source.
         let prev_main = std::mem::replace(&mut self.in_main, def.is_main);
         let r = self.eval_stmts(&def.body);
         self.in_main = prev_main;
+        self.module_stack.pop();
         self.children_stack.pop();
         self.pop_scope();
         self.scopes = saved;
@@ -1965,6 +2013,25 @@ impl Interp<'_> {
     /// Invoke a builtin function, routing any warnings it emits through `warn`
     /// so they pick up the current statement's span.
     fn call_builtin_fn(&mut self, name: &str, args: &[Value]) -> Value {
+        if name == "parent_module" {
+            let index = match args.first() {
+                None => 1isize,
+                Some(Value::Number(n)) => *n as isize,
+                Some(_) => return Value::Undef,
+            };
+            if index < 0 {
+                return Value::Undef;
+            }
+            return self
+                .module_stack
+                .iter()
+                .rev()
+                .nth(index as usize)
+                .cloned()
+                .map(Value::Str)
+                .unwrap_or(Value::Undef);
+        }
+
         let mut ws: Vec<String> = Vec::new();
         let v = builtin_fn(name, args, &mut ws);
         for m in ws {
@@ -3322,6 +3389,33 @@ mod tests {
     }
 
     #[test]
+    fn intersection_for_uses_dependent_cartesian_bindings() {
+        let out = eval(
+            "intersection_for(i=[1,2], j=[i,i+10]) \
+             translate([i,j,0]) cube(1);",
+        );
+        let Node::Intersection(operands) = out.node else {
+            panic!("expected intersection_for to lower to Intersection");
+        };
+        let translations: Vec<[f64; 3]> = operands
+            .into_iter()
+            .map(|node| match node {
+                Node::Translate { v, .. } => v,
+                other => panic!("expected translated operand, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            translations,
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 11.0, 0.0],
+                [2.0, 2.0, 0.0],
+                [2.0, 12.0, 0.0],
+            ]
+        );
+    }
+
+    #[test]
     fn last_assignment_wins() {
         // x is hoisted: cube should see x = 2.
         let out = eval("x = 1; cube(x); x = 2;");
@@ -3841,6 +3935,37 @@ mod tests {
              wrap() cube(2);",
         );
         assert_ne!(out.node, Node::Empty, "forwarded cube was lost");
+    }
+
+    #[test]
+    fn parent_module_stack_tracks_nested_user_modules() {
+        assert_eq!(
+            echoes(concat!(
+                "echo(\"top\", $parent_modules, parent_module(0));",
+                "module a() { translate([0,0,0]) b(); }",
+                "module b() { echo(\"nested\", $parent_modules, parent_module(0), ",
+                "parent_module(1), parent_module()); }",
+                "a();",
+            )),
+            vec![
+                "ECHO: \"top\", undef, undef",
+                "ECHO: \"nested\", 2, \"b\", \"a\", \"a\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn parent_module_stack_survives_children_forwarding() {
+        assert_eq!(
+            echoes(concat!(
+                "module direct() { children(); }",
+                "module forward() { direct() children(); }",
+                "module outer() { forward() children(); }",
+                "outer() echo(\"child\", $parent_modules, parent_module(0), ",
+                "parent_module(1), parent_module(2), parent_module(3));",
+            )),
+            vec!["ECHO: \"child\", 3, \"direct\", \"forward\", \"outer\", undef"]
+        );
     }
 
     #[test]
