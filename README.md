@@ -10,8 +10,8 @@ OpenRSCAD is a fast, from-scratch reimplementation of the
 <a href="https://openscad.org" target="_blank" rel="noopener noreferrer">OpenSCAD</a> language: the same script-it-yourself CAD
 workflow, a modern geometry kernel, and a single Rust core that runs in your
 browser, on your desktop, in your editor, and on the command line. Edits
-re-render in single-digit milliseconds, and output is verified bit-for-bit
-against stock OpenSCAD.
+re-render in single-digit milliseconds, with representative language and
+geometry behavior checked against stock OpenSCAD.
 
 **<a href="https://matthova.github.io/openrscad/playground" target="_blank" rel="noopener noreferrer">▶ Try it live in your browser — no install</a>**
 
@@ -101,15 +101,17 @@ CDN usage, and the full API.
 - **Warm edits render incrementally** — a content-addressed geometry cache
   recomputes only the subtrees that changed, so re-renders after a typical edit
   land in well under a millisecond.
-- **Bit-for-bit verified** — a geometry oracle diffs rendered meshes against
-  stock **OpenSCAD 2024.12** across a 76-case corpus (volume, bounding box,
-  centroid, component count, watertight + 2-manifoldness), and BOSL2's function
-  suite runs its `[[test]]` blocks in CI. Output meshes are always watertight
-  and 2-manifold.
+- **Oracle-checked** — a geometry oracle compares rendered meshes with stock
+  **OpenSCAD 2024.12** across a 76-case corpus (volume, bounding box, centroid,
+  component count, watertightness, and 2-manifoldness), and BOSL2's function
+  suite runs its `[[test]]` blocks in CI. Exact renders target watertight,
+  2-manifold output; fast previews and recovered geometry failures are labelled
+  as approximate/degraded instead of being presented as exact.
 
-Compatibility is "OpenSCAD in spirit," not bug-for-bug. Known gaps and
-intentional divergences are documented in [COMPAT.md](COMPAT.md) — a switcher
-hits a documented limitation, never a silently wrong answer.
+Compatibility targets OpenSCAD's 2021.01 stable core, not bug-for-bug fidelity.
+Known gaps and intentional divergences are documented in [COMPAT.md](COMPAT.md),
+with full closure tracked by the
+[measured compatibility plan](docs/roadmap/track-f-measured-openscad-compatibility.md).
 
 ## Build from source
 

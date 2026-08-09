@@ -6,8 +6,8 @@ meshes — the same Rust core that powers the
 [playground](https://matthova.github.io/openrscad) — in your own browser app
 or Node tool.
 
-- **Accurate.** Output is verified bit-for-bit against stock OpenSCAD; the wasm
-  build uses the pure-Rust Manifold geometry kernel.
+- **Oracle-checked.** Representative output is compared with stock OpenSCAD by
+  geometry metrics; the wasm build uses the pure-Rust Manifold geometry kernel.
 - **Fast, incremental.** A persistent geometry cache makes warm edits
   single-digit-millisecond.
 - **Self-contained.** No native dependencies, no threads, no `SharedArrayBuffer`
