@@ -651,6 +651,25 @@ body {
   height: 100%;
 }
 
+/* Font preview shown as the `info` panel below a highlighted `font=` completion
+   (positioned by `completionInfoBelow` in App.tsx; see systemFonts.ts
+   `fontPreview`). Renders a pangram in the actual typeface so you can eyeball a
+   font while scrolling the list. */
+.cm-font-preview {
+  max-width: 22rem;
+  padding: var(--space-1) 0;
+  color: var(--text);
+  line-height: 1.35;
+}
+.cm-font-preview-sample {
+  font-size: 1.25rem;
+}
+.cm-font-preview-digits {
+  font-size: 1rem;
+  opacity: 0.8;
+  margin-top: var(--space-1);
+}
+
 .viewer {
   position: relative;
   min-height: 0;

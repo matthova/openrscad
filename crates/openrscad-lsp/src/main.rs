@@ -759,6 +759,12 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        // Load the OS's installed fonts in the background so `font="…"`
+        // completions and preview rendering see system fonts (not just the
+        // bundled Liberation family). The scan can take a moment; doing it off
+        // the handshake keeps startup snappy, and the shared font db is
+        // concurrency-safe, so completions simply gain entries once it finishes.
+        tokio::task::spawn_blocking(openrscad_eval::register_system_fonts);
         self.client
             .log_message(MessageType::INFO, "openrscad-lsp ready")
             .await;

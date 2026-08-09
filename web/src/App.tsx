@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, tooltips } from "@codemirror/view";
 import { EditorState, Compartment, Prec } from "@codemirror/state";
 import { syntaxHighlighting } from "@codemirror/language";
 import { setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import { basicSetup } from "codemirror";
+import { autocompletion } from "@codemirror/autocomplete";
 import { indentWithTab } from "@codemirror/commands";
 import { openscad } from "./lang/openscad";
 import {
@@ -26,6 +27,12 @@ import {
   export2dBrowser,
   renderMeshExactBrowser,
 } from "./engine";
+import {
+  enableSystemFonts,
+  disableSystemFonts,
+  systemFontsSupported,
+  fontBlobsForSource,
+} from "./systemFonts";
 import type { RenderResponse } from "./engineWorker";
 import {
   reduce,
@@ -116,6 +123,28 @@ import { UpdateBanner } from "./UpdateBanner";
 import { pickDownloadUrl } from "./downloads";
 
 const TAURI = isTauri();
+
+// Render a completion's info panel BELOW the completion list instead of beside
+// it, so the `font=` preview (a pangram in the actual typeface — see
+// systemFonts.ts) reads on its own line rather than being squeezed to the right
+// of the list. Flips above when there isn't room below. Overrides basicSetup's
+// default `positionInfo` (this extension is added after it, so it wins). The
+// returned `style` fully replaces the info element's inline style (CodeMirror
+// sets it via cssText), and it's positioned absolutely within the list tooltip,
+// so `top: 100%`/`bottom: 100%` sit it just under/over the list, `left: 0`
+// aligns it to the list's left edge.
+const completionInfoBelow = autocompletion({
+  positionInfo: (_view, list, _option, info, space) => {
+    const infoHeight = info.bottom - info.top;
+    const roomBelow = space.bottom - list.bottom;
+    const below = roomBelow >= infoHeight || roomBelow >= list.top - space.top;
+    const maxWidth = Math.min(400, space.right - list.left);
+    return {
+      style: `${below ? "top" : "bottom"}: 100%; left: 0; max-width: ${maxWidth}px`,
+      class: "cm-completionInfo-below",
+    };
+  },
+});
 
 const GITHUB_URL = "https://github.com/matthova/openrscad";
 
@@ -320,6 +349,24 @@ export function App() {
     "fastPreview",
     loadPrefs().fastPreview,
   );
+  // Use the OS's installed fonts in `text(font="…")`: in the browser via the
+  // permission-gated Local Font Access API; on desktop via the native `list_fonts`
+  // command (the native engine renders with them either way). The ref is read by
+  // the render closures to decide whether to gather font bytes for the wasm engine.
+  const [systemFonts, systemFontsRef, setSystemFontsPref] = usePref(
+    "systemFonts",
+    loadPrefs().systemFonts,
+  );
+  // Load system fonts on startup when the pref is on (the default on desktop; see
+  // prefs.ts). Desktop fetches the native font list with no prompt. In the browser
+  // the Local Font Access API requires a user gesture, so this may silently no-op
+  // until the user re-opens the toggle — but when the browser allows it, the fonts
+  // (and their autocomplete) come back automatically. The pref is left as-is so
+  // the toggle keeps reflecting the user's intent either way.
+  useEffect(() => {
+    if (loadPrefs().systemFonts && systemFontsSupported())
+      void enableSystemFonts();
+  }, []);
   // Render quality ($fn/$fa/$fs). Mirrored to a ref so `renderNow` injects the
   // live setting; a NOT-in-share-link pref (quality is a viewing preference).
   const qualityRef = useRef<QualitySettings>({
@@ -740,6 +787,14 @@ export function App() {
         // captured local) so a live engine swap takes effect on the next render.
         const { names: fileNames, contents: fileContents } =
           await resolveClosure(fs[0].content, textLibs, LIB_BASE);
+        // If system fonts are enabled, hand the engine the bytes of any font the
+        // model references (only those, to keep transfers small). Scan the whole
+        // closure so fonts used in included/used libraries load too. Empty otherwise.
+        const fontBlobs = systemFontsRef.current
+          ? await fontBlobsForSource(
+              [fs[0].content, ...fileContents].join("\n"),
+            )
+          : [];
         engineRef.current?.render(
           fs[0].content,
           names,
@@ -749,6 +804,7 @@ export function App() {
           fastPreviewRef.current,
           binNames,
           binData,
+          fontBlobs,
         );
       }
     };
@@ -793,6 +849,17 @@ export function App() {
             ]),
           ),
           basicSetup,
+          // Render tooltips (autocomplete popup + `font=` preview) into a
+          // body-level container so they overflow the editor pane and float over
+          // the viewport ("pop out"). Without this, the default container is the
+          // `.cm-editor`, and WebKit (the desktop Tauri webview) forces such
+          // tooltips to `position: absolute`, so the editor pane's overflow clips
+          // them — the list and preview get cut off (Chrome keeps them `fixed`,
+          // so the browser build pops out either way).
+          tooltips({ parent: document.body }),
+          // After basicSetup so it overrides the default info-panel placement:
+          // the `font=` preview renders below the completion list, not beside it.
+          completionInfoBelow,
           keymap.of([
             // ⌘S saves the active tab to disk (desktop) or downloads it (web);
             // ⌘⇧S is Save As (desktop). preventDefault stops the browser's own
@@ -1251,6 +1318,31 @@ export function App() {
   function toggleFastPreview() {
     setFastPreviewPref(!fastPreviewRef.current);
     renderNowRef.current?.();
+  }
+
+  /** Toggle using the OS's installed fonts in `text(font="…")`. Turning it on
+   *  prompts for the Local Font Access permission — this click is the required
+   *  user gesture — then re-renders and refreshes the `font=` autocomplete. On
+   *  denial (or an unsupported browser) it stays off and explains why. */
+  async function toggleSystemFonts() {
+    if (systemFontsRef.current) {
+      disableSystemFonts();
+      setSystemFontsPref(false);
+      renderNowRef.current?.();
+      return;
+    }
+    const res = await enableSystemFonts();
+    if (res.ok) {
+      setSystemFontsPref(true);
+      renderNowRef.current?.();
+    } else {
+      setSystemFontsPref(false);
+      setStatus((s) => ({
+        ...s,
+        error: `System fonts unavailable: ${res.error}`,
+      }));
+      setConsoleOpen(true);
+    }
   }
 
   /** Change the render-quality preset (or the custom $fn), persist it, and
@@ -1998,6 +2090,11 @@ export function App() {
       try {
         const { names: fileNames, contents: fileContents } =
           await resolveClosure(fs[0].content, textLibs, LIB_BASE);
+        const fontBlobs = systemFontsRef.current
+          ? await fontBlobsForSource(
+              [fs[0].content, ...fileContents].join("\n"),
+            )
+          : [];
         const text = await export2dBrowser({
           source: fs[0].content,
           names,
@@ -2006,6 +2103,7 @@ export function App() {
           fileContents,
           binNames,
           binData,
+          fontBlobs,
           format,
         });
         saveExport(new TextEncoder().encode(text), format);
@@ -2033,6 +2131,11 @@ export function App() {
           fileContents,
           binNames,
           binData,
+          fontBlobs: systemFontsRef.current
+            ? await fontBlobsForSource(
+                [fs[0].content, ...fileContents].join("\n"),
+              )
+            : [],
         });
       } catch (err) {
         setStatus((s) => ({ ...s, error: `export failed: ${String(err)}` }));
@@ -2205,6 +2308,7 @@ export function App() {
               sectionOn ||
               engineKind !== "openrscad" ||
               fastPreview ||
+              systemFonts ||
               quality !== "normal"
             }
           >
@@ -2292,6 +2396,24 @@ export function App() {
               }
             >
               Fast preview
+            </button>
+            <button
+              className={`popover-row popover-choice ${systemFonts ? "active" : ""}`}
+              data-cmd="system-fonts"
+              aria-pressed={systemFonts}
+              disabled={!systemFontsSupported()}
+              onClick={toggleSystemFonts}
+              title={
+                !systemFontsSupported()
+                  ? "System fonts need the Local Font Access API — available in Chromium browsers (Chrome/Edge). The bundled Liberation fonts always work."
+                  : systemFonts
+                    ? 'Using your installed system fonts in text(font="…"). Click to disable.'
+                    : TAURI
+                      ? 'List your installed system fonts in text(font="…") autocomplete. Click to enable.'
+                      : 'Use your installed system fonts in text(font="…") and list them in autocomplete. Click to grant access.'
+              }
+            >
+              System fonts
             </button>
             <label
               className="popover-row popover-setting"

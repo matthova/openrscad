@@ -4,6 +4,15 @@
 
 const KEY = "openrscad.prefs.v1";
 
+/** True inside the Tauri desktop shell (mirrors `isTauri` in desktopEngine.ts;
+ *  inlined to keep this low-level module import-free). On desktop the native
+ *  engine reads OS fonts with no permission prompt, so system fonts default on;
+ *  the browser needs an explicit user gesture for Local Font Access, so it stays
+ *  off until the user opts in. */
+function isDesktopHost(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 /** Which render engine the playground drives (browser only). "openrscad" is our own
  *  wasm engine; "openscad" is the vendored OpenSCAD wasm build. */
 export type EngineKind = "openrscad" | "openscad";
@@ -23,6 +32,13 @@ export interface Prefs {
   fastPreview: boolean;
   /** Active render engine (browser only; the desktop shell always uses native). */
   engine: EngineKind;
+  /** Let `text(font="…")` use the OS's installed fonts (and list them in the
+   *  `font=` autocomplete). On desktop this is a native call (no permission) and
+   *  defaults on; in the browser it's the permission-gated Local Font Access API
+   *  (Chromium-only, a no-op elsewhere) and defaults off until the user opts in.
+   *  Sticky so a user's choice persists across sessions (subject, in the browser,
+   *  to it re-granting the permission). See `isDesktopHost` for the default. */
+  systemFonts: boolean;
   /** Render resolution preset (see Quality). */
   quality: Quality;
   /** Custom-quality overrides; null means "don't inject this one". */
@@ -63,6 +79,7 @@ const DEFAULTS: Prefs = {
   linkHighlight: true,
   fastPreview: false,
   engine: "openrscad",
+  systemFonts: false,
   quality: "normal",
   customFn: null,
   customFa: null,
@@ -128,9 +145,13 @@ const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 
 export function loadPrefs(): Prefs {
+  // The system-fonts default is host-dependent (on for desktop, off for the
+  // browser — see `isDesktopHost`), so it's resolved here rather than baked into
+  // the static DEFAULTS.
+  const systemFontsDefault = isDesktopHost();
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULTS };
+    if (!raw) return { ...DEFAULTS, systemFonts: systemFontsDefault };
     const p = JSON.parse(raw) as Partial<Prefs>;
     return {
       linkHighlight:
@@ -142,6 +163,10 @@ export function loadPrefs(): Prefs {
           ? p.fastPreview
           : DEFAULTS.fastPreview,
       engine: p.engine === "openscad" ? "openscad" : DEFAULTS.engine,
+      systemFonts:
+        typeof p.systemFonts === "boolean"
+          ? p.systemFonts
+          : systemFontsDefault,
       quality: QUALITIES.includes(p.quality as Quality)
         ? (p.quality as Quality)
         : DEFAULTS.quality,
@@ -188,7 +213,7 @@ export function loadPrefs(): Prefs {
           : DEFAULTS.desktopCalloutDismissed,
     };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, systemFonts: systemFontsDefault };
   }
 }
 

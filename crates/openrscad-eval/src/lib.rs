@@ -11,7 +11,7 @@ mod text;
 mod value;
 mod vm;
 
-pub use text::{font_completions, FontCompletion};
+pub use text::{font_completions, register_font_data, register_system_fonts, FontCompletion};
 pub use value::{format_number, Value};
 
 use openrscad_ir::{FragmentSpec, Node, Vec3};
@@ -1283,17 +1283,12 @@ impl Interp<'_> {
         let m = self.bind_named(&["text", "size", "font"], args)?;
         let text = m.get("text").map(Value::to_str).unwrap_or_default();
         let size = m.get("size").and_then(Value::as_number).unwrap_or(10.0);
-        // Resolve `font` against the bundled Liberation family (Sans/Serif/Mono ×
-        // Regular/Bold/Italic/BoldItalic — the exact files OpenSCAD ships). An
-        // unknown *family* falls back to Liberation Sans with a warning; known
-        // families and their styles render byte-for-byte like OpenSCAD.
+        // Resolve `font` against the shared font database: the bundled Liberation
+        // family (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic — the exact
+        // files OpenSCAD ships, always available and byte-for-byte identical)
+        // plus any system fonts the host registered. An unknown *family* falls
+        // back to Liberation Sans with a warning.
         let font = m.get("font").map(Value::to_str).unwrap_or_default();
-        let (face, family_known) = text::resolve_font(&font);
-        if !font.is_empty() && !family_known {
-            self.warn(format!(
-                "text(): font {font:?} not available; using the bundled Liberation Sans"
-            ));
-        }
         let sopt = |k: &str, d: &str| m.get(k).map(Value::to_str).unwrap_or_else(|| d.to_string());
         let halign = sopt("halign", "left");
         let valign = sopt("valign", "baseline");
@@ -1307,16 +1302,23 @@ impl Interp<'_> {
             8
         };
 
-        let (points, paths) = text::text_contours(&text::TextOpts {
-            text: &text,
-            face,
-            size,
-            halign: &halign,
-            valign: &valign,
-            spacing,
-            direction: &direction,
-            segments,
-        });
+        let (points, paths, family_known) = text::render_text(
+            &font,
+            &text::TextParams {
+                text: &text,
+                size,
+                halign: &halign,
+                valign: &valign,
+                spacing,
+                direction: &direction,
+                segments,
+            },
+        );
+        if !font.is_empty() && !family_known {
+            self.warn(format!(
+                "text(): font {font:?} not available; using the bundled Liberation Sans"
+            ));
+        }
         Ok(Node::Polygon {
             points,
             paths: Some(paths),
