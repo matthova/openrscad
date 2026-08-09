@@ -1053,9 +1053,21 @@ impl Interp<'_> {
             return err("maximum module recursion depth exceeded");
         }
         self.depth += 1;
+        // OpenSCAD exposes the callee through parent_module() while evaluating
+        // its arguments/defaults, even though `$parent_modules` still resolves
+        // dynamically from the caller's special-variable frame until the body
+        // frame below is pushed.
+        self.module_stack.push(name.to_string());
         // Arguments are evaluated in the caller's scope; the body runs in the
         // module's captured (lexical) environment.
-        let bound = self.bind_params(&def.params, args)?;
+        let bound = match self.bind_params(&def.params, args, &def.env) {
+            Ok(bound) => bound,
+            Err(error) => {
+                self.module_stack.pop();
+                self.depth -= 1;
+                return Err(error);
+            }
+        };
         let caller_scopes = self.scopes.clone();
         let saved = std::mem::replace(&mut self.scopes, def.env.clone());
         self.push_scope();
@@ -1070,7 +1082,6 @@ impl Interp<'_> {
         self.set_var("$children", Value::Number(slots.len() as f64));
         self.children_stack
             .push((children.to_vec(), caller_scopes, self.in_main));
-        self.module_stack.push(name.to_string());
         self.set_var(
             "$parent_modules",
             Value::Number(self.module_stack.len() as f64),
@@ -1745,23 +1756,17 @@ impl Interp<'_> {
         Ok(map)
     }
 
-    fn bind_params(&mut self, params: &[Param], args: &[Arg]) -> EResult<FastMap<String, Value>> {
+    fn bind_params(
+        &mut self,
+        params: &[Param],
+        args: &[Arg],
+        definition_env: &[ScopeRef],
+    ) -> EResult<FastMap<String, Value>> {
         let mut map = FastMap::default();
-        // Every declared parameter is in scope for the body — bound to its
-        // default expression, or to `undef` when it has neither a default nor a
-        // supplied argument. This matches OpenSCAD: a parameter always shadows
-        // an outer variable of the same name, even when the caller omits it.
-        // Without the `undef` fallback, an omitted parameter would leak through
-        // to a global of the same name (e.g. BOSL2's `circ_pitch`), breaking the
-        // ubiquitous `assert(...) expr` guard idiom, whose body can't compile to
-        // the slot-based VM path and so relies on this map.
-        for p in params {
-            let v = match &p.default {
-                Some(d) => self.eval_expr(d)?,
-                None => Value::Undef,
-            };
-            map.insert(p.name.clone(), v);
-        }
+
+        // Explicit arguments are eager and evaluated left-to-right in the
+        // caller's scope. Named arguments that aren't declared parameters still
+        // become locals (with an OpenSCAD warning omitted here), so retain them.
         let mut pos = 0;
         for a in args {
             let v = self.eval_expr(&a.value)?;
@@ -1777,7 +1782,37 @@ impl Interp<'_> {
                 }
             }
         }
+
+        self.fill_param_defaults(params, definition_env, &mut map)?;
         Ok(map)
+    }
+
+    /// Fill only omitted parameters, evaluating their defaults in the closure's
+    /// lexical environment. `$` variables remain dynamic because only the
+    /// ordinary scope chain is swapped. A missing parameter without a default is
+    /// explicitly bound to `undef`, so it still shadows an outer name in the body.
+    fn fill_param_defaults(
+        &mut self,
+        params: &[Param],
+        definition_env: &[ScopeRef],
+        bound: &mut FastMap<String, Value>,
+    ) -> EResult<()> {
+        let saved = std::mem::replace(&mut self.scopes, definition_env.to_vec());
+        let result = (|| -> EResult<()> {
+            for p in params {
+                if bound.contains_key(&p.name) {
+                    continue;
+                }
+                let value = match &p.default {
+                    Some(default) => self.eval_expr(default)?,
+                    None => Value::Undef,
+                };
+                bound.insert(p.name.clone(), value);
+            }
+            Ok(())
+        })();
+        self.scopes = saved;
+        result
     }
 
     fn first_positional(&mut self, args: &[Arg]) -> EResult<Value> {
@@ -1942,20 +1977,29 @@ impl Interp<'_> {
                 .clone()
             {
                 let mut locals = vec![Value::Undef; chunk.n_locals()];
-                // Defaults first (in caller scope), then positional overrides —
-                // matching `bind_params`' evaluation order.
-                for (i, p) in f.params.iter().enumerate() {
-                    if let Some(d) = &p.default {
-                        locals[i] = self.eval_expr(d)?;
-                    }
-                }
+                // Explicit arguments are evaluated first in the caller's scope.
                 for (i, a) in args.iter().enumerate() {
                     locals[i] = self.eval_expr(&a.value)?;
                 }
+
+                // Only omitted defaults run, and they resolve ordinary names in
+                // the function's captured lexical environment. Special `$`
+                // variables remain dynamic because `specials` is not swapped.
+                let saved = std::mem::replace(&mut self.scopes, f.env.clone());
+                let defaults = (|| -> EResult<()> {
+                    for (i, p) in f.params.iter().enumerate().skip(args.len()) {
+                        if let Some(default) = &p.default {
+                            locals[i] = self.eval_expr(default)?;
+                        }
+                    }
+                    Ok(())
+                })();
+                self.scopes = saved;
+                defaults?;
                 return self.run_chunk(f, chunk, locals);
             }
         }
-        let bound = self.bind_params(&f.params, args)?;
+        let bound = self.bind_params(&f.params, args, &f.env)?;
         self.run_bound(f, bound)
     }
 
@@ -1983,17 +2027,12 @@ impl Interp<'_> {
     /// positionally against the parameter list.
     fn call_function_values(&mut self, f: &Rc<FnClosure>, argv: Vec<Value>) -> EResult<Value> {
         let mut bound = FastMap::default();
-        for p in &f.params {
-            if let Some(d) = &p.default {
-                let v = self.eval_expr(d)?;
-                bound.insert(p.name.clone(), v);
-            }
-        }
         for (i, v) in argv.into_iter().enumerate() {
             if let Some(p) = f.params.get(i) {
                 bound.insert(p.name.clone(), v);
             }
         }
+        self.fill_param_defaults(&f.params, &f.env, &mut bound)?;
         self.run_bound(f, bound)
     }
 
@@ -2129,7 +2168,7 @@ impl Interp<'_> {
                 // A self-call in tail position becomes a loop iteration.
                 if let Some(g) = self.lookup_func(name) {
                     if Rc::ptr_eq(&g, f) {
-                        let next = self.bind_params(&f.params, args)?;
+                        let next = self.bind_params(&f.params, args, &f.env)?;
                         return Ok(TailResult::TailCall(next));
                     }
                 }
@@ -3735,6 +3774,55 @@ mod tests {
     }
 
     #[test]
+    fn defaults_are_lazy_lexical_and_keep_specials_dynamic() {
+        // Oracle-derived ordering and scope rules, exercised through a compiled
+        // function (`f`), tree-walk fallback (`g`), and a module (`m`):
+        // supplied args run first in caller scope; only missing defaults run;
+        // ordinary names come from the definition scope, while `$d` is dynamic.
+        assert_eq!(
+            echoes(concat!(
+                "x=10; $d=1;",
+                "function f(a=echo(\"f-default\")x,b=$d,c=echo(\"f-dead\")3)=[a,b,c];",
+                "function g(a=echo(\"g-default\")x,b=$d,c=echo(\"g-dead\")3)=",
+                "assert(true)[a,b,c];",
+                "module m(a=echo(\"m-default\")x,b=$d,c=echo(\"m-dead\")3){",
+                "echo(\"m\",a,b,c);}",
+                "module caller(){x=20;$d=7;",
+                "echo(\"f\",f(c=echo(\"f-arg\")x));",
+                "echo(\"g\",g(c=echo(\"g-arg\")x));",
+                "m(c=echo(\"m-arg\")x);}",
+                "caller();",
+            )),
+            vec![
+                "ECHO: \"f-arg\"",
+                "ECHO: \"f-default\"",
+                "ECHO: \"f\", [10, 7, 20]",
+                "ECHO: \"g-arg\"",
+                "ECHO: \"g-default\"",
+                "ECHO: \"g\", [10, 7, 20]",
+                "ECHO: \"m-arg\"",
+                "ECHO: \"m-default\"",
+                "ECHO: \"m\", 10, 7, 20",
+            ]
+        );
+    }
+
+    #[test]
+    fn module_defaults_observe_dynamic_instantiation_context() {
+        // During binding, `$parent_modules` is inherited from the caller frame,
+        // while parent_module(0) already identifies the callee being instantiated.
+        assert_eq!(
+            echoes(concat!(
+                "module a(){b();}",
+                "module b(depth=$parent_modules,current=parent_module(0)){",
+                "echo(depth,current,$parent_modules,parent_module(0));}",
+                "a();",
+            )),
+            vec!["ECHO: 1, \"b\", 2, \"b\""]
+        );
+    }
+
+    #[test]
     fn cross_2d_is_scalar_3d_is_vector() {
         // OpenSCAD: 2D cross -> scalar z, 3D cross -> vector, mismatch -> undef.
         assert_eq!(echoes("echo(cross([1,2],[3,4]));"), vec!["ECHO: -2"]);
@@ -3829,6 +3917,53 @@ mod tests {
         assert_eq!(
             echoes("function h(n)=n==0?0:g(n-1); function g(n)=n==0?1:h(n-1); echo(g(7), h(7));"),
             vec!["ECHO: 0, 1"]
+        );
+    }
+
+    #[test]
+    fn vm_internal_call_defaults_use_callee_definition_scope() {
+        // The direct `inner()` call exercises the positional VM fast path.
+        // `outer` compiles to a VM call of `inner`, so that invocation's zero
+        // pre-evaluated arguments flow through `call_function_values` instead.
+        assert_eq!(
+            echoes(concat!(
+                "x=10; $d=1; function inner(a=x,b=$d)=[a,b]; function outer()=inner();",
+                "module caller(){x=20; $d=7; echo(inner(),outer());} caller();",
+            )),
+            vec!["ECHO: [10, 7], [10, 7]"]
+        );
+    }
+
+    #[test]
+    fn vm_paths_do_not_run_supplied_defaults() {
+        // `fast(...)` uses the direct positional VM path; `via_vm()` invokes
+        // `callee(...)` from bytecode with an already-evaluated argument.
+        assert_eq!(
+            echoes(concat!(
+                "function fast(a=echo(\"fast-dead\")1)=a;",
+                "function callee(a=echo(\"callee-dead\")1)=a;",
+                "function via_vm()=callee(echo(\"vm-arg\")3);",
+                "echo(fast(echo(\"fast-arg\")2)); echo(via_vm());",
+            )),
+            vec![
+                "ECHO: \"fast-arg\"",
+                "ECHO: 2",
+                "ECHO: \"vm-arg\"",
+                "ECHO: 3",
+            ]
+        );
+    }
+
+    #[test]
+    fn tree_walk_tco_refills_omitted_defaults() {
+        // `assert` forces tree-walk, and the self-tail-call omits `step`; this
+        // must reuse the frame while re-evaluating the default each iteration.
+        assert_eq!(
+            echoes(concat!(
+                "function down(n,step=1)=assert(true) ",
+                "n<=0 ? 0 : down(n-step); echo(down(20000));",
+            )),
+            vec!["ECHO: 0"]
         );
     }
 
