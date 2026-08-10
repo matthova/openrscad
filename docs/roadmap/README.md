@@ -7,7 +7,7 @@ is active._
 
 | track | doc | theme | effort | exit criterion (summary) |
 |---|---|---|---|---|
-| **A (M6, complete)** | [track-a-trustworthy-geometry.md](track-a-trustworthy-geometry.md) | Geometry oracle and known silent-geometry fixes | shipped | Current gates: `xtask geom` 76/76, `xtask echo` 25/25, `xtask bosl2` 503/513 expected baseline |
+| **A (M6, complete)** | [track-a-trustworthy-geometry.md](track-a-trustworthy-geometry.md) | Geometry oracle and known silent-geometry fixes | shipped | Current gates: `xtask geom` 81/81, `xtask echo` 25/25, `xtask bosl2` 503/513 expected baseline |
 | **B (M7, complete)** | [track-b-switcher-experience.md](track-b-switcher-experience.md) | Desktop/project workflow, diagnostics, color, PNG, presets, animation | shipped | Daily switcher workflow exists across desktop and CLI |
 | **C (complete)** | [track-c-ci-hardening.md](track-c-ci-hardening.md) | CI, fuzzing, wasm, desktop, web, and oracle gates | shipped incrementally | Retained as a historical audit; current workflow files are authoritative |
 | **D (M8, complete)** | [track-d-ui-structure.md](track-d-ui-structure.md) | UI structure, quality, inspector, integrity | shipped | Historical implementation plan |

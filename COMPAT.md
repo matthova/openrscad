@@ -5,24 +5,14 @@ OpenSCAD 2021.01. Later stable features are tracked separately; experimental
 features and GUI pixel parity are not implied. Mesh compatibility is measured by
 geometry (volume, bounds, centroid, topology), not identical bytes or triangle
 ordering. The full closure plan and scope are in
-[Track F](docs/roadmap/track-f-measured-openscad-compatibility.md).
+[Track F](docs/roadmap/track-f-measured-openscad-compatibility.md), with the
+classified surface in the [compatibility manifest](compatibility/README.md).
 
 This register records confirmed differences. A silently wrong answer is a trust
 bug, so silent entries stay here until fixed; intentional differences must warn
 at runtime or be justified as permanent.
 
 ## Known silent differences
-
-- **Default arguments have the wrong scope and are evaluated eagerly.** A user
-  module/function default currently reads ordinary variables at the call site,
-  rather than the definition's lexical environment, and runs even when the
-  caller supplied that argument.
-
-  ```scad
-  x=10; module m(a=x) { echo(a); } module caller() { x=20; m(); } caller();
-  function f(a=echo("default") 3)=a; echo(f(6));
-  // OpenSCAD: 10, then 6 without "default". OpenRSCAD: 20 and an extra echo.
-  ```
 
 - **Exact renders still evaluate `$preview` as `true`.** The evaluator seeds the
   value independently of the selected render path, so exact exports can choose a
@@ -31,15 +21,6 @@ at runtime or be justified as permanent.
   ```scad
   if ($preview) sphere(20); else cube(10);
   // An exact STL export should contain the cube.
-  ```
-
-- **Some documented builtin argument forms are ignored.** Confirmed cases are a
-  named matrix and the fourth positional cylinder argument; later positional
-  `text()` layout arguments are also not bound.
-
-  ```scad
-  multmatrix(m=[[1,0,0,7],[0,1,0,11],[0,0,1,13],[0,0,0,1]]) cube(2);
-  cylinder(10, 5, 3, true); // should span z=-5..5
   ```
 
 - **Invalid dimensions create solids instead of empty geometry.** Negative
@@ -52,37 +33,18 @@ at runtime or be justified as permanent.
   linear_extrude(height=-5) square(2);
   ```
 
-- **Extrusion refinement/sweep edge cases differ.** `linear_extrude(segments=)`
-  is ignored and omitted `slices` does not follow `$fn`. `rotate_extrude()`
-  mishandles wholly negative-X profiles, profiles crossing X=0, partial-sweep
-  fragment counts, and angles over 360 degrees.
+- **Linear-extrusion refinement differs.** `linear_extrude(segments=)` is ignored
+  and omitted `slices` does not follow `$fn`.
 
   ```scad
   linear_extrude(height=10, twist=90, $fn=40) square(10);
-  rotate_extrude(angle=90, $fn=24) translate([5,0]) square(2);
   ```
-
-- **Concave `polyhedron` faces are fan-triangulated.** This is only correct for
-  convex or suitably star-shaped faces; a general concave face can be filled
-  incorrectly.
-
-- **A bare `projection()` is dropped by DXF/SVG export.** Projection under other
-  2D operations is lowered correctly, but the kernel-free vector-export path
-  produces empty contours for a bare projection.
-
-  ```scad
-  projection(cut=false) rotate([20,30,0]) cube(10);
-  ```
-
-- **Several evaluator edge cases differ.** Confirmed examples include NaN
-  truthiness/indexing, iteration over `undef`, invalid members passed to
-  `min`/`max`/`norm`, multi-argument `chr`, and `version_num(vector)`.
 
 ## Missing or partial compatibility
 
-- **`intersection_for`, `$parent_modules`, and `parent_module(i)` are missing.**
-  The first is offered by completion but evaluates as an unknown module; the
-  module-stack introspection values are `undef`/unknown.
+- **Deprecated compatibility aliases remain undecided.** OpenSCAD 2021.01 still
+  accepts legacy `assign`, `child`, `import_dxf`, `import_stl`, `dxf_dim`, and
+  `dxf_cross` forms; OpenRSCAD does not currently implement them.
 
 - **Text font discovery is broad, but shaping is partial.** Native hosts scan
   installed fonts; Chromium can load permission-granted local fonts; the bundled
@@ -101,6 +63,10 @@ at runtime or be justified as permanent.
   transforms, use/style/visibility, DXF bulges/splines/ellipses, and caller curve
   resolution remain incomplete. 3MF/AMF import does not yet assemble units,
   independent object index spaces, components, or build-item transforms.
+
+- **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
+  mesh and vector formats, but it does not serialize the evaluated model as a
+  `.csg` operation tree.
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   503/513 pinned blocks across 15 files. The expected failures are
@@ -142,8 +108,22 @@ at runtime or be justified as permanent.
 
 ## Closed since M0
 
-All oracle-checked; `corpus/echo` passes **25/25** and BOSL2's function suite
-runs in the `xtask bosl2` harness:
+The current gates are `corpus/echo` **25/25**, geometry **81/81**, and BOSL2
+**503/513** with ten explicit expected failures. Individual closures below state
+their oracle or regression evidence where relevant:
+
+- **Initial Track F closures.** Named `multmatrix`, positional cylinder/text
+  arguments, `intersection_for`, `$parent_modules`/`parent_module()`, raw
+  punctuation-preserving include/use paths, and the confirmed NaN/iteration/
+  reducer/`chr`/`version_num` edges are fixed and regression-covered.
+  `rotate_extrude` now handles negative-side profiles, axis crossings, partial
+  fragment counts, zero sweeps, and angles over 360 degrees. Bare and
+  display-wrapped `projection()` now export through the kernel-aware DXF/SVG
+  path on CLI, wasm/npm, LSP, and desktop. Omitted function/module defaults now
+  evaluate lazily in definition scope for ordinary variables while retaining
+  dynamic `$` variables, across tree-walk, VM, and module paths. General planar
+  concave `polyhedron` faces use projected earcut triangulation instead of an
+  overlapping fan.
 
 - **Assignment hoisting (last-write-wins).** Within a scope, only a variable's
   *final* assignment is evaluated, at the point it was *first introduced*. A read

@@ -102,7 +102,7 @@ CDN usage, and the full API.
   recomputes only the subtrees that changed, so re-renders after a typical edit
   land in well under a millisecond.
 - **Oracle-checked** — a geometry oracle compares rendered meshes with stock
-  **OpenSCAD 2024.12** across a 76-case corpus (volume, bounding box, centroid,
+  **OpenSCAD 2024.12** across an 81-case corpus (volume, bounding box, centroid,
   component count, watertightness, and 2-manifoldness), and BOSL2's function
   suite runs its `[[test]]` blocks in CI. Exact renders target watertight,
   2-manifold output; fast previews and recovered geometry failures are labelled

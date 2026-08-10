@@ -227,6 +227,6 @@
     { "id": "export.dxf", "category": "export", "surface": "DXF export of 2D geometry/projection", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated." },
     { "id": "export.svg", "category": "export", "surface": "SVG export of 2D geometry/projection", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated." },
     { "id": "export.png", "category": "export", "surface": "PNG render export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "npm", "lsp"], "summary": "Raster rendering, camera, projection, and image sizing are implemented; GUI/raster pixel parity is outside the core language criterion." },
-    { "id": "export.csg", "category": "export", "surface": "CSG tree export", "tier": "core_2021_01", "status": "missing", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "OpenSCAD-style .csg serialization is not implemented." }
+    { "id": "export.csg", "category": "export", "surface": "CSG tree export", "tier": "core_2021_01", "status": "missing", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "OpenSCAD-style .csg serialization is not implemented.", "gap_ids": ["F-I4"] }
   ]
 }
