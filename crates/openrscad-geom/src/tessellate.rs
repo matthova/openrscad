@@ -137,7 +137,7 @@ fn triangulate_face(points: &[[f64; 3]], face: &[u32]) -> Vec<[u32; 3]> {
     } else {
         2
     };
-    let projected: Vec<[f64; 2]> = face_points
+    let mut projected: Vec<[f64; 2]> = face_points
         .iter()
         .map(|p| match drop_axis {
             0 => [p[1], p[2]],
@@ -145,6 +145,13 @@ fn triangulate_face(points: &[[f64; 3]], face: &[u32]) -> Vec<[u32; 3]> {
             _ => [p[0], p[1]],
         })
         .collect();
+    // Work in face-local coordinates. Shoelace/cross products on a small face
+    // far from the origin otherwise lose its area to catastrophic cancellation.
+    let projected_origin = projected[0];
+    for p in &mut projected {
+        p[0] -= projected_origin[0];
+        p[1] -= projected_origin[1];
+    }
     let projected_eps = area_eps;
     let linear_eps = extent * 1e-12;
     let polygon_area2 = signed_area2(&projected).abs();
@@ -606,6 +613,20 @@ mod tests {
         let mesh = polyhedron(&points, &[vec![0, 1, 2, 3, 4, 5, 6, 7]]);
         assert_eq!(mesh.tris.len(), 6);
         assert!((mesh.surface_area() - 10.0 * 6.0_f64.sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn polyhedron_preserves_small_faces_far_from_origin() {
+        let base = 10_000_000_000.0;
+        let points = vec![
+            [base, base, 0.0],
+            [base + 1.0, base, 0.0],
+            [base + 1.0, base + 1.0, 0.0],
+            [base, base + 1.0, 0.0],
+        ];
+        let mesh = polyhedron(&points, &[vec![0, 1, 2, 3]]);
+        assert_eq!(mesh.tris, vec![[0, 2, 1], [0, 3, 2]]);
+        assert!((mesh.surface_area() - 1.0).abs() < 1e-9);
     }
 
     #[test]
