@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openrscad.example/compatibility/schema.json",
+  "title": "OpenRSCAD OpenSCAD compatibility manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "target", "hosts", "sources", "features"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "manifest_version": { "type": "integer", "minimum": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "core_baseline", "oracle_version", "audited_at"],
+      "properties": {
+        "product": { "const": "OpenSCAD" },
+        "core_baseline": { "const": "2021.01" },
+        "oracle_version": { "type": "string", "minLength": 1 },
+        "audited_at": { "type": "string", "format": "date" },
+        "policy": { "type": "string" }
+      }
+    },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "description": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "format": "uri" },
+          "path": { "type": "string", "minLength": 1 }
+        },
+        "oneOf": [
+          { "required": ["url"] },
+          { "required": ["path"] }
+        ]
+      }
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]*$" },
+    "status": {
+      "enum": [
+        "verified",
+        "implemented",
+        "missing",
+        "warned_divergence",
+        "permanent_divergence",
+        "unknown"
+      ]
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "surface", "tier", "status", "hosts", "summary"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "category": {
+          "enum": [
+            "syntax",
+            "value",
+            "operator",
+            "function",
+            "special_variable",
+            "module",
+            "module_parameter",
+            "file_semantics",
+            "import",
+            "export"
+          ]
+        },
+        "surface": { "type": "string", "minLength": 1 },
+        "tier": {
+          "enum": [
+            "core_2021_01",
+            "deprecated_core_2021_01",
+            "current_stable",
+            "openrscad_extension"
+          ]
+        },
+        "status": { "$ref": "#/$defs/status" },
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "tests": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "repros": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "gap_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^F-[A-Z][0-9]+$" }
+        },
+        "rationale": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "verified" } }, "required": ["status"] },
+          "then": { "required": ["tests"], "properties": { "tests": { "minItems": 1 } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["warned_divergence", "permanent_divergence"] }
+            },
+            "required": ["status"]
+          },
+          "then": { "required": ["repros"], "properties": { "repros": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "permanent_divergence" } }, "required": ["status"] },
+          "then": { "required": ["rationale"] }
+        }
+      ]
+    }
+  }
+}

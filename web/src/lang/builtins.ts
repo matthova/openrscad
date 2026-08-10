@@ -387,6 +387,12 @@ export const BUILTINS: Builtin[] = [
     doc: "Find matches in a list/string.",
   },
   {
+    name: "parent_module",
+    isModule: false,
+    signature: "parent_module(i=1)",
+    doc: "Name of a user module on the active instantiation stack.",
+  },
+  {
     name: "is_undef",
     isModule: false,
     signature: "is_undef(x)",
@@ -442,6 +448,12 @@ export const BUILTINS: Builtin[] = [
     doc: "Minimum fragment size.",
   },
   { name: "$t", isModule: false, signature: "$t", doc: "Animation time, 0→1." },
+  {
+    name: "$parent_modules",
+    isModule: false,
+    signature: "$parent_modules",
+    doc: "Number of active user-module instantiations.",
+  },
   {
     name: "$preview",
     isModule: false,

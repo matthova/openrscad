@@ -57,7 +57,8 @@ impl Value {
         match self {
             Value::Undef => false,
             Value::Bool(b) => *b,
-            Value::Number(n) => *n != 0.0 && !n.is_nan(),
+            // OpenSCAD treats every number except zero as true, including NaN.
+            Value::Number(n) => *n != 0.0,
             Value::Str(s) => !s.is_empty(),
             Value::Vector(v) => !v.is_empty(),
             Value::Range { .. } => true,

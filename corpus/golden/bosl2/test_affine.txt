@@ -1,19 +1,19 @@
-test_affine2d_identity
-test_affine2d_mirror
-test_affine2d_scale
-test_affine2d_skew
-test_affine2d_translate
-test_affine2d_zrot
-test_affine3d_identity
-test_affine3d_mirror
-test_affine3d_rot_by_axis
-test_affine3d_rot_from_to
-test_affine3d_scale
-test_affine3d_skew
-test_affine3d_skew_xy
-test_affine3d_skew_xz
-test_affine3d_skew_yz
-test_affine3d_translate
-test_affine3d_xrot
-test_affine3d_yrot
-test_affine3d_zrot
+1	test_affine2d_identity
+2	test_affine2d_translate
+3	test_affine2d_scale
+4	test_affine2d_mirror
+5	test_affine2d_zrot
+6	test_affine2d_skew
+7	test_affine3d_identity
+8	test_affine3d_translate
+9	test_affine3d_scale
+10	test_affine3d_mirror
+11	test_affine3d_xrot
+12	test_affine3d_yrot
+13	test_affine3d_zrot
+14	test_affine3d_rot_by_axis
+15	test_affine3d_rot_from_to
+16	test_affine3d_skew
+17	test_affine3d_skew_xy
+18	test_affine3d_skew_xz
+19	test_affine3d_skew_yz

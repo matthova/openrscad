@@ -343,6 +343,12 @@ pub static BUILTINS: &[Builtin] = &[
         "Find matches in a list/string."
     ),
     b!(
+        "parent_module",
+        function,
+        "parent_module(i=1)",
+        "Name of a user module on the active instantiation stack."
+    ),
+    b!(
         "is_undef",
         function,
         "is_undef(x)",
@@ -388,6 +394,12 @@ pub static BUILTINS: &[Builtin] = &[
     ),
     b!("$fs", function, "$fs", "Minimum fragment size."),
     b!("$t", function, "$t", "Animation time, 0→1."),
+    b!(
+        "$parent_modules",
+        function,
+        "$parent_modules",
+        "Number of active user-module instantiations."
+    ),
     b!(
         "$preview",
         function,

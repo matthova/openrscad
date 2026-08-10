@@ -16,6 +16,9 @@ jobs:
           # hard if it is absent, so it must be checked out.
           submodules: true
 
+      - name: Validate OpenSCAD compatibility manifest
+        run: python3 compatibility/validate.py
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

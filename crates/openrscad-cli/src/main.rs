@@ -331,8 +331,9 @@ fn run() -> Result<()> {
             .unwrap_or("")
             .to_ascii_lowercase();
         if matches!(ext.as_str(), "dxf" | "svg") {
-            match openrscad_geom::render_contours(&out.node) {
-                Some(contours) => {
+            let kernel = openrscad_geom::ManifoldKernel::new();
+            match openrscad_geom::render_contours_with(&out.node, &kernel) {
+                Ok(Some(contours)) => {
                     let text = if ext == "dxf" {
                         openrscad_geom::export_dxf(&contours)
                     } else {
@@ -341,7 +342,8 @@ fn run() -> Result<()> {
                     std::fs::write(path, text)?;
                     eprintln!("wrote {} ({} contours)", path.display(), contours.len());
                 }
-                None => anyhow::bail!("{} export requires a 2D object", ext.to_uppercase()),
+                Ok(None) => anyhow::bail!("{} export requires a 2D object", ext.to_uppercase()),
+                Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
             }
             return Ok(());
         }

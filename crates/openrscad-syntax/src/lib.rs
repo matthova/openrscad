@@ -153,4 +153,36 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
     }
+
+    #[test]
+    fn include_and_use_paths_preserve_raw_contents() {
+        let prog = parse(
+            "include <=@scope/my library/~user\\part.scad>\nuse < C:\\Open SCAD\\lib@2.scad >",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            &prog[0].node,
+            Stmt::Include { path } if path == r"=@scope/my library/~user\part.scad"
+        ));
+        assert!(matches!(
+            &prog[1].node,
+            Stmt::Use { path } if path == r" C:\Open SCAD\lib@2.scad "
+        ));
+    }
+
+    #[test]
+    fn include_path_requires_opening_angle_bracket() {
+        let err = parse("include library.scad>").unwrap_err();
+        assert!(err.message.contains("expected `<` before include path"));
+        assert_eq!(err.span, 8..15);
+    }
+
+    #[test]
+    fn unterminated_raw_use_path_is_a_parser_error() {
+        let src = r"use <@scope/~user\library file.scad";
+        let err = parse(src).unwrap_err();
+        assert!(err.message.contains("unterminated include path"));
+        assert_eq!(err.span, src.len()..src.len());
+    }
 }

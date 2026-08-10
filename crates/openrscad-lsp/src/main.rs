@@ -215,8 +215,9 @@ fn render_to_file(
 
     // 2D vector export needs only contours.
     if matches!(ext.as_str(), "dxf" | "svg") {
-        return match openrscad_geom::render_contours(&out.node) {
-            Some(contours) => {
+        let kernel = openrscad_geom::ManifoldKernel::new();
+        return match openrscad_geom::render_contours_with(&out.node, &kernel) {
+            Ok(Some(contours)) => {
                 let text = if ext == "dxf" {
                     openrscad_geom::export_dxf(&contours)
                 } else {
@@ -233,10 +234,11 @@ fn render_to_file(
                     Err(e) => RenderOutcome::Err(format!("writing {}: {e}", output.display())),
                 }
             }
-            None => RenderOutcome::Err(format!(
+            Ok(None) => RenderOutcome::Err(format!(
                 "{} export requires a 2D object",
                 ext.to_uppercase()
             )),
+            Err(e) => RenderOutcome::Err(format!("geometry error: {e}")),
         };
     }
 

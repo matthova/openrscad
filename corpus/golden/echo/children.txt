@@ -1,3 +1,5 @@
 ECHO: 2
 ECHO: 0
 ECHO: 1
+ECHO: "top", undef, undef
+ECHO: "nested", 2, "middle", "outer", "outer"

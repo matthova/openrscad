@@ -1,40 +1,40 @@
-test_bselect
-test_combinations
-test_flatten
-test_force_list
-test_full_flatten
-test_idx
-test_in_list
-test_is_homogeneous
-test_is_homogenous
-test_last
-test_list
-test_list_bset
-test_list_head
-test_list_insert
-test_list_pad
-test_list_remove
-test_list_remove_values
-test_list_rotate
-test_list_rotate_errors
-test_list_set
-test_list_shape
-test_list_swap
-test_list_tail
-test_list_to_matrix
-test_max_length
-test_min_length
-test_pair
-test_permutations
-test_repeat
-test_repeat_entries
-test_reverse
-test_reverse_errors
-test_select
-test_select_errors
-test_set_difference
-test_set_intersection
-test_set_union
-test_shuffle
-test_slice
-test_triplet
+1	test_is_homogeneous
+2	test_select
+3	test_slice
+4	test_last
+5	test_list_head
+6	test_list_tail
+7	test_in_list
+8	test_repeat
+9	test_reverse
+10	test_list_rotate
+11	test_list_set
+12	test_list_remove
+13	test_list_remove_values
+14	test_list_insert
+15	test_bselect
+16	test_list_bset
+17	test_min_length
+18	test_max_length
+19	test_list_pad
+20	test_idx
+21	test_shuffle
+22	test_set_union
+23	test_set_difference
+24	test_set_intersection
+25	test_force_list
+26	test_pair
+27	test_triplet
+28	test_combinations
+29	test_repeat_entries
+30	test_list_to_matrix
+31	test_flatten
+32	test_full_flatten
+33	test_list_shape
+34	test_reverse_errors
+35	test_list_rotate_errors
+36	test_select_errors
+37	test_is_homogenous
+38	test_list
+39	test_permutations
+40	test_list_swap

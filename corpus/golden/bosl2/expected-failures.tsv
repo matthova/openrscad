@@ -1,0 +1,11 @@
+# Expected BOSL2 failures: <file> <1-based [[test]] ordinal> <name>
+test_math	11	test_gaussian_rands
+test_strings	8	test_format_float
+test_strings	20	test_str_strip
+test_strings	24	test_format
+test_linalg	16	test_hstack
+test_utility	2	test_typeof
+test_utility	5	test_segs
+test_utility	24	test_segs
+test_fnliterals	42	test_f_acos
+test_structs	3	test_struct_val

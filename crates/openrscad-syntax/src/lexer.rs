@@ -143,12 +143,49 @@ pub struct SpannedToken {
 pub fn lex(src: &str) -> Result<Vec<SpannedToken>, crate::SyntaxError> {
     let mut out = Vec::new();
     let mut lexer = Token::lexer(src);
+    // The contents of an include/use path are not OpenSCAD tokens: punctuation
+    // such as `@`, `~`, and `\` is part of the filename. Once the opening `<`
+    // has been lexed in that context, skip verbatim to the next `>` and emit a
+    // synthetic closing delimiter. Keeping both delimiter spans means the
+    // parser can recover the exact path from the original source.
+    let mut expect_angle_path = false;
     while let Some(res) = lexer.next() {
         match res {
-            Ok(token) => out.push(SpannedToken {
-                token,
-                span: lexer.span(),
-            }),
+            Ok(token) => {
+                let span = lexer.span();
+                // `<=` must also enter path mode: in `include <=name.scad>`,
+                // the `=` is raw filename content, not the comparison token
+                // Logos would normally produce.
+                let starts_angle_path = expect_angle_path && matches!(token, Token::Lt | Token::Le);
+                expect_angle_path = matches!(token, Token::Include | Token::Use);
+
+                if starts_angle_path {
+                    let path_start = span.start + 1;
+                    out.push(SpannedToken {
+                        token: Token::Lt,
+                        span: span.start..path_start,
+                    });
+
+                    if let Some(relative_end) = src[path_start..].find('>') {
+                        let close_start = path_start + relative_end;
+                        // `bump` extends the current Logos token internally, but
+                        // its opening `<` span was captured above. Account for
+                        // any `=` Logos already consumed as part of a `<=`.
+                        lexer.bump(close_start + 1 - span.end);
+                        out.push(SpannedToken {
+                            token: Token::Gt,
+                            span: close_start..close_start + 1,
+                        });
+                    } else {
+                        // Let the parser report the more useful unterminated-path
+                        // diagnostic, even if the raw path contains characters
+                        // that the ordinary lexer would reject.
+                        lexer.bump(src.len() - span.end);
+                    }
+                } else {
+                    out.push(SpannedToken { token, span });
+                }
+            }
             Err(_) => {
                 return Err(crate::SyntaxError::new(
                     format!("unexpected character(s) `{}`", lexer.slice()),
@@ -212,6 +249,30 @@ mod tests {
         assert_eq!(
             toks("1 /** doc ** star */ 2"),
             vec![Token::Number(1.0), Token::Number(2.0),]
+        );
+    }
+
+    #[test]
+    fn include_path_contents_are_lexed_verbatim() {
+        assert_eq!(
+            toks(r"include <=@scope/my library/~user\part.scad>"),
+            vec![Token::Include, Token::Lt, Token::Gt],
+        );
+    }
+
+    #[test]
+    fn angle_comparison_tokens_are_unchanged() {
+        assert_eq!(
+            toks("x < 2 && x > 0"),
+            vec![
+                Token::Ident("x".into()),
+                Token::Lt,
+                Token::Number(2.0),
+                Token::And,
+                Token::Ident("x".into()),
+                Token::Gt,
+                Token::Number(0.0),
+            ]
         );
     }
 }

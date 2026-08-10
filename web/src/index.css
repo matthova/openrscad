@@ -1343,7 +1343,10 @@ button.console-line.clickable:hover {
 
 /* Render-in-flight indicator + the Stop / Render controls in the status bar. */
 .status-rendering {
-  color: var(--accent);
+  /* Rendering is transient but still readable text. The brand accent is only a
+     decorative fill in light mode; its strong variant clears WCAG AA on the
+     status-bar panel in both themes. */
+  color: var(--accent-strong);
 }
 .status-rendering::before {
   content: "";

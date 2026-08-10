@@ -1,16 +1,16 @@
-test_altaz_to_xyz
-test_cylindrical_to_xyz
-test_lift_plane
-test_path2d
-test_path3d
-test_path4d
-test_point2d
-test_point3d
-test_point4d
-test_polar_to_xy
-test_project_plane
-test_spherical_to_xyz
-test_xy_to_polar
-test_xyz_to_altaz
-test_xyz_to_cylindrical
-test_xyz_to_spherical
+1	test_point2d
+2	test_path2d
+3	test_point3d
+4	test_path3d
+5	test_point4d
+6	test_path4d
+7	test_polar_to_xy
+8	test_xy_to_polar
+9	test_project_plane
+10	test_lift_plane
+11	test_cylindrical_to_xyz
+12	test_xyz_to_cylindrical
+13	test_spherical_to_xyz
+14	test_xyz_to_spherical
+15	test_altaz_to_xyz
+16	test_xyz_to_altaz

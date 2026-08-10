@@ -1,34 +1,34 @@
-test_all
-test_all_defined
-test_all_integer
-test_any
-test_any_defined
-test_default
-test_first_defined
-test_get_anchor
-test_get_radius
-test_is_bool_list
-test_is_consistent
-test_is_def
-test_is_finite
-test_is_func
-test_is_int
-test_is_integer
-test_is_nan
-test_is_range
-test_is_str
-test_is_type
-test_loop_done
-test_loop_while
-test_looping
-test_no_function
-test_num_defined
-test_num_true
-test_one_defined
-test_same_shape
-test_scalar_vec3
-test_u_add
-test_u_div
-test_u_mul
-test_u_sub
-test_valid_range
+1	test_num_true
+3	test_is_type
+4	test_is_def
+6	test_is_str
+7	test_is_int
+8	test_is_integer
+9	test_is_nan
+10	test_is_finite
+11	test_is_range
+12	test_valid_range
+13	test_is_consistent
+14	test_same_shape
+15	test_default
+16	test_first_defined
+17	test_one_defined
+18	test_num_defined
+19	test_any_defined
+20	test_all_defined
+21	test_get_anchor
+22	test_get_radius
+23	test_scalar_vec3
+25	test_all_integer
+26	test_u_add
+27	test_u_sub
+28	test_u_mul
+29	test_u_div
+30	test_any
+31	test_all
+32	test_is_bool_list
+33	test_is_func
+34	test_looping
+35	test_loop_while
+36	test_loop_done
+37	test_no_function

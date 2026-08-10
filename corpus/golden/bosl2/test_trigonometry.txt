@@ -1,27 +1,27 @@
-test_adj_ang_to_hyp
-test_adj_ang_to_opp
-test_adj_hyp_to_ang
-test_adj_hyp_to_opp
-test_adj_opp_to_ang
-test_adj_opp_to_hyp
-test_ang_adj_to_hyp
-test_ang_adj_to_opp
-test_ang_hyp_to_adj
-test_ang_hyp_to_opp
-test_ang_opp_to_adj
-test_ang_opp_to_hyp
-test_hyp_adj_to_ang
-test_hyp_adj_to_opp
-test_hyp_ang_to_adj
-test_hyp_ang_to_opp
-test_hyp_opp_to_adj
-test_hyp_opp_to_ang
-test_law_of_cosines
-test_law_of_sines
-test_opp_adj_to_ang
-test_opp_adj_to_hyp
-test_opp_ang_to_adj
-test_opp_ang_to_hyp
-test_opp_hyp_to_adj
-test_opp_hyp_to_ang
-test_tri_functions
+1	test_tri_functions
+2	test_hyp_opp_to_adj
+3	test_law_of_cosines
+4	test_law_of_sines
+5	test_hyp_adj_to_opp
+6	test_hyp_ang_to_adj
+7	test_hyp_ang_to_opp
+8	test_adj_opp_to_hyp
+9	test_adj_ang_to_opp
+10	test_adj_ang_to_hyp
+11	test_opp_ang_to_adj
+12	test_opp_ang_to_hyp
+13	test_opp_adj_to_hyp
+14	test_hyp_adj_to_ang
+15	test_hyp_opp_to_ang
+16	test_adj_opp_to_ang
+17	test_opp_adj_to_ang
+18	test_adj_hyp_to_ang
+19	test_opp_hyp_to_ang
+20	test_opp_hyp_to_adj
+21	test_adj_hyp_to_opp
+22	test_ang_hyp_to_adj
+23	test_ang_opp_to_adj
+24	test_ang_hyp_to_opp
+25	test_ang_adj_to_opp
+26	test_ang_adj_to_hyp
+27	test_ang_opp_to_hyp

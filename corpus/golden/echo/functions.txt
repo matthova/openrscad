@@ -3,3 +3,8 @@ ECHO: 7
 ECHO: true, false
 ECHO: [1, 4, 9, 16]
 ECHO: 120
+ECHO: "fn-arg"
+ECHO: "fn-default"
+ECHO: "fn", [10, 7, 20]
+ECHO: "mod-default"
+ECHO: "mod", 10, 7

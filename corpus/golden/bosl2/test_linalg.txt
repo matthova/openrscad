@@ -1,30 +1,30 @@
-test_back_substitute
-test_block_matrix
-test_cholesky
-test_column
-test_det2
-test_det3
-test_det4
-test_determinant
-test_diagonal_matrix
-test_echo_matrix
-test_ident
-test_is_matrix
-test_is_matrix_symmetric
-test_is_rotation
-test_linear_solve
-test_linear_solve3
-test_lu_factor
-test_matrix_inverse
-test_matrix_trace
-test_norm_fro
-test_null_space
-test_outer_product
-test_outer_product_errors
-test_qr_factor
-test_rot_inverse
-test_submatrix
-test_submatrix_set
-test_swap_columns
-test_transpose
-test_transpose_errors
+1	test_is_matrix
+2	test_ident
+3	test_qr_factor
+4	test_matrix_inverse
+5	test_det2
+6	test_det3
+7	test_determinant
+8	test_matrix_trace
+9	test_norm_fro
+10	test_linear_solve
+11	test_null_space
+12	test_back_substitute
+13	test_outer_product
+14	test_column
+15	test_submatrix
+17	test_block_matrix
+18	test_diagonal_matrix
+19	test_submatrix_set
+20	test_transpose
+21	test_transpose_errors
+22	test_outer_product_errors
+23	test_det4
+24	test_is_matrix_symmetric
+25	test_is_rotation
+26	test_linear_solve3
+27	test_rot_inverse
+28	test_cholesky
+29	test_echo_matrix
+30	test_swap_columns
+31	test_lu_factor

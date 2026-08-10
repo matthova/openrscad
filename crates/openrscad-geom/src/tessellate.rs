@@ -4,7 +4,7 @@
 //! and the exact vertex placement of curved primitives, so these are
 //! reconstructed carefully from the documented behavior.
 
-use crate::mesh::Mesh;
+use crate::mesh::{cross, norm, sub, Mesh};
 use openrscad_ir::FragmentSpec;
 use std::f64::consts::PI;
 
@@ -30,22 +30,287 @@ fn circle_point(r: f64, i: u32, n: u32) -> [f64; 2] {
     [r * phi.cos(), r * phi.sin()]
 }
 
-/// Build a mesh from explicit points and (possibly polygonal) faces by
-/// fan-triangulating each face. OpenSCAD orders face vertices clockwise as seen
-/// from outside; our mesh convention is counter-clockwise (outward normal by
-/// the right-hand rule), so each face is reversed during triangulation.
+/// Build a mesh from explicit points and (possibly polygonal) faces.
+///
+/// OpenSCAD orders face vertices clockwise as seen from outside; our mesh
+/// convention is counter-clockwise (outward normal by the right-hand rule), so
+/// each emitted triangle reverses the face's winding. Convex faces retain the
+/// historical fan (and therefore its stable triangle order); simple concave
+/// faces are projected to their dominant 2D plane and triangulated with earcut.
+/// Invalid indices and degenerate, self-intersecting, or materially non-planar
+/// faces are skipped rather than leaving unsafe triangle references in the mesh.
 pub fn polyhedron(points: &[[f64; 3]], faces: &[Vec<u32>]) -> Mesh {
     let verts = points.to_vec();
     let mut tris = Vec::new();
     for face in faces {
-        if face.len() < 3 {
-            continue;
-        }
-        for k in 1..face.len() - 1 {
-            tris.push([face[0], face[k + 1], face[k]]);
-        }
+        tris.extend(triangulate_face(points, face));
     }
     Mesh { verts, tris }
+}
+
+/// Validate and triangulate one polygonal face. An empty result means the face
+/// is malformed or geometrically degenerate and should be ignored.
+fn triangulate_face(points: &[[f64; 3]], face: &[u32]) -> Vec<[u32; 3]> {
+    // Clean only harmless adjacent/closing duplicates. A repeated vertex later
+    // in the loop makes the polygon non-simple, so reject it below.
+    let mut ids = Vec::with_capacity(face.len());
+    for &id in face {
+        if id as usize >= points.len() {
+            return Vec::new();
+        }
+        if ids.last() != Some(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.len() > 1 && ids.first() == ids.last() {
+        ids.pop();
+    }
+    if ids.len() < 3 {
+        return Vec::new();
+    }
+    for i in 0..ids.len() {
+        if ids[..i].contains(&ids[i]) || !points[ids[i] as usize].iter().all(|x| x.is_finite()) {
+            return Vec::new();
+        }
+    }
+
+    let face_points: Vec<[f64; 3]> = ids.iter().map(|&i| points[i as usize]).collect();
+    let mut lo = face_points[0];
+    let mut hi = face_points[0];
+    for p in &face_points[1..] {
+        for axis in 0..3 {
+            lo[axis] = lo[axis].min(p[axis]);
+            hi[axis] = hi[axis].max(p[axis]);
+        }
+    }
+    let extent = (0..3)
+        .map(|axis| hi[axis] - lo[axis])
+        .fold(0.0_f64, f64::max);
+    if !extent.is_finite() || extent <= f64::EPSILON {
+        return Vec::new();
+    }
+    let area_eps = extent * extent * 1e-12;
+
+    // Newell's method gives a stable face normal for convex and concave planar
+    // polygons alike. Its direction is the input face winding.
+    let mut normal = [0.0; 3];
+    for i in 0..face_points.len() {
+        let p = face_points[i];
+        let q = face_points[(i + 1) % face_points.len()];
+        normal[0] += (p[1] - q[1]) * (p[2] + q[2]);
+        normal[1] += (p[2] - q[2]) * (p[0] + q[0]);
+        normal[2] += (p[0] - q[0]) * (p[1] + q[1]);
+    }
+    let normal_len = norm(normal);
+    if !normal_len.is_finite() || normal_len <= area_eps {
+        return Vec::new();
+    }
+    let unit = [
+        normal[0] / normal_len,
+        normal[1] / normal_len,
+        normal[2] / normal_len,
+    ];
+
+    // A general polygon must describe one plane. Triangles are planar by
+    // definition, while OpenSCAD commonly accepts warped quads (including the
+    // project's curved lamp mesh) and their historical fan unambiguously
+    // defines two planar triangles, so retain that compatible behavior.
+    let plane_eps = extent * 1e-9 + 1e-12;
+    let origin = face_points[0];
+    let max_plane_distance = face_points
+        .iter()
+        .map(|&p| {
+            let d = sub(p, origin);
+            (d[0] * unit[0] + d[1] * unit[1] + d[2] * unit[2]).abs()
+        })
+        .fold(0.0_f64, f64::max);
+    if face_points.len() > 4 && max_plane_distance > plane_eps {
+        return Vec::new();
+    }
+
+    // Drop the normal's dominant coordinate. This maximizes projected area and
+    // avoids numerical collapse for vertical or steeply slanted faces.
+    let drop_axis = if normal[0].abs() >= normal[1].abs() && normal[0].abs() >= normal[2].abs() {
+        0
+    } else if normal[1].abs() >= normal[2].abs() {
+        1
+    } else {
+        2
+    };
+    let mut projected: Vec<[f64; 2]> = face_points
+        .iter()
+        .map(|p| match drop_axis {
+            0 => [p[1], p[2]],
+            1 => [p[0], p[2]],
+            _ => [p[0], p[1]],
+        })
+        .collect();
+    // Work in face-local coordinates. Shoelace/cross products on a small face
+    // far from the origin otherwise lose its area to catastrophic cancellation.
+    let projected_origin = projected[0];
+    for p in &mut projected {
+        p[0] -= projected_origin[0];
+        p[1] -= projected_origin[1];
+    }
+    let projected_eps = area_eps;
+    let linear_eps = extent * 1e-12;
+    let polygon_area2 = signed_area2(&projected).abs();
+    if polygon_area2 <= projected_eps || !simple_polygon(&projected, linear_eps, projected_eps) {
+        return Vec::new();
+    }
+
+    // Keep the exact historical fan for convex inputs. Besides being cheaper,
+    // this preserves triangle order for existing primitives and goldens.
+    if convex_polygon(&projected, projected_eps) {
+        let mut out = Vec::with_capacity(ids.len() - 2);
+        for k in 1..ids.len() - 1 {
+            let tri = [ids[0], ids[k + 1], ids[k]];
+            let a = points[tri[0] as usize];
+            let b = points[tri[1] as usize];
+            let c = points[tri[2] as usize];
+            if norm(cross(sub(b, a), sub(c, a))) > area_eps {
+                out.push(tri);
+            }
+        }
+        return out;
+    }
+
+    let flat: Vec<f64> = projected.iter().flat_map(|p| [p[0], p[1]]).collect();
+    let Ok(local_tris) = earcutr::earcut(&flat, &[], 2) else {
+        return Vec::new();
+    };
+    if local_tris.len() % 3 != 0 {
+        return Vec::new();
+    }
+
+    let mut covered_area2 = 0.0;
+    let mut out = Vec::with_capacity(local_tris.len() / 3);
+    for tri in local_tris.chunks_exact(3) {
+        if tri.iter().any(|&i| i >= ids.len()) {
+            return Vec::new();
+        }
+        let pa2 = projected[tri[0]];
+        let pb2 = projected[tri[1]];
+        let pc2 = projected[tri[2]];
+        covered_area2 += cross2(pa2, pb2, pc2).abs();
+
+        let a = ids[tri[0]];
+        let mut b = ids[tri[1]];
+        let mut c = ids[tri[2]];
+        let pa = points[a as usize];
+        let pb = points[b as usize];
+        let pc = points[c as usize];
+        let tri_normal = cross(sub(pb, pa), sub(pc, pa));
+        if norm(tri_normal) <= area_eps {
+            return Vec::new();
+        }
+        // Earcut may choose either 2D winding depending on the dropped axis.
+        // OpenSCAD face winding is opposite ours, so make every triangle point
+        // against the input face normal explicitly.
+        if tri_normal[0] * normal[0] + tri_normal[1] * normal[1] + tri_normal[2] * normal[2] > 0.0 {
+            std::mem::swap(&mut b, &mut c);
+        }
+        out.push([a, b, c]);
+    }
+    let coverage_eps = polygon_area2 * 1e-9 + projected_eps;
+    if (covered_area2 - polygon_area2).abs() > coverage_eps {
+        return Vec::new();
+    }
+    out
+}
+
+fn cross2(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn signed_area2(poly: &[[f64; 2]]) -> f64 {
+    (0..poly.len())
+        .map(|i| {
+            let p = poly[i];
+            let q = poly[(i + 1) % poly.len()];
+            p[0] * q[1] - q[0] * p[1]
+        })
+        .sum()
+}
+
+fn convex_polygon(poly: &[[f64; 2]], eps: f64) -> bool {
+    let mut sign = 0_i8;
+    for i in 0..poly.len() {
+        let turn = cross2(
+            poly[i],
+            poly[(i + 1) % poly.len()],
+            poly[(i + 2) % poly.len()],
+        );
+        if turn.abs() <= eps {
+            continue;
+        }
+        let next = if turn > 0.0 { 1 } else { -1 };
+        if sign != 0 && sign != next {
+            return false;
+        }
+        sign = next;
+    }
+    sign != 0
+}
+
+/// Reject self-intersections and backtracking edges before handing a face to
+/// earcut. Adjacent edges may share their endpoint; no other touching is valid
+/// for the simple faces accepted by `polyhedron()`.
+fn simple_polygon(poly: &[[f64; 2]], linear_eps: f64, area_eps: f64) -> bool {
+    let n = poly.len();
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        if (b[0] - a[0]).hypot(b[1] - a[1]) <= linear_eps {
+            return false;
+        }
+        let c = poly[(i + 2) % n];
+        if cross2(a, b, c).abs() <= area_eps {
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let bc = [c[0] - b[0], c[1] - b[1]];
+            if ab[0] * bc[0] + ab[1] * bc[1] < 0.0 {
+                return false;
+            }
+        }
+        for j in i + 1..n {
+            let next_i = (i + 1) % n;
+            let next_j = (j + 1) % n;
+            if i == j || next_i == j || next_j == i {
+                continue;
+            }
+            if segments_intersect(a, b, poly[j], poly[next_j], linear_eps, area_eps) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn segments_intersect(
+    a: [f64; 2],
+    b: [f64; 2],
+    c: [f64; 2],
+    d: [f64; 2],
+    linear_eps: f64,
+    area_eps: f64,
+) -> bool {
+    let ab_c = cross2(a, b, c);
+    let ab_d = cross2(a, b, d);
+    let cd_a = cross2(c, d, a);
+    let cd_b = cross2(c, d, b);
+    if ((ab_c > area_eps && ab_d < -area_eps) || (ab_c < -area_eps && ab_d > area_eps))
+        && ((cd_a > area_eps && cd_b < -area_eps) || (cd_a < -area_eps && cd_b > area_eps))
+    {
+        return true;
+    }
+    let on_segment = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        cross2(p, q, r).abs() <= area_eps
+            && r[0] >= p[0].min(q[0]) - linear_eps
+            && r[0] <= p[0].max(q[0]) + linear_eps
+            && r[1] >= p[1].min(q[1]) - linear_eps
+            && r[1] <= p[1].max(q[1]) + linear_eps
+    };
+    on_segment(a, b, c) || on_segment(a, b, d) || on_segment(c, d, a) || on_segment(c, d, b)
 }
 
 /// Axis-aligned box.
@@ -281,12 +546,110 @@ mod tests {
     }
 
     #[test]
-    fn polyhedron_fan_triangulation() {
+    fn polyhedron_convex_face_preserves_fan() {
         let pts = vec![[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
         let faces = vec![vec![0u32, 1, 2, 3]]; // one quad -> 2 triangles
         let m = polyhedron(&pts, &faces);
-        assert_eq!(m.tris.len(), 2);
+        assert_eq!(m.tris, vec![[0, 2, 1], [0, 3, 2]]);
         assert_eq!(m.verts.len(), 4);
+    }
+
+    fn concave_prism() -> (Vec<[f64; 3]>, Vec<Vec<u32>>) {
+        // A U outline (area 10, perimeter 22), extruded two units. The first
+        // vertex cannot see the whole face, so a fan overlaps the notch.
+        let outline = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [3.0, 4.0],
+            [3.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 4.0],
+            [0.0, 4.0],
+        ];
+        let mut points = Vec::new();
+        for z in [0.0, 2.0] {
+            points.extend(outline.iter().map(|p| [p[0], p[1], z]));
+        }
+        let mut faces = vec![
+            vec![0, 1, 2, 3, 4, 5, 6, 7],
+            vec![15, 14, 13, 12, 11, 10, 9, 8],
+        ];
+        for i in 0..8_u32 {
+            let j = (i + 1) % 8;
+            faces.push(vec![i, i + 8, j + 8, j]);
+        }
+        (points, faces)
+    }
+
+    #[test]
+    fn polyhedron_triangulates_concave_faces_without_overlap() {
+        let (points, faces) = concave_prism();
+        let mesh = polyhedron(&points, &faces);
+
+        // OpenSCAD oracle for the same U prism: 28 triangles, volume 20,
+        // surface area 64 (= two 10-unit caps + 22*2 side wall).
+        assert_eq!(mesh.tris.len(), 28);
+        assert!((mesh.volume() - 20.0).abs() < 1e-9);
+        assert!((mesh.surface_area() - 64.0).abs() < 1e-9);
+        assert!(mesh.signed_volume() > 0.0);
+    }
+
+    #[test]
+    fn polyhedron_triangulates_concave_slanted_face() {
+        let uv = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 4.0],
+            [3.0, 4.0],
+            [3.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 4.0],
+            [0.0, 4.0],
+        ];
+        // Plane p(u,v) = (u,v,u+2v), whose area scale is |(1,0,1) ×
+        // (0,1,2)| = sqrt(6). This exercises dominant-axis projection.
+        let points: Vec<_> = uv.iter().map(|p| [p[0], p[1], p[0] + 2.0 * p[1]]).collect();
+        let mesh = polyhedron(&points, &[vec![0, 1, 2, 3, 4, 5, 6, 7]]);
+        assert_eq!(mesh.tris.len(), 6);
+        assert!((mesh.surface_area() - 10.0 * 6.0_f64.sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn polyhedron_preserves_small_faces_far_from_origin() {
+        let base = 10_000_000_000.0;
+        let points = vec![
+            [base, base, 0.0],
+            [base + 1.0, base, 0.0],
+            [base + 1.0, base + 1.0, 0.0],
+            [base, base + 1.0, 0.0],
+        ];
+        let mesh = polyhedron(&points, &[vec![0, 1, 2, 3]]);
+        assert_eq!(mesh.tris, vec![[0, 2, 1], [0, 3, 2]]);
+        assert!((mesh.surface_area() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn polyhedron_skips_invalid_degenerate_and_nonplanar_faces() {
+        let points = vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [1.0, 0.0, 0.0], // collinear with points 0 and 1
+            [1.0, 3.0, 0.1], // visibly off the other points' plane
+        ];
+        let mesh = polyhedron(
+            &points,
+            &[
+                vec![0, 1, 99],      // out-of-range index
+                vec![0, 4, 1],       // zero-area face
+                vec![0, 1, 2, 5, 3], // materially non-planar n-gon
+                vec![0, 1, 2, 1, 3], // repeated/non-simple index
+                vec![0, 1, 2],       // one valid face remains
+            ],
+        );
+        assert_eq!(mesh.tris, vec![[0, 2, 1]]);
     }
 
     #[test]

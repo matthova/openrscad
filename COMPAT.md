@@ -1,23 +1,81 @@
 # Compatibility divergence register
 
-OpenRSCAD targets OpenSCAD 2021.01 semantics "in spirit." Intentional divergences
-and known gaps are recorded here with a repro. Bug-for-bug fidelity is a
-non-goal, but a *silently wrong answer* is a trust bug — every one we know about
-is listed below so a switcher hits a documented limitation, never an
-undocumented wrong result.
+The release-blocking baseline is the stable language and modeling surface of
+OpenSCAD 2021.01. Later stable features are tracked separately; experimental
+features and GUI pixel parity are not implied. Mesh compatibility is measured by
+geometry (volume, bounds, centroid, topology), not identical bytes or triangle
+ordering. The full closure plan and scope are in
+[Track F](docs/roadmap/track-f-measured-openscad-compatibility.md), with the
+classified surface in the [compatibility manifest](compatibility/README.md).
 
-## Open language gaps
+This register records confirmed differences. A silently wrong answer is a trust
+bug, so silent entries stay here until fixed; intentional differences must warn
+at runtime or be justified as permanent.
 
-Known gaps in the interpreter, to be closed in later milestones (not permanent
-divergences unless noted):
+## Known silent differences
 
-_None currently open — assignment hoisting (formerly gap #2) was closed; see
-below._
+- **Exact renders still evaluate `$preview` as `true`.** The evaluator seeds the
+  value independently of the selected render path, so exact exports can choose a
+  preview-only model branch.
 
-## Current known divergences (with repro)
+  ```scad
+  if ($preview) sphere(20); else cube(10);
+  // An exact STL export should contain the cube.
+  ```
 
-These produce output that differs from OpenSCAD — several **silently**, which is
-the dangerous kind. Each has a minimal repro. Tracks A/B track the fixes.
+- **Invalid dimensions create solids instead of empty geometry.** Negative
+  cube/square dimensions, cylinder height/radii, and extrusion height are not
+  rejected consistently.
+
+  ```scad
+  cube([-2,3,4]);
+  cylinder(h=-5, r=2);
+  linear_extrude(height=-5) square(2);
+  ```
+
+- **Linear-extrusion refinement differs.** `linear_extrude(segments=)` is ignored
+  and omitted `slices` does not follow `$fn`.
+
+  ```scad
+  linear_extrude(height=10, twist=90, $fn=40) square(10);
+  ```
+
+## Missing or partial compatibility
+
+- **Deprecated compatibility aliases remain undecided.** OpenSCAD 2021.01 still
+  accepts legacy `assign`, `child`, `import_dxf`, `import_stl`, `dxf_dim`, and
+  `dxf_cross` forms; OpenRSCAD does not currently implement them.
+
+- **Text font discovery is broad, but shaping is partial.** Native hosts scan
+  installed fonts; Chromium can load permission-granted local fonts; the bundled
+  Liberation family remains the deterministic fallback. Layout is still
+  codepoint-by-codepoint: kerning, ligatures, complex-script shaping, vertical
+  directions, and meaningful `language`/`script` selection are absent, and RTL
+  merely reverses codepoints. An unavailable family warns and falls back.
+
+  ```scad
+  text("office", font="Liberation Serif"); // no ligature/kerning shaping yet
+  text("مرحبا", direction="rtl", language="ar", script="arabic");
+  ```
+
+- **Import parsers accept the headline formats, not every documented construct.**
+  DXF/SVG selectors and options (`layer`, `id`, transforms/DPI), SVG nesting,
+  transforms, use/style/visibility, DXF bulges/splines/ellipses, and caller curve
+  resolution remain incomplete. 3MF/AMF import does not yet assemble units,
+  independent object index spaces, components, or build-item transforms.
+
+- **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
+  mesh and vector formats, but it does not serialize the evaluated model as a
+  `.csg` operation tree.
+
+- **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
+  503/513 pinned blocks across 15 files. The expected failures are
+  `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
+  `test_hstack`, `test_typeof`, two `test_segs` blocks, `test_f_acos`, and
+  `test_struct_val`. This is broad library evidence, not the complete BOSL2
+  module suite.
+
+## Warned divergences
 
 - **3D `minkowski()` is exact for convex operands and unions of them; a concave
   *leaf* mesh is a convex approximation (warned).** The convex-convex sum is the
@@ -38,46 +96,34 @@ the dangerous kind. Each has a minimal repro. Tracks A/B track the fixes.
   minkowski() { linear_extrude(6) polygon([[0,0],[24,0],[24,6],[6,6],[6,24],[0,24]]); sphere(2); }
   ```
 
-- **`text(font=…)` supports the bundled Liberation family only.** The full
-  Liberation family — Sans / Serif / Mono × Regular / Bold / Italic / Bold Italic,
-  the exact Liberation 2.00.1 files OpenSCAD ships — is bundled, so
-  `font="Liberation Serif"`, `font="Liberation Sans:style=Bold"`, etc. select the
-  same face and render byte-for-byte like OpenSCAD (verified by
-  `corpus/geom/text_*`). A request for any *other* family (a system font, which is
-  non-portable and would not exist in the browser) falls back to Liberation Sans
-  **with a warning**, rather than silently. Arbitrary system-font resolution is
-  intentionally out of scope: it is non-portable and non-reproducible against the
-  oracle.
+## Permanent divergences
+
+- **`rands()` is not bit-compatible.** OpenRSCAD uses an xorshift PRNG; values
+  are reproducible and global/seeded advance semantics match, but the sequence
+  differs from OpenSCAD's generator. This is intentional.
 
   ```scad
-  text("Ag", font = "Liberation Serif:style=Bold");  // exact match
-  text("Ag", font = "Courier New");                  // warns, falls back to Liberation Sans
+  echo(rands(0, 1, 3, seed=42)); // reproducible, but not OpenSCAD's values
   ```
-
-- **`rands()` is not bit-compatible (documented).** OpenRSCAD uses an xorshift PRNG;
-  values are reproducible and the global/seeded advance semantics match
-  OpenSCAD, but the numbers do not match OpenSCAD's generator bit-for-bit. This
-  divergence is intentional and permanent.
-
-  ```scad
-  echo(rands(0, 1, 3, seed = 42));     // reproducible, but ≠ OpenSCAD's values
-  ```
-
-- **BOSL2 function-suite coverage is partial (recorded, gated).** `cargo run -p
-  xtask -- bosl2` runs **every** `[[test]]` block of the 15 function-oriented
-  files and currently passes **503/513**; the gate now also honors each block's
-  `expect_success` flag, so error-path tests pass when OpenRSCAD correctly *rejects*
-  bad input. The ~10 remaining gaps are scattered edge cases (e.g. `rands`
-  distribution — an intentional, documented divergence; inverse-trig exactness at
-  nice angles; a few string/struct helpers). The passing set is pinned per file
-  under `corpus/golden/bosl2/`, so these gaps are recorded and a regression fails
-  CI — they are not a silent loss. Closing them is open-ended and tracked
-  separately.
 
 ## Closed since M0
 
-All oracle-checked; `corpus/echo` passes **25/25** and BOSL2's function suite
-runs in the `xtask bosl2` harness:
+The current gates are `corpus/echo` **25/25**, geometry **81/81**, and BOSL2
+**503/513** with ten explicit expected failures. Individual closures below state
+their oracle or regression evidence where relevant:
+
+- **Initial Track F closures.** Named `multmatrix`, positional cylinder/text
+  arguments, `intersection_for`, `$parent_modules`/`parent_module()`, raw
+  punctuation-preserving include/use paths, and the confirmed NaN/iteration/
+  reducer/`chr`/`version_num` edges are fixed and regression-covered.
+  `rotate_extrude` now handles negative-side profiles, axis crossings, partial
+  fragment counts, zero sweeps, and angles over 360 degrees. Bare and
+  display-wrapped `projection()` now export through the kernel-aware DXF/SVG
+  path on CLI, wasm/npm, LSP, and desktop. Omitted function/module defaults now
+  evaluate lazily in definition scope for ordinary variables while retaining
+  dynamic `$` variables, across tree-walk, VM, and module paths. General planar
+  concave `polyhedron` faces use projected earcut triangulation instead of an
+  overlapping fan.
 
 - **Assignment hoisting (last-write-wins).** Within a scope, only a variable's
   *final* assignment is evaluated, at the point it was *first introduced*. A read
@@ -117,12 +163,8 @@ runs in the `xtask bosl2` harness:
   modules with dynamic scoping for `$` variables; and the `polyhedron`
   primitive.
 
-## Candidate intentional cleanups (from the plan, not yet decided)
+## Compatibility bar
 
-- Warn-and-keep on last-assignment-wins (footgun surfaced, behavior kept).
-- Saner reversed-range handling.
 - No bug-for-bug reproduction of CGAL/Nef coincident-face degeneracies.
-- Tolerance-level (not vertex-exact) mesh equivalence as the compat bar.
-
-_When a divergence becomes permanent by design, move it to a "Permanent
-divergences" section with rationale._
+- Geometry is compared within the documented oracle tolerances, not by vertex
+  order or identical mesh bytes.

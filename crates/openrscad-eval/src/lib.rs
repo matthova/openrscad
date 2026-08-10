@@ -283,6 +283,9 @@ struct Interp<'a> {
     /// scope chain (so `children()` evaluates them at the call site), and the
     /// caller's `in_main` flag (so their spans attribute correctly).
     children_stack: Vec<(Vec<Spanned<Stmt>>, Vec<ScopeRef>, bool)>,
+    /// Active user-module instantiations, outermost to innermost. Built-in
+    /// modules do not participate in OpenSCAD's `$parent_modules` stack.
+    module_stack: Vec<String>,
     /// `include`/`use` file resolver.
     resolver: &'a dyn FileResolver,
     /// Directory of the file currently being evaluated (for relative includes).
@@ -413,6 +416,7 @@ fn eval_program_impl(
         in_main: true,
         cur_span: None,
         children_stack: Vec::new(),
+        module_stack: Vec::new(),
         resolver,
         cur_dir: base_dir.to_string(),
         loading: HashSet::new(),
@@ -849,6 +853,42 @@ impl Interp<'_> {
         Ok(())
     }
 
+    /// Legacy `intersection_for(...)`: evaluate the child once per Cartesian
+    /// binding combination, then intersect those per-iteration child groups.
+    /// Later binding expressions see earlier named bindings.
+    fn b_intersection_for(&mut self, args: &[Arg], children: &[Spanned<Stmt>]) -> EResult<Node> {
+        let mut operands = Vec::new();
+        if !args.is_empty() {
+            self.intersection_for_rec(args, children, &mut operands)?;
+        }
+        Ok(Node::Intersection(operands))
+    }
+
+    fn intersection_for_rec(
+        &mut self,
+        args: &[Arg],
+        children: &[Spanned<Stmt>],
+        operands: &mut Vec<Node>,
+    ) -> EResult<()> {
+        let Some((arg, rest)) = args.split_first() else {
+            operands.push(Node::group(self.eval_children(children)?));
+            return Ok(());
+        };
+
+        let values = iter_values(&self.eval_expr(&arg.value)?)?;
+        for value in values {
+            self.burn()?;
+            self.push_scope();
+            if let Some(name) = &arg.name {
+                self.set_var(name, value);
+            }
+            let result = self.intersection_for_rec(rest, children, operands);
+            self.pop_scope();
+            result?;
+        }
+        Ok(())
+    }
+
     fn eval_module_call(
         &mut self,
         modifier: Option<Modifier>,
@@ -972,6 +1012,7 @@ impl Interp<'_> {
             "union" => Ok(Node::Union(self.eval_children(children)?)),
             "difference" => Ok(Node::Difference(self.eval_children(children)?)),
             "intersection" => Ok(Node::Intersection(self.eval_children(children)?)),
+            "intersection_for" => self.b_intersection_for(args, children),
             "hull" => Ok(Node::Hull(self.eval_children(children)?)),
             "minkowski" => Ok(Node::Minkowski(self.eval_children(children)?)),
             "import" => self.b_import(args),
@@ -982,7 +1023,7 @@ impl Interp<'_> {
             "children" => self.b_children(args),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
-                    self.instantiate_module(&def, args, children)
+                    self.instantiate_module(name, &def, args, children)
                 } else {
                     self.warn(format!("Ignoring unknown module '{name}'"));
                     Ok(Node::Empty)
@@ -1000,6 +1041,7 @@ impl Interp<'_> {
 
     fn instantiate_module(
         &mut self,
+        name: &str,
         def: &Rc<ModClosure>,
         args: &[Arg],
         children: &[Spanned<Stmt>],
@@ -1011,9 +1053,21 @@ impl Interp<'_> {
             return err("maximum module recursion depth exceeded");
         }
         self.depth += 1;
+        // OpenSCAD exposes the callee through parent_module() while evaluating
+        // its arguments/defaults, even though `$parent_modules` still resolves
+        // dynamically from the caller's special-variable frame until the body
+        // frame below is pushed.
+        self.module_stack.push(name.to_string());
         // Arguments are evaluated in the caller's scope; the body runs in the
         // module's captured (lexical) environment.
-        let bound = self.bind_params(&def.params, args)?;
+        let bound = match self.bind_params(&def.params, args, &def.env) {
+            Ok(bound) => bound,
+            Err(error) => {
+                self.module_stack.pop();
+                self.depth -= 1;
+                return Err(error);
+            }
+        };
         let caller_scopes = self.scopes.clone();
         let saved = std::mem::replace(&mut self.scopes, def.env.clone());
         self.push_scope();
@@ -1028,11 +1082,16 @@ impl Interp<'_> {
         self.set_var("$children", Value::Number(slots.len() as f64));
         self.children_stack
             .push((children.to_vec(), caller_scopes, self.in_main));
+        self.set_var(
+            "$parent_modules",
+            Value::Number(self.module_stack.len() as f64),
+        );
         // The body's spans index into the file the module was defined in, so only
         // attribute diagnostics to them when that file is the main source.
         let prev_main = std::mem::replace(&mut self.in_main, def.is_main);
         let r = self.eval_stmts(&def.body);
         self.in_main = prev_main;
+        self.module_stack.pop();
         self.children_stack.pop();
         self.pop_scope();
         self.scopes = saved;
@@ -1144,7 +1203,7 @@ impl Interp<'_> {
     }
 
     fn b_cylinder(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["h", "r1", "r2"], args)?;
+        let m = self.bind_named(&["h", "r1", "r2", "center"], args)?;
         let h = m.get("h").and_then(Value::as_number).unwrap_or(1.0);
 
         // r / d apply to both ends; r1/r2/d1/d2 override per end.
@@ -1280,7 +1339,20 @@ impl Interp<'_> {
     }
 
     fn b_text(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["text", "size", "font"], args)?;
+        let m = self.bind_named(
+            &[
+                "text",
+                "size",
+                "font",
+                "direction",
+                "language",
+                "script",
+                "halign",
+                "valign",
+                "spacing",
+            ],
+            args,
+        )?;
         let text = m.get("text").map(Value::to_str).unwrap_or_default();
         let size = m.get("size").and_then(Value::as_number).unwrap_or(10.0);
         // Resolve `font` against the shared font database: the bundled Liberation
@@ -1581,7 +1653,11 @@ impl Interp<'_> {
         if matches!(child, Node::Empty) {
             return Ok(Node::Empty);
         }
-        let m = matrix_from_value(&self.first_positional(args)?);
+        let args = self.bind_named(&["m"], args)?;
+        let m = args
+            .get("m")
+            .map(matrix_from_value)
+            .unwrap_or_else(|| matrix_from_value(&Value::Undef));
         Ok(Node::MultMatrix {
             m,
             child: Box::new(child),
@@ -1680,23 +1756,17 @@ impl Interp<'_> {
         Ok(map)
     }
 
-    fn bind_params(&mut self, params: &[Param], args: &[Arg]) -> EResult<FastMap<String, Value>> {
+    fn bind_params(
+        &mut self,
+        params: &[Param],
+        args: &[Arg],
+        definition_env: &[ScopeRef],
+    ) -> EResult<FastMap<String, Value>> {
         let mut map = FastMap::default();
-        // Every declared parameter is in scope for the body — bound to its
-        // default expression, or to `undef` when it has neither a default nor a
-        // supplied argument. This matches OpenSCAD: a parameter always shadows
-        // an outer variable of the same name, even when the caller omits it.
-        // Without the `undef` fallback, an omitted parameter would leak through
-        // to a global of the same name (e.g. BOSL2's `circ_pitch`), breaking the
-        // ubiquitous `assert(...) expr` guard idiom, whose body can't compile to
-        // the slot-based VM path and so relies on this map.
-        for p in params {
-            let v = match &p.default {
-                Some(d) => self.eval_expr(d)?,
-                None => Value::Undef,
-            };
-            map.insert(p.name.clone(), v);
-        }
+
+        // Explicit arguments are eager and evaluated left-to-right in the
+        // caller's scope. Named arguments that aren't declared parameters still
+        // become locals (with an OpenSCAD warning omitted here), so retain them.
         let mut pos = 0;
         for a in args {
             let v = self.eval_expr(&a.value)?;
@@ -1712,7 +1782,37 @@ impl Interp<'_> {
                 }
             }
         }
+
+        self.fill_param_defaults(params, definition_env, &mut map)?;
         Ok(map)
+    }
+
+    /// Fill only omitted parameters, evaluating their defaults in the closure's
+    /// lexical environment. `$` variables remain dynamic because only the
+    /// ordinary scope chain is swapped. A missing parameter without a default is
+    /// explicitly bound to `undef`, so it still shadows an outer name in the body.
+    fn fill_param_defaults(
+        &mut self,
+        params: &[Param],
+        definition_env: &[ScopeRef],
+        bound: &mut FastMap<String, Value>,
+    ) -> EResult<()> {
+        let saved = std::mem::replace(&mut self.scopes, definition_env.to_vec());
+        let result = (|| -> EResult<()> {
+            for p in params {
+                if bound.contains_key(&p.name) {
+                    continue;
+                }
+                let value = match &p.default {
+                    Some(default) => self.eval_expr(default)?,
+                    None => Value::Undef,
+                };
+                bound.insert(p.name.clone(), value);
+            }
+            Ok(())
+        })();
+        self.scopes = saved;
+        result
     }
 
     fn first_positional(&mut self, args: &[Arg]) -> EResult<Value> {
@@ -1877,20 +1977,29 @@ impl Interp<'_> {
                 .clone()
             {
                 let mut locals = vec![Value::Undef; chunk.n_locals()];
-                // Defaults first (in caller scope), then positional overrides —
-                // matching `bind_params`' evaluation order.
-                for (i, p) in f.params.iter().enumerate() {
-                    if let Some(d) = &p.default {
-                        locals[i] = self.eval_expr(d)?;
-                    }
-                }
+                // Explicit arguments are evaluated first in the caller's scope.
                 for (i, a) in args.iter().enumerate() {
                     locals[i] = self.eval_expr(&a.value)?;
                 }
+
+                // Only omitted defaults run, and they resolve ordinary names in
+                // the function's captured lexical environment. Special `$`
+                // variables remain dynamic because `specials` is not swapped.
+                let saved = std::mem::replace(&mut self.scopes, f.env.clone());
+                let defaults = (|| -> EResult<()> {
+                    for (i, p) in f.params.iter().enumerate().skip(args.len()) {
+                        if let Some(default) = &p.default {
+                            locals[i] = self.eval_expr(default)?;
+                        }
+                    }
+                    Ok(())
+                })();
+                self.scopes = saved;
+                defaults?;
                 return self.run_chunk(f, chunk, locals);
             }
         }
-        let bound = self.bind_params(&f.params, args)?;
+        let bound = self.bind_params(&f.params, args, &f.env)?;
         self.run_bound(f, bound)
     }
 
@@ -1918,17 +2027,12 @@ impl Interp<'_> {
     /// positionally against the parameter list.
     fn call_function_values(&mut self, f: &Rc<FnClosure>, argv: Vec<Value>) -> EResult<Value> {
         let mut bound = FastMap::default();
-        for p in &f.params {
-            if let Some(d) = &p.default {
-                let v = self.eval_expr(d)?;
-                bound.insert(p.name.clone(), v);
-            }
-        }
         for (i, v) in argv.into_iter().enumerate() {
             if let Some(p) = f.params.get(i) {
                 bound.insert(p.name.clone(), v);
             }
         }
+        self.fill_param_defaults(&f.params, &f.env, &mut bound)?;
         self.run_bound(f, bound)
     }
 
@@ -1948,6 +2052,25 @@ impl Interp<'_> {
     /// Invoke a builtin function, routing any warnings it emits through `warn`
     /// so they pick up the current statement's span.
     fn call_builtin_fn(&mut self, name: &str, args: &[Value]) -> Value {
+        if name == "parent_module" {
+            let index = match args.first() {
+                None => 1isize,
+                Some(Value::Number(n)) => *n as isize,
+                Some(_) => return Value::Undef,
+            };
+            if index < 0 {
+                return Value::Undef;
+            }
+            return self
+                .module_stack
+                .iter()
+                .rev()
+                .nth(index as usize)
+                .cloned()
+                .map(Value::Str)
+                .unwrap_or(Value::Undef);
+        }
+
         let mut ws: Vec<String> = Vec::new();
         let v = builtin_fn(name, args, &mut ws);
         for m in ws {
@@ -2045,7 +2168,7 @@ impl Interp<'_> {
                 // A self-call in tail position becomes a loop iteration.
                 if let Some(g) = self.lookup_func(name) {
                     if Rc::ptr_eq(&g, f) {
-                        let next = self.bind_params(&f.params, args)?;
+                        let next = self.bind_params(&f.params, args, &f.env)?;
                         return Ok(TailResult::TailCall(next));
                     }
                 }
@@ -2491,6 +2614,8 @@ fn surface_polyhedron(rows: &[Vec<f64>], center: bool, png: bool) -> Node {
 
 fn index_value(base: &Value, index: &Value) -> Value {
     match (base, index) {
+        // Rust casts NaN to zero; OpenSCAD instead rejects it as an index.
+        (_, Value::Number(n)) if n.is_nan() => Value::Undef,
         (Value::Vector(v), Value::Number(n)) => {
             let i = *n as isize;
             if i >= 0 && (i as usize) < v.len() {
@@ -2532,35 +2657,41 @@ fn chr(args: &[Value]) -> Value {
             .map(|c| c.to_string())
             .unwrap_or_default()
     }
-    match args.first() {
-        Some(Value::Number(n)) => Value::Str(one(*n)),
-        Some(Value::Vector(v)) => {
-            let mut s = String::new();
-            for e in v.iter() {
-                if let Some(n) = e.as_number() {
-                    s.push_str(&one(n));
-                }
-            }
-            Value::Str(s)
-        }
-        Some(r @ Value::Range { .. }) => {
-            let mut s = String::new();
-            if let Ok(vals) = iter_values(r) {
-                for e in vals {
+    fn append(value: &Value, s: &mut String) {
+        match value {
+            Value::Number(n) => s.push_str(&one(*n)),
+            Value::Vector(v) => {
+                for e in v.iter() {
                     if let Some(n) = e.as_number() {
                         s.push_str(&one(n));
                     }
                 }
             }
-            Value::Str(s)
+            r @ Value::Range { .. } => {
+                if let Ok(vals) = iter_values(r) {
+                    for e in vals {
+                        if let Some(n) = e.as_number() {
+                            s.push_str(&one(n));
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => Value::Str(String::new()),
     }
+
+    let mut s = String::new();
+    for arg in args {
+        append(arg, &mut s);
+    }
+    Value::Str(s)
 }
 
 /// Expand a value into the sequence a `for`/comprehension iterates over.
 fn iter_values(v: &Value) -> EResult<Vec<Value>> {
     match v {
+        // An undefined iterable contributes no loop/comprehension iterations.
+        Value::Undef => Ok(Vec::new()),
         Value::Vector(xs) => Ok(xs.to_vec()),
         // Iterating a string yields its characters (OpenSCAD semantics).
         Value::Str(s) => Ok(s.chars().map(|c| Value::Str(c.to_string())).collect()),
@@ -2645,8 +2776,10 @@ fn builtin_fn(name: &str, args: &[Value], warnings: &mut Vec<String>) -> Value {
         },
         "norm" => match args.first() {
             Some(Value::Vector(v)) => {
-                let sum: f64 = v.iter().filter_map(Value::as_number).map(|x| x * x).sum();
-                Value::Number(sum.sqrt())
+                let Some(nums): Option<Vec<f64>> = v.iter().map(Value::as_number).collect() else {
+                    return Value::Undef;
+                };
+                Value::Number(nums.iter().map(|x| x * x).sum::<f64>().sqrt())
             }
             _ => Value::Undef,
         },
@@ -2676,7 +2809,28 @@ fn builtin_fn(name: &str, args: &[Value], warnings: &mut Vec<String>) -> Value {
             Value::Number(1.0),
             Value::Number(0.0),
         ]),
-        "version_num" => Value::Number(20210100.0),
+        "version_num" => match args.first() {
+            None => Value::Number(20210100.0),
+            Some(Value::Vector(v)) if v.len() == 2 || v.len() == 3 => {
+                let Some(year) = v.first().and_then(Value::as_number) else {
+                    return Value::Undef;
+                };
+                let Some(month) = v.get(1).and_then(Value::as_number) else {
+                    return Value::Undef;
+                };
+                let day = match v.get(2) {
+                    Some(v) => {
+                        let Some(day) = v.as_number() else {
+                            return Value::Undef;
+                        };
+                        day
+                    }
+                    None => 0.0,
+                };
+                Value::Number(year * 10_000.0 + month * 100.0 + day)
+            }
+            _ => Value::Undef,
+        },
         "lookup" => lookup(args),
         "search" => search(args),
         "str" => {
@@ -2784,10 +2938,13 @@ fn tan_deg(x: f64) -> f64 {
 
 fn reduce_num(args: &[Value], f: fn(f64, f64) -> f64) -> Value {
     // max(v) over a single vector, or max(a,b,c,...) over scalars.
-    let nums: Vec<f64> = if let [Value::Vector(v)] = args {
-        v.iter().filter_map(Value::as_number).collect()
+    let nums: Option<Vec<f64>> = if let [Value::Vector(v)] = args {
+        v.iter().map(Value::as_number).collect()
     } else {
-        args.iter().filter_map(Value::as_number).collect()
+        args.iter().map(Value::as_number).collect()
+    };
+    let Some(nums) = nums else {
+        return Value::Undef;
     };
     match nums.split_first() {
         Some((first, rest)) => Value::Number(rest.iter().fold(*first, |a, b| f(a, *b))),
@@ -3271,6 +3428,33 @@ mod tests {
     }
 
     #[test]
+    fn intersection_for_uses_dependent_cartesian_bindings() {
+        let out = eval(
+            "intersection_for(i=[1,2], j=[i,i+10]) \
+             translate([i,j,0]) cube(1);",
+        );
+        let Node::Intersection(operands) = out.node else {
+            panic!("expected intersection_for to lower to Intersection");
+        };
+        let translations: Vec<[f64; 3]> = operands
+            .into_iter()
+            .map(|node| match node {
+                Node::Translate { v, .. } => v,
+                other => panic!("expected translated operand, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            translations,
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 11.0, 0.0],
+                [2.0, 2.0, 0.0],
+                [2.0, 12.0, 0.0],
+            ]
+        );
+    }
+
+    #[test]
     fn last_assignment_wins() {
         // x is hoisted: cube should see x = 2.
         let out = eval("x = 1; cube(x); x = 2;");
@@ -3347,6 +3531,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cylinder_binds_fourth_positional_center() {
+        // The fourth positional cylinder argument is `center`.
+        match eval("cylinder(10, 2, 3, true);").node {
+            Node::Cylinder {
+                h, r1, r2, center, ..
+            } => {
+                assert_eq!((h, r1, r2), (10.0, 2.0, 3.0));
+                assert!(center);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multmatrix_binds_named_m() {
+        // multmatrix accepts both its positional form and the documented `m=`
+        // form; both must lower to the same transform.
+        let matrix = "[[1,0,0,4],[0,1,0,5],[0,0,1,6],[0,0,0,1]]";
+        assert_eq!(
+            eval(&format!("multmatrix({matrix}) cube(1);")).node,
+            eval(&format!("multmatrix(m={matrix}) cube(1);")).node
+        );
+    }
+
+    #[test]
+    fn text_binds_full_positional_signature_and_named_forms() {
+        // Positional text arguments follow OpenSCAD's complete signature. The
+        // equivalent named call also proves that those forms remain supported.
+        let positional = concat!(
+            "text(\"AB\", 12, \"Liberation Sans\", \"rtl\", \"en\", \"latin\", ",
+            "\"center\", \"top\", 1.25);"
+        );
+        let named = concat!(
+            "text(text=\"AB\", size=12, font=\"Liberation Sans\", direction=\"rtl\", ",
+            "language=\"en\", script=\"latin\", halign=\"center\", valign=\"top\", ",
+            "spacing=1.25);"
+        );
+        let positional = eval(positional);
+        let named = eval(named);
+        assert_eq!(positional.node, named.node);
+        assert!(positional.warnings.is_empty());
+        assert!(named.warnings.is_empty());
+    }
+
     fn echoes(src: &str) -> Vec<String> {
         eval(src).echoes
     }
@@ -3391,6 +3620,20 @@ mod tests {
         assert_eq!(
             echoes("echo(is_num(0/0), is_num(1/0), is_num(3));"),
             vec!["ECHO: false, true, true"]
+        );
+    }
+
+    #[test]
+    fn nan_truthiness_and_indexing_match_openscad() {
+        // Although is_num(nan) is false, OpenSCAD's boolean conversion treats
+        // NaN as true. It is not, however, a valid list/string/range index.
+        assert_eq!(
+            echoes("echo(!(0/0), (0/0) ? 1 : 2, (0/0) && true, (0/0) || false);"),
+            vec!["ECHO: false, 1, true, true"]
+        );
+        assert_eq!(
+            echoes("echo([10,20][0/0], \"ab\"[0/0], [1:2:5][0/0]);"),
+            vec!["ECHO: undef, undef, undef"]
         );
     }
 
@@ -3531,6 +3774,55 @@ mod tests {
     }
 
     #[test]
+    fn defaults_are_lazy_lexical_and_keep_specials_dynamic() {
+        // Oracle-derived ordering and scope rules, exercised through a compiled
+        // function (`f`), tree-walk fallback (`g`), and a module (`m`):
+        // supplied args run first in caller scope; only missing defaults run;
+        // ordinary names come from the definition scope, while `$d` is dynamic.
+        assert_eq!(
+            echoes(concat!(
+                "x=10; $d=1;",
+                "function f(a=echo(\"f-default\")x,b=$d,c=echo(\"f-dead\")3)=[a,b,c];",
+                "function g(a=echo(\"g-default\")x,b=$d,c=echo(\"g-dead\")3)=",
+                "assert(true)[a,b,c];",
+                "module m(a=echo(\"m-default\")x,b=$d,c=echo(\"m-dead\")3){",
+                "echo(\"m\",a,b,c);}",
+                "module caller(){x=20;$d=7;",
+                "echo(\"f\",f(c=echo(\"f-arg\")x));",
+                "echo(\"g\",g(c=echo(\"g-arg\")x));",
+                "m(c=echo(\"m-arg\")x);}",
+                "caller();",
+            )),
+            vec![
+                "ECHO: \"f-arg\"",
+                "ECHO: \"f-default\"",
+                "ECHO: \"f\", [10, 7, 20]",
+                "ECHO: \"g-arg\"",
+                "ECHO: \"g-default\"",
+                "ECHO: \"g\", [10, 7, 20]",
+                "ECHO: \"m-arg\"",
+                "ECHO: \"m-default\"",
+                "ECHO: \"m\", 10, 7, 20",
+            ]
+        );
+    }
+
+    #[test]
+    fn module_defaults_observe_dynamic_instantiation_context() {
+        // During binding, `$parent_modules` is inherited from the caller frame,
+        // while parent_module(0) already identifies the callee being instantiated.
+        assert_eq!(
+            echoes(concat!(
+                "module a(){b();}",
+                "module b(depth=$parent_modules,current=parent_module(0)){",
+                "echo(depth,current,$parent_modules,parent_module(0));}",
+                "a();",
+            )),
+            vec!["ECHO: 1, \"b\", 2, \"b\""]
+        );
+    }
+
+    #[test]
     fn cross_2d_is_scalar_3d_is_vector() {
         // OpenSCAD: 2D cross -> scalar z, 3D cross -> vector, mismatch -> undef.
         assert_eq!(echoes("echo(cross([1,2],[3,4]));"), vec!["ECHO: -2"]);
@@ -3625,6 +3917,53 @@ mod tests {
         assert_eq!(
             echoes("function h(n)=n==0?0:g(n-1); function g(n)=n==0?1:h(n-1); echo(g(7), h(7));"),
             vec!["ECHO: 0, 1"]
+        );
+    }
+
+    #[test]
+    fn vm_internal_call_defaults_use_callee_definition_scope() {
+        // The direct `inner()` call exercises the positional VM fast path.
+        // `outer` compiles to a VM call of `inner`, so that invocation's zero
+        // pre-evaluated arguments flow through `call_function_values` instead.
+        assert_eq!(
+            echoes(concat!(
+                "x=10; $d=1; function inner(a=x,b=$d)=[a,b]; function outer()=inner();",
+                "module caller(){x=20; $d=7; echo(inner(),outer());} caller();",
+            )),
+            vec!["ECHO: [10, 7], [10, 7]"]
+        );
+    }
+
+    #[test]
+    fn vm_paths_do_not_run_supplied_defaults() {
+        // `fast(...)` uses the direct positional VM path; `via_vm()` invokes
+        // `callee(...)` from bytecode with an already-evaluated argument.
+        assert_eq!(
+            echoes(concat!(
+                "function fast(a=echo(\"fast-dead\")1)=a;",
+                "function callee(a=echo(\"callee-dead\")1)=a;",
+                "function via_vm()=callee(echo(\"vm-arg\")3);",
+                "echo(fast(echo(\"fast-arg\")2)); echo(via_vm());",
+            )),
+            vec![
+                "ECHO: \"fast-arg\"",
+                "ECHO: 2",
+                "ECHO: \"vm-arg\"",
+                "ECHO: 3",
+            ]
+        );
+    }
+
+    #[test]
+    fn tree_walk_tco_refills_omitted_defaults() {
+        // `assert` forces tree-walk, and the self-tail-call omits `step`; this
+        // must reuse the frame while re-evaluating the default each iteration.
+        assert_eq!(
+            echoes(concat!(
+                "function down(n,step=1)=assert(true) ",
+                "n<=0 ? 0 : down(n-step); echo(down(20000));",
+            )),
+            vec!["ECHO: 0"]
         );
     }
 
@@ -3734,6 +4073,37 @@ mod tests {
     }
 
     #[test]
+    fn parent_module_stack_tracks_nested_user_modules() {
+        assert_eq!(
+            echoes(concat!(
+                "echo(\"top\", $parent_modules, parent_module(0));",
+                "module a() { translate([0,0,0]) b(); }",
+                "module b() { echo(\"nested\", $parent_modules, parent_module(0), ",
+                "parent_module(1), parent_module()); }",
+                "a();",
+            )),
+            vec![
+                "ECHO: \"top\", undef, undef",
+                "ECHO: \"nested\", 2, \"b\", \"a\", \"a\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn parent_module_stack_survives_children_forwarding() {
+        assert_eq!(
+            echoes(concat!(
+                "module direct() { children(); }",
+                "module forward() { direct() children(); }",
+                "module outer() { forward() children(); }",
+                "outer() echo(\"child\", $parent_modules, parent_module(0), ",
+                "parent_module(1), parent_module(2), parent_module(3));",
+            )),
+            vec!["ECHO: \"child\", 3, \"direct\", \"forward\", \"outer\", undef"]
+        );
+    }
+
+    #[test]
     fn text_glyph_outline() {
         // text() produces a polygon whose bbox matches OpenSCAD's (same font,
         // same 100/72 scale): "A" at size 10 is ~9.21 × 9.55 mm.
@@ -3808,6 +4178,14 @@ mod tests {
     }
 
     #[test]
+    fn undef_iterable_has_no_iterations() {
+        assert_eq!(
+            echoes("echo([for (i=undef) i]); for (i=undef) echo(i);"),
+            vec!["ECHO: []"]
+        );
+    }
+
+    #[test]
     fn matrix_multiplication() {
         // OpenSCAD linear-algebra `*`: dot, matrix·vector, vector·matrix, matrix·matrix.
         assert_eq!(echoes("echo([1,2,3]*[4,5,6]);"), vec!["ECHO: 32"]);
@@ -3857,6 +4235,32 @@ mod tests {
             vec!["ECHO: [\"a\", \"b\"]"]
         );
         assert_eq!(echoes("s=\"abc\"; echo(s[1]);"), vec!["ECHO: \"b\""]);
+    }
+
+    #[test]
+    fn strict_numeric_reducers_and_extended_builtins() {
+        // OpenSCAD rejects the whole min/max/norm input when any element cannot
+        // be converted to a number; it does not silently skip bad elements.
+        assert_eq!(
+            echoes(concat!(
+                "echo(max([1,\"x\",3]), min([1,undef,3]), max(1,\"x\",3));",
+                "echo(norm([3,\"x\",4]), norm([3,undef,4]), norm([]));",
+            )),
+            vec!["ECHO: undef, undef, undef", "ECHO: undef, undef, 0"]
+        );
+
+        // chr() concatenates every scalar/vector/range argument. version_num()
+        // accepts a two- or three-component version vector.
+        assert_eq!(
+            echoes(concat!(
+                "echo(chr(65,66), chr([65,\"x\",66],67), chr([65:67],68));",
+                "echo(version_num([1,2]), version_num([1,2,3]), version_num([1]));",
+            )),
+            vec![
+                "ECHO: \"AB\", \"ABC\", \"ABCD\"",
+                "ECHO: 10200, 10203, undef"
+            ]
+        );
     }
 
     #[test]

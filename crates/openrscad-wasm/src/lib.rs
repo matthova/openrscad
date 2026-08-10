@@ -260,9 +260,10 @@ pub fn export_2d(
     else {
         return String::new();
     };
-    match openrscad_geom::render_contours(&eval.node) {
-        Some(contours) if format == "dxf" => openrscad_geom::export_dxf(&contours),
-        Some(contours) if format == "svg" => openrscad_geom::export_svg(&contours),
+    let kernel = openrscad_geom::RustManifoldKernel::new();
+    match openrscad_geom::render_contours_with(&eval.node, &kernel) {
+        Ok(Some(contours)) if format == "dxf" => openrscad_geom::export_dxf(&contours),
+        Ok(Some(contours)) if format == "svg" => openrscad_geom::export_svg(&contours),
         _ => String::new(),
     }
 }
@@ -987,6 +988,59 @@ v = [1, 2, 3];
             "dxf"
         )
         .is_empty());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn export_2d_exports_bare_projection() {
+        let src = "projection(cut=false) cube([10, 20, 30]);";
+        let check_footprint = |contours: &[openrscad_geom::Contour]| {
+            assert!(!contours.is_empty());
+            let mut area = 0.0;
+            let mut lo = [f64::INFINITY; 2];
+            let mut hi = [f64::NEG_INFINITY; 2];
+            for contour in contours {
+                for i in 0..contour.len() {
+                    let p = contour[i];
+                    let q = contour[(i + 1) % contour.len()];
+                    area += p[0] * q[1] - q[0] * p[1];
+                    for axis in 0..2 {
+                        lo[axis] = lo[axis].min(p[axis]);
+                        hi[axis] = hi[axis].max(p[axis]);
+                    }
+                }
+            }
+            assert!((area.abs() / 2.0 - 200.0).abs() < 1e-3, "area {area}");
+            assert_eq!(lo, [0.0, 0.0]);
+            assert_eq!(hi, [10.0, 20.0]);
+        };
+        let dxf = export_2d(
+            src,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "dxf",
+        );
+        let contours = openrscad_geom::import_dxf(dxf.as_bytes());
+        check_footprint(&contours);
+
+        let svg = export_2d(
+            src,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "svg",
+        );
+        let contours = openrscad_geom::import_svg(svg.as_bytes());
+        check_footprint(&contours);
     }
 
     #[test]
