@@ -926,7 +926,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openrscad-cli"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-eval"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "fontdb",
  "openrscad-ir",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-geom"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "earcutr",
  "geo",
@@ -967,11 +967,11 @@ dependencies = [
 
 [[package]]
 name = "openrscad-ir"
-version = "0.10.0"
+version = "0.10.1"
 
 [[package]]
 name = "openrscad-lsp"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "openrscad-eval",
  "openrscad-geom",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-syntax"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "logos",
  "serde_json",
@@ -993,7 +993,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-wasm"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "console_error_panic_hook",
  "openrscad-eval",
@@ -1683,7 +1683,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "openrscad-eval",
  "openrscad-geom",

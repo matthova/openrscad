@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.10.1
+
+### Patch Changes
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - honor OpenSCAD named and positional arguments for `multmatrix`, `cylinder`, and `text`
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - triangulate planar concave `polyhedron` faces without overlapping their notches
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - match OpenSCAD edge semantics for NaN, undef iteration, numeric reducers, `chr`, and `version_num`
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - evaluate user function and module defaults lazily in their lexical definition scope
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - support OpenSCAD `intersection_for`, `$parent_modules`, and `parent_module()` semantics
+
+- [#93](https://github.com/matthova/openrscad/pull/93) [`2368691`](https://github.com/matthova/openrscad/commit/236869131f2d7a2a1ae29cd2553f8a4ca318dffb) Thanks [@matthova](https://github.com/matthova)! - show the OpenRSCAD logo mark in the homepage nav instead of a plain rounded square
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - export bare and display-wrapped `projection()` geometry correctly to DXF and SVG
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - parse OpenSCAD `include` and `use` paths with spaces and punctuation verbatim
+
+- [#95](https://github.com/matthova/openrscad/pull/95) [`06d7dc2`](https://github.com/matthova/openrscad/commit/06d7dc2266e0cd2107efbab8c62321dd61b32dd1) Thanks [@matthova](https://github.com/matthova)! - match OpenSCAD `rotate_extrude` behavior for negative profiles, partial sweeps, axis crossings, and angles over 360 degrees
+
 ## 0.10.0
 
 ### Minor Changes
