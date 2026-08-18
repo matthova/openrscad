@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>OpenRSCAD exportShape3D browser benchmark</title>
+<pre id="status">running</pre>
+<script type="module">
+  import * as api from "../packages/npm/dist/browser.js";
+  import * as raw from "../packages/npm/pkg/web/openrscad.js";
+  import {
+    builtInFixtures,
+    collectArtifactParity,
+    runExportShape3DBenchmark,
+  } from "./export-shape3d-benchmark.mjs";
+
+  const search = new URL(location.href).searchParams;
+  const samples = Number(search.get("samples") ?? 30);
+  const status = document.querySelector("#status");
+  globalThis.__benchmarkPromise = (async () => {
+    const [font, stl] = await Promise.all([
+      fetch("../crates/openrscad-eval/fonts/LiberationSans-Regular.ttf").then((response) =>
+        response.arrayBuffer(),
+      ),
+      fetch("../corpus/geom/cube.stl").then((response) => response.arrayBuffer()),
+    ]);
+    const fixtures = structuredClone(builtInFixtures);
+    fixtures.find(({ name }) => name === "text").options = {
+      fontFiles: [new Uint8Array(font)],
+    };
+    fixtures.push({
+      name: "binary-import",
+      source: 'import("cube.stl");',
+      options: { binaryFiles: { "cube.stl": new Uint8Array(stl) } },
+    });
+    const entry = search.get("entry");
+    if (entry) {
+      const entryUrl = new URL(entry, location.href);
+      const root = new URL("./", entryUrl);
+      const files = {};
+      for (const file of search.getAll("file")) {
+        const fileUrl = new URL(file, root);
+        const key = decodeURIComponent(fileUrl.pathname.slice(root.pathname.length));
+        files[key] = await fetch(fileUrl).then((response) => response.text());
+      }
+      fixtures.push({
+        name: `external:${decodeURIComponent(entryUrl.pathname)}`,
+        source: await fetch(entryUrl).then((response) => response.text()),
+        options: { files },
+      });
+    }
+    for (const fixture of fixtures) {
+      fixture.options = {
+        ...fixture.options,
+        params: { ...fixture.options?.params, $fn: 0, $fa: 12, $fs: 2 },
+      };
+    }
+    const benchmarkApi = {
+      ...api,
+      ...(typeof raw.take_last_benchmark_profile === "function"
+        ? {
+            takeLastBenchmarkProfile: () =>
+              JSON.parse(raw.take_last_benchmark_profile() || "null"),
+          }
+        : {}),
+    };
+    const benchmark = await runExportShape3DBenchmark({ api: benchmarkApi, fixtures, samples });
+    const parity = await collectArtifactParity({ api: benchmarkApi, fixtures });
+    const result = {
+      schemaVersion: 1,
+      host: "chrome",
+      userAgent: navigator.userAgent,
+      samplesPerGroup: samples,
+      fixtures: fixtures.map(({ name }) => name),
+      internalTimings:
+        "Present only in the benchmark-profile build; production builds contain no timers or profiling ABI.",
+      parity,
+      ...benchmark,
+    };
+    globalThis.__benchmarkResult = result;
+    status.textContent = JSON.stringify(result, null, 2);
+    document.body.dataset.complete = "true";
+    return result;
+  })().catch((error) => {
+    status.textContent = error.stack ?? String(error);
+    document.body.dataset.error = String(error);
+    throw error;
+  });
+</script>

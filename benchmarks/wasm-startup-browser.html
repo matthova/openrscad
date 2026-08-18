@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>OpenRSCAD Wasm startup benchmark</title>
+<pre id="status">running</pre>
+<script type="module">
+  const status = document.querySelector("#status");
+  const samples = Number(new URL(location.href).searchParams.get("samples") ?? 30);
+  const artifacts = ["baseline", "current"];
+
+  const run = (name, iteration, phase) =>
+    new Promise((resolve, reject) => {
+      const frame = document.createElement("iframe");
+      const moduleUrl = new URL(`./artifacts/${name}/openrscad.js`, location.href).href;
+      const listener = (event) => {
+        if (event.source !== frame.contentWindow || event.data?.token !== `${name}:${iteration}:${phase}`) return;
+        removeEventListener("message", listener);
+        frame.remove();
+        if (event.data.error) reject(new Error(event.data.error));
+        else resolve(event.data.result);
+      };
+      addEventListener("message", listener);
+      frame.hidden = true;
+      frame.srcdoc = `<script type="module">
+        try {
+          const totalStart = performance.now();
+          const engine = await import(${JSON.stringify(moduleUrl)});
+          const importMs = performance.now() - totalStart;
+          const initStart = performance.now();
+          await engine.default();
+          parent.postMessage({
+            token: ${JSON.stringify(`${name}:${iteration}:${phase}`)},
+            result: { name: ${JSON.stringify(name)}, iteration: ${iteration}, phase: ${JSON.stringify(phase)}, importMs, initMs: performance.now() - initStart, totalMs: performance.now() - totalStart },
+          }, "*");
+        } catch (error) {
+          parent.postMessage({ token: ${JSON.stringify(`${name}:${iteration}:${phase}`)}, error: error.stack ?? String(error) }, "*");
+        }
+      <\/script>`;
+      document.body.append(frame);
+    });
+
+  const median = (input) => {
+    const values = [...input].sort((left, right) => left - right);
+    const middle = Math.floor(values.length / 2);
+    return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+  };
+  const p95 = (input) => [...input].sort((left, right) => left - right)[Math.ceil(input.length * 0.95) - 1];
+
+  globalThis.__benchmarkPromise = (async () => {
+    const cold = [];
+    for (const name of artifacts) cold.push(await run(name, -1, "cold"));
+    const raw = [];
+    for (let iteration = 0; iteration < samples; iteration += 1) {
+      const offset = iteration % artifacts.length;
+      for (const name of [...artifacts.slice(offset), ...artifacts.slice(0, offset)]) {
+        raw.push(await run(name, iteration, "warm"));
+      }
+    }
+    const summary = artifacts.map((name) => {
+      const group = raw.filter((sample) => sample.name === name);
+      return {
+        name,
+        samples: group.length,
+        importMedianMs: median(group.map(({ importMs }) => importMs)),
+        importP95Ms: p95(group.map(({ importMs }) => importMs)),
+        initMedianMs: median(group.map(({ initMs }) => initMs)),
+        initP95Ms: p95(group.map(({ initMs }) => initMs)),
+        totalMedianMs: median(group.map(({ totalMs }) => totalMs)),
+        totalP95Ms: p95(group.map(({ totalMs }) => totalMs)),
+      };
+    });
+    const result = {
+      schemaVersion: 1,
+      host: "chrome",
+      userAgent: navigator.userAgent,
+      samplesPerArtifact: samples,
+      methodology: "one fresh iframe realm per sample; one discarded-but-recorded cold call per artifact; warm samples rotate first position",
+      cold,
+      raw,
+      summary,
+    };
+    globalThis.__benchmarkResult = result;
+    status.textContent = JSON.stringify(result, null, 2);
+    document.body.dataset.complete = "true";
+    return result;
+  })().catch((error) => {
+    status.textContent = error.stack ?? String(error);
+    document.body.dataset.error = String(error);
+    throw error;
+  });
+</script>
