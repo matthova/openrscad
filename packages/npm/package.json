@@ -1,18 +1,18 @@
 {
-  "name": "openrscad-engine",
-  "version": "0.10.1",
-  "description": "Fast OpenSCAD-compatible geometry engine (OpenRSCAD) compiled to WebAssembly — parse .scad source and render solid 3D meshes in the browser or Node.",
+  "name": "@taulabs/openrscad-engine",
+  "version": "0.11.0-beta.1",
+  "description": "Tau's fork of the OpenRSCAD geometry engine, compiled to WebAssembly — parse .scad source and render solid 3D meshes in the browser or Node. Adds an authored-scene GLB/3MF export path with source-derived feature edges; tracks upstream.",
   "type": "module",
   "license": "Apache-2.0 OR MIT",
   "author": "Matt Hova",
-  "homepage": "https://matthova.github.io/openrscad",
+  "homepage": "https://github.com/taucad/openrscad",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/matthova/openrscad.git",
+    "url": "git+https://github.com/taucad/openrscad.git",
     "directory": "packages/npm"
   },
   "bugs": {
-    "url": "https://github.com/matthova/openrscad/issues"
+    "url": "https://github.com/taucad/openrscad/issues"
   },
   "keywords": [
     "openscad",
@@ -24,7 +24,8 @@
     "csg",
     "3d",
     "mesh",
-    "openrscad"
+    "openrscad",
+    "fork"
   ],
   "types": "./dist/browser.d.ts",
   "exports": {
@@ -74,9 +75,14 @@
   "scripts": {
     "build": "npm run build:wasm && npm run build:facade",
     "build:wasm": "wasm-pack build ../../crates/openrscad-wasm --release --target web --out-dir \"$PWD/pkg/web\" --out-name openrscad && wasm-pack build ../../crates/openrscad-wasm --release --target nodejs --out-dir \"$PWD/pkg/node\" --out-name openrscad && rm -f pkg/web/.gitignore pkg/node/.gitignore",
-    "build:facade": "tsc -p tsconfig.json"
+    "build:wasm:profile": "wasm-pack build ../../crates/openrscad-wasm --release --target web --out-dir \"$PWD/pkg/web\" --out-name openrscad -- --features benchmark-profile && wasm-pack build ../../crates/openrscad-wasm --release --target nodejs --out-dir \"$PWD/pkg/node\" --out-name openrscad -- --features benchmark-profile && rm -f pkg/web/.gitignore pkg/node/.gitignore",
+    "build:facade": "tsc -p tsconfig.json",
+    "test": "npm run build:facade && node --test test/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.3"
-  }
+  },
+  "contributors": [
+    "Richard Fontein (Tau)"
+  ]
 }

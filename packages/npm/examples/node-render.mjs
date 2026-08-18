@@ -3,9 +3,9 @@
 // The Node build instantiates the wasm on import, so `render()` works with no
 // init step. Mesh data comes back as a non-indexed triangle soup (9 f32 per
 // triangle in both `positions` and `normals`).
-import { render, version } from "openrscad-engine";
+import { render, version } from "@taulabs/openrscad-engine";
 
-console.log("openrscad-engine", await version());
+console.log("@taulabs/openrscad-engine", await version());
 
 const r = await render("difference() { cube(20, center=true); sphere(12); }");
 if (!r.ok) {

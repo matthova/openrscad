@@ -8,7 +8,7 @@
 //   worker.onmessage = (e) => { /* e.data.result is a RenderOutput */ };
 //   worker.postMessage({ seq: 1, source: "cube(10);" });
 //
-import { render } from "openrscad-engine";
+import { render } from "@taulabs/openrscad-engine";
 
 self.onmessage = async (e) => {
   const { seq, source, params, files } = e.data;
