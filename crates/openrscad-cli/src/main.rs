@@ -47,7 +47,7 @@ struct Cli {
     /// Input `.scad` file.
     input: PathBuf,
 
-    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`,
+    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`/`.glb`,
     /// 2D `.dxf`/`.svg`. If omitted, only prints model statistics.
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -100,6 +100,10 @@ struct Cli {
     /// PNG: shift the model so its center is the view target.
     #[arg(long)]
     autocenter: bool,
+
+    /// GLB: also emit feature-edge line primitives.
+    #[arg(long)]
+    edges: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -309,8 +313,22 @@ fn run() -> Result<()> {
         return run_animation(&program, &resolver, &base_dir, &overrides, &cli, n);
     }
 
-    let out = openrscad_eval::eval_program_with_params(&program, &resolver, &base_dir, &overrides)
-        .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
+    // GLB is the one output that carries the authored scene, and the module
+    // provenance it names is dropped by the ordinary render evaluator. Match the
+    // Wasm facade's choice for structured export formats so the two agree.
+    let structured_export = cli.output.as_deref().is_some_and(|path| {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"))
+    });
+    let out = if structured_export {
+        openrscad_eval::eval_program_with_params_detailed_export(
+            &program, &resolver, &base_dir, &overrides,
+        )
+    } else {
+        openrscad_eval::eval_program_with_params(&program, &resolver, &base_dir, &overrides)
+    }
+    .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
 
     for line in &out.echoes {
         println!("{line}");
@@ -406,6 +424,31 @@ fn run() -> Result<()> {
                 std::fs::write(path, openrscad_geom::Mesh::to_3mf_colored(&colored))?
             }
             "3mf" => std::fs::write(path, mesh.to_3mf())?,
+            // GLB carries the authored scene hierarchy, per-owner materials and
+            // (with --edges) source-derived feature edges, so it renders the
+            // structured scene rather than the fused aggregate.
+            "glb" => {
+                let mut cache = openrscad_geom::GeomCache::new();
+                let (structured, _diagnostics) = openrscad_geom::render_structured_cached_diag(
+                    &out.node,
+                    &openrscad_geom::ManifoldKernel::new(),
+                    &mut cache,
+                    false,
+                )
+                .context("rendering structured geometry")?;
+                let options = openrscad_geom::Export3DOptions {
+                    include_edges: cli.edges,
+                    source_keys: out.source_keys.clone(),
+                    ..Default::default()
+                };
+                let artifact = openrscad_geom::export_3d(
+                    &structured,
+                    openrscad_geom::ExportFormat3D::Glb,
+                    &options,
+                )
+                .context("serializing GLB")?;
+                std::fs::write(path, artifact.bytes)?;
+            }
             "amf" => std::fs::write(path, mesh.to_amf())?,
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.

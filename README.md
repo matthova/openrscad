@@ -88,7 +88,7 @@ CDN usage, and the full API.
   resolve in-browser, and libraries like **BOSL2** are fetched on demand.
 - **Animate** — `$t` playback plus frame export, with script-driven camera
   (`$vpr`/`$vpt`/`$vpd`/`$vpf`).
-- **Export real files** — 3D solids to **STL / OFF / OBJ / 3MF / AMF**, 2D
+- **Export real files** — 3D solids to **STL / OFF / OBJ / 3MF / AMF / GLB**, 2D
   profiles to **DXF / SVG**, and rendered **PNG** images (headless on the CLI,
   no GPU required). `import()` reads meshes and 2D profiles back in.
 - **Keep your work** — files, parameters, and the active tab autosave locally
