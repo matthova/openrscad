@@ -509,8 +509,8 @@ fn mul_lists(a: &[Value], b: &[Value]) -> Value {
             for ai in &am {
                 let mut row = vec![0.0; cols];
                 for k in 0..inner {
-                    for j in 0..cols {
-                        row[j] += ai[k] * bm[k][j];
+                    for (j, cell) in row.iter_mut().enumerate() {
+                        *cell += ai[k] * bm[k][j];
                     }
                 }
                 out.push(vector(row.into_iter().map(Value::Number).collect()));
