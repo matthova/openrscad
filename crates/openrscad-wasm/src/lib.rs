@@ -7,12 +7,61 @@
 
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
+#[cfg(feature = "benchmark-profile")]
+use web_time::Instant;
 
 thread_local! {
     /// Persistent geometry cache across renders — makes warm edits incremental
     /// (only subtrees whose structure changed are re-rendered). The worker is
     /// single-threaded, so a thread-local is the whole story.
     static CACHE: RefCell<openrscad_geom::GeomCache> = RefCell::new(openrscad_geom::GeomCache::new());
+    /// One complete attributed result, shared by GLB and 3MF serialization.
+    /// Serialized artifacts and request-only edge pairs are never retained.
+    static STRUCTURED_CACHE: RefCell<Option<(StructuredCacheKey, openrscad_geom::StructuredMesh, openrscad_geom::RenderDiagnostics)>> = const { RefCell::new(None) };
+    #[cfg(test)]
+    static STRUCTURED_RENDER_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(feature = "benchmark-profile")]
+    static LAST_BENCHMARK_PROFILE: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+#[cfg(all(feature = "benchmark-profile", target_arch = "wasm32"))]
+fn wasm_memory_bytes() -> u32 {
+    use wasm_bindgen::JsCast;
+    wasm_bindgen::memory()
+        .unchecked_into::<js_sys::WebAssembly::Memory>()
+        .buffer()
+        .unchecked_into::<js_sys::ArrayBuffer>()
+        .byte_length()
+}
+
+#[cfg(all(feature = "benchmark-profile", not(target_arch = "wasm32")))]
+fn wasm_memory_bytes() -> u32 {
+    0
+}
+
+#[cfg(feature = "benchmark-profile")]
+fn store_benchmark_profile(profile: serde_json::Value) {
+    LAST_BENCHMARK_PROFILE.with(|last| *last.borrow_mut() = profile.to_string());
+}
+
+/// Return and clear the last profile produced by a benchmark-feature build.
+#[cfg(feature = "benchmark-profile")]
+#[wasm_bindgen]
+pub fn take_last_benchmark_profile() -> String {
+    LAST_BENCHMARK_PROFILE.with(|last| std::mem::take(&mut *last.borrow_mut()))
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct StructuredCacheKey {
+    source: String,
+    names: Vec<String>,
+    values: Vec<String>,
+    file_names: Vec<String>,
+    file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
+    font_blobs: Vec<String>,
+    preview: bool,
 }
 
 /// Bound on cached subtrees; past this the cache is reset to cap memory.
@@ -28,6 +77,7 @@ pub fn start() {
 #[wasm_bindgen]
 pub fn clear_cache() {
     CACHE.with(|c| c.borrow_mut().clear());
+    STRUCTURED_CACHE.with(|cache| *cache.borrow_mut() = None);
 }
 
 /// Engine version string.
@@ -200,6 +250,491 @@ impl RenderResult {
     }
 }
 
+/// One owned native 3D artifact plus the operational metadata needed by hosts.
+#[wasm_bindgen]
+pub struct ExportShape3DResult {
+    bytes: Vec<u8>,
+    format: String,
+    echo: String,
+    warnings: String,
+    error: Option<String>,
+    geom_errors: String,
+    diagnostics: String,
+    viewport: String,
+    triangle_count: u32,
+    vertex_count: u32,
+    volume: f64,
+    area: f64,
+    is_2d: bool,
+}
+
+#[wasm_bindgen]
+impl ExportShape3DResult {
+    /// Transfer artifact ownership to JavaScript. A second call returns empty.
+    pub fn take_bytes(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.bytes)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn format(&self) -> String {
+        self.format.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ok(&self) -> bool {
+        self.error.is_none()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> String {
+        self.error.clone().unwrap_or_default()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn echo(&self) -> String {
+        self.echo.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        self.warnings.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn geom_errors(&self) -> String {
+        self.geom_errors.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn diagnostics(&self) -> String {
+        self.diagnostics.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn viewport(&self) -> String {
+        self.viewport.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn triangle_count(&self) -> u32 {
+        self.triangle_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn vertex_count(&self) -> u32 {
+        self.vertex_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn volume(&self) -> f64 {
+        self.volume
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn area(&self) -> f64 {
+        self.area
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn is_2d(&self) -> bool {
+        self.is_2d
+    }
+}
+
+impl ExportShape3DResult {
+    fn from_error(format: &str, message: String, diagnostics: String) -> Self {
+        Self {
+            bytes: Vec::new(),
+            format: format.to_string(),
+            echo: String::new(),
+            warnings: String::new(),
+            error: Some(message),
+            geom_errors: String::new(),
+            diagnostics,
+            viewport: String::new(),
+            triangle_count: 0,
+            vertex_count: 0,
+            volume: 0.0,
+            area: 0.0,
+            is_2d: false,
+        }
+    }
+}
+
+fn export_format(format: &str) -> Option<openrscad_geom::ExportFormat3D> {
+    match format {
+        "stl" => Some(openrscad_geom::ExportFormat3D::Stl),
+        "off" => Some(openrscad_geom::ExportFormat3D::Off),
+        "obj" => Some(openrscad_geom::ExportFormat3D::Obj),
+        "3mf" => Some(openrscad_geom::ExportFormat3D::ThreeMf),
+        "amf" => Some(openrscad_geom::ExportFormat3D::Amf),
+        "glb" => Some(openrscad_geom::ExportFormat3D::Glb),
+        _ => None,
+    }
+}
+
+/// Evaluate a 3D source and serialize it natively to one owned artifact.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn export_3d(
+    source: &str,
+    names: Vec<String>,
+    values: Vec<String>,
+    file_names: Vec<String>,
+    file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
+    font_blobs: Vec<String>,
+    format: &str,
+    include_edges: bool,
+    source_unit_to_meters: f64,
+    coordinate_system: &str,
+) -> ExportShape3DResult {
+    artifact_3d(
+        source,
+        names,
+        values,
+        file_names,
+        file_contents,
+        bin_names,
+        bin_data,
+        font_blobs,
+        format,
+        include_edges,
+        source_unit_to_meters,
+        coordinate_system,
+        false,
+    )
+}
+
+/// Render a preview-semantics GLB for interactive viewers.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn render_to_glb(
+    source: &str,
+    names: Vec<String>,
+    values: Vec<String>,
+    file_names: Vec<String>,
+    file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
+    font_blobs: Vec<String>,
+    include_edges: bool,
+) -> ExportShape3DResult {
+    artifact_3d(
+        source,
+        names,
+        values,
+        file_names,
+        file_contents,
+        bin_names,
+        bin_data,
+        font_blobs,
+        "glb",
+        include_edges,
+        0.001,
+        "y-up",
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn artifact_3d(
+    source: &str,
+    names: Vec<String>,
+    values: Vec<String>,
+    file_names: Vec<String>,
+    file_contents: Vec<String>,
+    bin_names: Vec<String>,
+    bin_data: Vec<String>,
+    font_blobs: Vec<String>,
+    format: &str,
+    include_edges: bool,
+    source_unit_to_meters: f64,
+    coordinate_system: &str,
+    preview: bool,
+) -> ExportShape3DResult {
+    #[cfg(feature = "benchmark-profile")]
+    openrscad_geom::reset_benchmark_profile();
+    #[cfg(feature = "benchmark-profile")]
+    let profile_started = Instant::now();
+    #[cfg(feature = "benchmark-profile")]
+    let memory_before = wasm_memory_bytes();
+    let Some(export_format) = export_format(format) else {
+        return ExportShape3DResult::from_error(
+            format,
+            format!("unsupported 3D export format: {format}"),
+            "[]".to_string(),
+        );
+    };
+    if names.len() != values.len()
+        || file_names.len() != file_contents.len()
+        || bin_names.len() != bin_data.len()
+    {
+        return ExportShape3DResult::from_error(
+            format,
+            "parallel request arrays have different lengths".to_string(),
+            "[]".to_string(),
+        );
+    }
+    let coordinate_system = match coordinate_system {
+        "y-up" => openrscad_geom::CoordinateSystem::YUp,
+        "z-up" => openrscad_geom::CoordinateSystem::ZUp,
+        _ => {
+            return ExportShape3DResult::from_error(
+                format,
+                format!("unsupported coordinate system: {coordinate_system}"),
+                "[]".to_string(),
+            );
+        }
+    };
+    let structured_key = StructuredCacheKey {
+        source: source.to_string(),
+        names: names.clone(),
+        values: values.clone(),
+        file_names: file_names.clone(),
+        file_contents: file_contents.clone(),
+        bin_names: bin_names.clone(),
+        bin_data: bin_data.clone(),
+        font_blobs: font_blobs.clone(),
+        preview,
+    };
+    register_font_blobs(font_blobs);
+    #[cfg(feature = "benchmark-profile")]
+    let parse_started = Instant::now();
+    let program = match openrscad_syntax::parse(source) {
+        Ok(program) => program,
+        Err(error) => {
+            let message = format!("parse error: {}", error.message);
+            let diagnostic = openrscad_eval::parse_error_diagnostic(message.clone(), error.span);
+            return ExportShape3DResult::from_error(
+                format,
+                message,
+                openrscad_eval::diagnostics_json(Some(&diagnostic), &[]),
+            );
+        }
+    };
+    #[cfg(feature = "benchmark-profile")]
+    let parse_ms = parse_started.elapsed().as_secs_f64() * 1_000.0;
+    let overrides = names
+        .iter()
+        .zip(values.iter())
+        .filter_map(|(name, value)| {
+            openrscad_syntax::customizer::parse_value(value)
+                .map(|value| (name.clone(), openrscad_eval::value_from_param(&value)))
+        })
+        .collect::<Vec<_>>();
+    let resolver = MapResolver {
+        files: file_names.into_iter().zip(file_contents).collect(),
+        bins: bins_from_b64(bin_names, bin_data),
+    };
+    #[cfg(feature = "benchmark-profile")]
+    let evaluate_started = Instant::now();
+    let structured_format = matches!(
+        export_format,
+        openrscad_geom::ExportFormat3D::Glb | openrscad_geom::ExportFormat3D::ThreeMf
+    );
+    let eval = match if preview {
+        openrscad_eval::eval_program_with_params_detailed(&program, &resolver, ".", &overrides)
+    } else if structured_format {
+        openrscad_eval::eval_program_with_params_detailed_export(
+            &program, &resolver, ".", &overrides,
+        )
+    } else {
+        openrscad_eval::eval_program_with_params_export(&program, &resolver, ".", &overrides)
+    } {
+        Ok(output) => output,
+        Err(error) => {
+            let diagnostic = openrscad_eval::eval_error_diagnostic(&error);
+            return ExportShape3DResult::from_error(
+                format,
+                format!("evaluation error: {}", error.message),
+                openrscad_eval::diagnostics_json(Some(&diagnostic), &[]),
+            );
+        }
+    };
+    #[cfg(feature = "benchmark-profile")]
+    let evaluate_ms = evaluate_started.elapsed().as_secs_f64() * 1_000.0;
+    let diagnostics = openrscad_eval::diagnostics_json(None, &eval.warnings);
+    let mut warnings = eval
+        .warnings
+        .iter()
+        .map(|warning| warning.message.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let echo = eval.echoes.join("\n");
+    let viewport = if source.contains("$vp") {
+        openrscad_eval::viewport_json(&eval.viewport)
+    } else {
+        String::new()
+    };
+    let is_2d = openrscad_geom::is_2d(&eval.node);
+    if is_2d {
+        let mut result = ExportShape3DResult::from_error(
+            format,
+            "3D export requested for a 2D model".to_string(),
+            diagnostics,
+        );
+        result.echo = echo;
+        result.warnings = warnings;
+        result.viewport = viewport;
+        result.is_2d = true;
+        return result;
+    }
+
+    let options = openrscad_geom::Export3DOptions {
+        include_edges,
+        source_unit_to_meters,
+        coordinate_system,
+        source_keys: eval.source_keys,
+    };
+    let kernel = openrscad_geom::RustManifoldKernel::new();
+    #[cfg(feature = "benchmark-profile")]
+    let structured_started = Instant::now();
+    #[cfg(feature = "benchmark-profile")]
+    let mut structured_cache_hit = false;
+    #[cfg(feature = "benchmark-profile")]
+    let mut serialization_ms = 0.0;
+    let artifact = match export_format {
+        openrscad_geom::ExportFormat3D::Glb | openrscad_geom::ExportFormat3D::ThreeMf => {
+            STRUCTURED_CACHE.with(|structured_cache| {
+                let mut structured_cache = structured_cache.borrow_mut();
+                if structured_cache
+                    .as_ref()
+                    .is_none_or(|(key, _, _)| key != &structured_key)
+                {
+                    let (structured, geometry_diagnostics) = CACHE.with(|cache| {
+                        let mut cache = cache.borrow_mut();
+                        if cache.len() > CACHE_CAP {
+                            cache.clear();
+                        }
+                        openrscad_geom::render_structured_cached_diag(
+                            &eval.node, &kernel, &mut cache, preview,
+                        )
+                    })?;
+                    #[cfg(test)]
+                    STRUCTURED_RENDER_COUNT.with(|count| count.set(count.get() + 1));
+                    *structured_cache = Some((structured_key, structured, geometry_diagnostics));
+                } else {
+                    #[cfg(feature = "benchmark-profile")]
+                    {
+                        structured_cache_hit = true;
+                    }
+                }
+                let structured = &structured_cache.as_ref().unwrap().1;
+                let geometry_diagnostics = structured_cache.as_ref().unwrap().2.clone();
+                #[cfg(feature = "benchmark-profile")]
+                let serialization_started = Instant::now();
+                let result = openrscad_geom::export_3d(structured, export_format, &options);
+                #[cfg(feature = "benchmark-profile")]
+                {
+                    serialization_ms = serialization_started.elapsed().as_secs_f64() * 1_000.0;
+                }
+                Ok((result, geometry_diagnostics))
+            })
+        }
+        _ => CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() > CACHE_CAP {
+                cache.clear();
+            }
+            let (mesh, geometry_diagnostics) =
+                openrscad_geom::render_cached_diag(&eval.node, &kernel, &mut cache)?;
+            #[cfg(feature = "benchmark-profile")]
+            let serialization_started = Instant::now();
+            let bytes = match export_format {
+                openrscad_geom::ExportFormat3D::Stl => mesh.to_binary_stl(),
+                openrscad_geom::ExportFormat3D::Off => mesh.to_off().into_bytes(),
+                openrscad_geom::ExportFormat3D::Obj => mesh.to_obj().into_bytes(),
+                openrscad_geom::ExportFormat3D::Amf => mesh.to_amf().into_bytes(),
+                _ => unreachable!("structured formats are handled above"),
+            };
+            let result = Ok(openrscad_geom::Export3DArtifact {
+                bytes,
+                triangle_count: mesh.tris.len(),
+                vertex_count: mesh.verts.len(),
+                volume: mesh.volume(),
+                surface_area: mesh.surface_area(),
+            });
+            #[cfg(feature = "benchmark-profile")]
+            {
+                serialization_ms = serialization_started.elapsed().as_secs_f64() * 1_000.0;
+            }
+            Ok((result, geometry_diagnostics))
+        }),
+    };
+    let (artifact, geometry_diagnostics) =
+        artifact.unwrap_or_else(|error| (Err(error), openrscad_geom::RenderDiagnostics::default()));
+    #[cfg(feature = "benchmark-profile")]
+    {
+        let geom = openrscad_geom::take_benchmark_profile();
+        let payload_bytes = artifact.as_ref().map_or(0, |artifact| artifact.bytes.len());
+        let cache_entries = CACHE.with(|cache| cache.borrow().len());
+        store_benchmark_profile(serde_json::json!({
+            "path": if preview { "renderToGlb" } else { "exportShape3D" },
+            "format": format,
+            "includeEdges": include_edges,
+            "parseMs": parse_ms,
+            "evaluateMs": evaluate_ms,
+            "structuredTotalMs": structured_started.elapsed().as_secs_f64() * 1_000.0,
+            "structuredGeometryMs":
+                (structured_started.elapsed().as_secs_f64() * 1_000.0 - serialization_ms).max(0.0),
+            "attributedRenderMs": geom.attributed_render_ms,
+            "booleanMs": geom.boolean_ms,
+            "attributedTopologyMs": (geom.attributed_render_ms - geom.boolean_ms).max(0.0),
+            "partitionMs": geom.partition_ms,
+            "edgeDerivationMs": geom.edge_derivation_ms,
+            "serializationMs": serialization_ms,
+            "rustTotalMs": profile_started.elapsed().as_secs_f64() * 1_000.0,
+            "featureLineCount": geom.feature_line_count,
+            "payloadBytes": payload_bytes,
+            "structuredCacheHit": structured_cache_hit,
+            "geometryCacheEntries": cache_entries,
+            "wasmMemoryBeforeBytes": memory_before,
+            "wasmMemoryAfterBytes": wasm_memory_bytes(),
+        }));
+    }
+    for warning in &geometry_diagnostics.warnings {
+        if !warnings.is_empty() {
+            warnings.push('\n');
+        }
+        warnings.push_str(warning);
+    }
+    let geom_errors = geometry_diagnostics.errors.join("\n");
+    match artifact {
+        Ok(artifact) => ExportShape3DResult {
+            bytes: artifact.bytes,
+            format: format.to_string(),
+            echo,
+            warnings,
+            error: None,
+            geom_errors,
+            diagnostics,
+            viewport,
+            triangle_count: artifact.triangle_count as u32,
+            vertex_count: artifact.vertex_count as u32,
+            volume: artifact.volume,
+            area: artifact.surface_area,
+            is_2d: false,
+        },
+        Err(error) => {
+            let diagnostic = openrscad_eval::eval_error_diagnostic(
+                &openrscad_eval::EvalError::new(format!("geometry error: {error}")),
+            );
+            let mut result = ExportShape3DResult::from_error(
+                format,
+                format!("geometry error: {error}"),
+                openrscad_eval::diagnostics_json(Some(&diagnostic), &eval.warnings),
+            );
+            result.echo = echo;
+            result.warnings = warnings;
+            result.geom_errors = geom_errors;
+            result.viewport = viewport;
+            result
+        }
+    }
+}
+
 impl RenderResult {
     fn from_error(msg: String, echo: String, warnings: String, diagnostics: String) -> Self {
         RenderResult {
@@ -256,7 +791,8 @@ pub fn export_2d(
         files: file_names.into_iter().zip(file_contents).collect(),
         bins: bins_from_b64(bin_names, bin_data),
     };
-    let Ok(eval) = openrscad_eval::eval_program_with_params(&program, &resolver, ".", &overrides)
+    let Ok(eval) =
+        openrscad_eval::eval_program_with_params_export(&program, &resolver, ".", &overrides)
     else {
         return String::new();
     };
@@ -506,10 +1042,18 @@ fn render_impl(
     font_blobs: Vec<String>,
     preview: bool,
 ) -> RenderResult {
+    #[cfg(feature = "benchmark-profile")]
+    openrscad_geom::reset_benchmark_profile();
+    #[cfg(feature = "benchmark-profile")]
+    let profile_started = Instant::now();
+    #[cfg(feature = "benchmark-profile")]
+    let memory_before = wasm_memory_bytes();
     // Register any browser-supplied system fonts before evaluating `text()`.
     register_font_blobs(font_blobs);
 
     // Parse.
+    #[cfg(feature = "benchmark-profile")]
+    let parse_started = Instant::now();
     let program = match openrscad_syntax::parse(source) {
         Ok(p) => p,
         Err(e) => {
@@ -523,6 +1067,8 @@ fn render_impl(
             );
         }
     };
+    #[cfg(feature = "benchmark-profile")]
+    let parse_ms = parse_started.elapsed().as_secs_f64() * 1_000.0;
 
     // Build overrides from the parallel arrays.
     let mut overrides = Vec::new();
@@ -539,6 +1085,8 @@ fn render_impl(
     };
 
     // Evaluate.
+    #[cfg(feature = "benchmark-profile")]
+    let evaluate_started = Instant::now();
     let eval = match openrscad_eval::eval_program_with_params(&program, &resolver, ".", &overrides)
     {
         Ok(o) => o,
@@ -552,6 +1100,8 @@ fn render_impl(
             );
         }
     };
+    #[cfg(feature = "benchmark-profile")]
+    let evaluate_ms = evaluate_started.elapsed().as_secs_f64() * 1_000.0;
     let echo = eval.echoes.join("\n");
     let mut warnings = eval
         .warnings
@@ -564,6 +1114,8 @@ fn render_impl(
     // Render geometry (pure-Rust Manifold on wasm), reusing the persistent cache
     // so unchanged subtrees survive across edits.
     let kernel = openrscad_geom::RustManifoldKernel::new();
+    #[cfg(feature = "benchmark-profile")]
+    let exact_render_started = Instant::now();
     let mesh = CACHE.with(|c| {
         let mut cache = c.borrow_mut();
         if cache.len() > CACHE_CAP {
@@ -576,6 +1128,8 @@ fn render_impl(
             openrscad_geom::render_cached_diag(&eval.node, &kernel, &mut cache)
         }
     });
+    #[cfg(feature = "benchmark-profile")]
+    let exact_render_ms = exact_render_started.elapsed().as_secs_f64() * 1_000.0;
     let (mesh, diag) = match mesh {
         Ok(v) => v,
         Err(e) => {
@@ -602,10 +1156,16 @@ fn render_impl(
     // while still showing the degraded model.
     let geom_errors = diag.errors.join("\n");
 
+    #[cfg(feature = "benchmark-profile")]
+    let mesh_encoding_started = Instant::now();
     let (positions, normals) = mesh.to_triangle_soup_f32();
+    #[cfg(feature = "benchmark-profile")]
+    let mesh_encoding_ms = mesh_encoding_started.elapsed().as_secs_f64() * 1_000.0;
 
     // Preview color channel — only for models that actually use color/`#`/`%`, so
     // plain models keep the fast single-mesh path (and the warm-edit budget).
+    #[cfg(feature = "benchmark-profile")]
+    let preview_channel_started = Instant::now();
     let (preview_positions, preview_normals, groups) =
         if openrscad_geom::has_display_attrs(&eval.node) {
             let r = CACHE.with(|c| {
@@ -619,11 +1179,15 @@ fn render_impl(
         } else {
             (Vec::new(), Vec::new(), String::new())
         };
+    #[cfg(feature = "benchmark-profile")]
+    let preview_channel_ms = preview_channel_started.elapsed().as_secs_f64() * 1_000.0;
 
     // Provenance channel for editor↔preview linking — any model with geometry
     // (2D flat meshes and 3D solids alike). Shares the cache with the fused
     // render above, so opaque leaf meshes aren't recomputed just to tag them
     // with a span.
+    #[cfg(feature = "benchmark-profile")]
+    let provenance_channel_started = Instant::now();
     let (provenance_positions, provenance_normals, provenance) = if !mesh.tris.is_empty() {
         let r = CACHE.with(|c| {
             let mut cache = c.borrow_mut();
@@ -636,6 +1200,8 @@ fn render_impl(
     } else {
         (Vec::new(), Vec::new(), String::new())
     };
+    #[cfg(feature = "benchmark-profile")]
+    let provenance_channel_ms = provenance_channel_started.elapsed().as_secs_f64() * 1_000.0;
 
     // Viewport channel only for models that reference `$vp` (drives the camera).
     let viewport = if source.contains("$vp") {
@@ -643,6 +1209,34 @@ fn render_impl(
     } else {
         String::new()
     };
+
+    #[cfg(feature = "benchmark-profile")]
+    {
+        let payload_bytes = (positions.len()
+            + normals.len()
+            + preview_positions.len()
+            + preview_normals.len()
+            + provenance_positions.len()
+            + provenance_normals.len())
+            * std::mem::size_of::<f32>()
+            + groups.len()
+            + provenance.len();
+        let cache_entries = CACHE.with(|cache| cache.borrow().len());
+        store_benchmark_profile(serde_json::json!({
+            "path": "render",
+            "parseMs": parse_ms,
+            "evaluateMs": evaluate_ms,
+            "exactRenderMs": exact_render_ms,
+            "previewChannelMs": preview_channel_ms,
+            "provenanceChannelMs": provenance_channel_ms,
+            "meshEncodingMs": mesh_encoding_ms,
+            "rustTotalMs": profile_started.elapsed().as_secs_f64() * 1_000.0,
+            "payloadBytes": payload_bytes,
+            "geometryCacheEntries": cache_entries,
+            "wasmMemoryBeforeBytes": memory_before,
+            "wasmMemoryAfterBytes": wasm_memory_bytes(),
+        }));
+    }
 
     RenderResult {
         triangle_count: mesh.tris.len() as u32,
@@ -679,6 +1273,220 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    fn export(source: &str, format: &str, include_edges: bool) -> ExportShape3DResult {
+        export_3d(
+            source,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            format,
+            include_edges,
+            0.001,
+            "y-up",
+        )
+    }
+
+    fn glb_json(bytes: &[u8]) -> serde_json::Value {
+        let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        serde_json::from_slice(&bytes[20..20 + length]).unwrap()
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn export_3d_returns_owned_multipart_glb_and_optional_edges() {
+        let source = "color(\"red\") { cube(1); translate([0,0,2]) cube(1); }";
+        let mut plain = export(source, "glb", false);
+        assert!(plain.ok(), "{}", plain.error());
+        let bytes = plain.take_bytes();
+        assert_eq!(&bytes[..4], b"glTF");
+        assert!(plain.take_bytes().is_empty());
+        let json = glb_json(&bytes);
+        assert_eq!(json["nodes"].as_array().unwrap().len(), 2);
+        assert!(json["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|mesh| { mesh["primitives"].as_array().unwrap().len() == 1 }));
+
+        let mut edged = export(source, "glb", true);
+        assert!(edged.ok(), "{}", edged.error());
+        let json = glb_json(&edged.take_bytes());
+        assert!(json["meshes"].as_array().unwrap().iter().all(|mesh| {
+            let primitives = mesh["primitives"].as_array().unwrap();
+            primitives.len() == 2 && primitives[0]["mode"] == 4 && primitives[1]["mode"] == 1
+        }));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn authored_modules_emit_nested_nodes_across_files_and_collapse_loop_instances() {
+        let source = r#"
+            use <roof.scad>
+            module greenhouse() {
+                cube([4, 1, 1]);
+                roof_frame();
+            }
+            greenhouse();
+        "#;
+        let library = r#"
+            module arch_loop() { cube([1, 1, 1]); }
+            module roof_frame() {
+                for (x = [0:2]) translate([x, 0, 1]) arch_loop();
+            }
+        "#;
+        let mut result = export_3d(
+            source,
+            vec![],
+            vec![],
+            vec!["roof.scad".to_string()],
+            vec![library.to_string()],
+            vec![],
+            vec![],
+            vec![],
+            "glb",
+            false,
+            0.001,
+            "y-up",
+        );
+        assert!(result.ok(), "{}", result.error());
+        let document = glb_json(&result.take_bytes());
+
+        assert_eq!(document["scenes"][0]["nodes"], serde_json::json!([0]));
+        assert_eq!(document["nodes"][0]["name"], "Greenhouse");
+        assert!(document["nodes"][0]["mesh"].is_number());
+        assert_eq!(document["nodes"][0]["children"], serde_json::json!([1]));
+        assert_eq!(document["nodes"][1]["name"], "Roof Frame");
+        assert_eq!(document["nodes"][1]["children"], serde_json::json!([2]));
+        assert_eq!(document["nodes"][2]["name"], "Arch Loop");
+        assert_eq!(
+            document["nodes"][1]["extras"]["openrscad"]["definitionSite"]["source"],
+            "roof.scad"
+        );
+        assert_eq!(document["nodes"].as_array().unwrap().len(), 3);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn export_3d_supports_every_3d_format() {
+        for (format, magic) in [
+            ("stl", &b"\0\0\0\0"[..]),
+            ("off", &b"OFF\n"[..]),
+            ("obj", &b"v "[..]),
+            ("3mf", &b"PK\x03\x04"[..]),
+            ("amf", &b"<?xml"[..]),
+            ("glb", &b"glTF"[..]),
+        ] {
+            let mut result = export("cube(1);", format, false);
+            assert!(result.ok(), "{format}: {}", result.error());
+            let bytes = result.take_bytes();
+            assert!(bytes.starts_with(magic), "{format}");
+            assert_eq!(result.triangle_count(), 12);
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn structured_cache_reuses_geometry_not_serialized_artifacts() {
+        clear_cache();
+        STRUCTURED_RENDER_COUNT.with(|count| count.set(0));
+        let mut plain = export("cube(1);", "glb", false);
+        let plain_bytes = plain.take_bytes();
+        let mut edged = export("cube(1);", "glb", true);
+        let edged_bytes = edged.take_bytes();
+        let mut threemf = export("cube(1);", "3mf", false);
+        assert!(!threemf.take_bytes().is_empty());
+        STRUCTURED_RENDER_COUNT.with(|count| assert_eq!(count.get(), 1));
+        assert_ne!(plain_bytes, edged_bytes);
+
+        clear_cache();
+        let _ = export("cube(1);", "glb", false);
+        STRUCTURED_RENDER_COUNT.with(|count| assert_eq!(count.get(), 2));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn preview_glb_styles_highlight_and_keeps_background_out_of_export() {
+        let source = "#cube(1); %translate([0,0,2]) cube(1);";
+        let mut preview = render_to_glb(
+            source,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+        );
+        assert!(preview.ok(), "{}", preview.error());
+        let preview = glb_json(&preview.take_bytes());
+        assert_eq!(preview["nodes"].as_array().unwrap().len(), 2);
+        let modes: std::collections::BTreeSet<_> = preview["meshes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|mesh| mesh["primitives"].as_array().unwrap())
+            .map(|primitive| {
+                primitive["extras"]["openrscad"]["displayMode"]
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            modes,
+            std::collections::BTreeSet::from(["background", "highlight"])
+        );
+
+        let mut exported = export(source, "glb", false);
+        assert!(exported.ok(), "{}", exported.error());
+        let exported = glb_json(&exported.take_bytes());
+        assert_eq!(exported["nodes"].as_array().unwrap().len(), 1);
+        assert!(exported["meshes"][0]["primitives"][0]["extras"].is_null());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn api_mode_owns_preview_for_render_and_every_export() {
+        let source = "if ($preview) cube(1); else cube(2);";
+        let mut rendered = render_to_glb(
+            source,
+            vec!["$preview".to_string()],
+            vec!["false".to_string()],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+        );
+        assert!(rendered.ok(), "{}", rendered.error());
+        assert!((rendered.volume() - 1.0).abs() < 1e-6);
+        assert!(!rendered.take_bytes().is_empty());
+
+        for format in ["glb", "3mf", "stl", "off", "obj", "amf"] {
+            let result = export_3d(
+                source,
+                vec!["$preview".to_string()],
+                vec!["true".to_string()],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                format,
+                false,
+                0.001,
+                "y-up",
+            );
+            assert!(result.ok(), "{format}: {}", result.error());
+            assert!((result.volume() - 8.0).abs() < 1e-6, "{format}");
+        }
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -799,6 +1607,40 @@ mod tests {
             r.geom_errors().contains("union"),
             "geom_errors: {:?}",
             r.geom_errors()
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn structured_export_diagnostics_survive_cold_and_warm_cache_calls() {
+        clear_cache();
+        let source =
+            "union() { cube(10); polyhedron(points=[[0,0,0],[1,0,0],[0,1,0]], faces=[[0,1,2]]); }";
+        let mut cold = export(source, "glb", false);
+        assert!(cold.ok(), "{}", cold.error());
+        assert!(!cold.take_bytes().is_empty());
+        assert!(
+            cold.geom_errors().contains("union"),
+            "{}",
+            cold.geom_errors()
+        );
+
+        let mut warm = export(source, "glb", false);
+        assert!(warm.ok(), "{}", warm.error());
+        assert!(!warm.take_bytes().is_empty());
+        assert_eq!(warm.geom_errors(), cold.geom_errors());
+
+        let threemf = export(source, "3mf", false);
+        assert!(!threemf.ok());
+        assert!(
+            threemf.error().contains("not manifold"),
+            "{}",
+            threemf.error()
+        );
+        assert!(
+            threemf.geom_errors().contains("union"),
+            "{}",
+            threemf.geom_errors()
         );
     }
 

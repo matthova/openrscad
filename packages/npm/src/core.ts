@@ -36,6 +36,8 @@ export interface RenderOutput {
   echo: string;
   /** Newline-joined warnings. */
   warnings: string;
+  /** Recoverable geometry errors. A mesh may still be present when non-empty. */
+  geomErrors: string;
   diagnostics: Diagnostic[];
   /** Per-color preview channel (a concatenated triangle soup + a JSON array of
    *  `{start,count,color,mode}`). Empty unless the model uses `color`/`#`/`%`
@@ -57,6 +59,43 @@ export interface RenderOptions {
   /** In-memory files for `include`/`use` resolution, keyed by path:
    *  `{ "lib.scad": "function f() = 1;" }`. */
   files?: Record<string, string>;
+  /** Binary files for `import()`, keyed by path. */
+  binaryFiles?: Record<string, Uint8Array>;
+  /** Font files made available to `text()` for this request. */
+  fontFiles?: readonly Uint8Array[];
+}
+
+export type ExportShape3DFormat = "stl" | "off" | "obj" | "3mf" | "amf" | "glb";
+
+export interface ExportGlbOptions extends RenderOptions {
+  /** Add native owner-local mesh feature lines to GLB output. */
+  includeEdges?: boolean;
+  /** Scale from source coordinates to metres in GLB. Defaults to millimetres. */
+  sourceUnitToMeters?: number;
+  /** GLB coordinate convention. Standard glTF Y-up is the default. */
+  coordinateSystem?: "y-up" | "z-up";
+}
+
+export interface RenderToGlbOptions extends RenderOptions {
+  /** Add native owner-local feature lines. */
+  includeEdges?: boolean;
+}
+
+export interface ExportShape3DOutput {
+  ok: boolean;
+  error: string;
+  bytes: Uint8Array<ArrayBuffer>;
+  format: ExportShape3DFormat;
+  is2d: boolean;
+  triangleCount: number;
+  vertexCount: number;
+  volume: number;
+  area: number;
+  echo: string;
+  warnings: string;
+  geomErrors: string;
+  diagnostics: Diagnostic[];
+  viewport: string;
 }
 
 /** The subset of the wasm `RenderResult` this facade reads. */
@@ -72,6 +111,7 @@ interface RawResult {
   area: number;
   echo: string;
   warnings: string;
+  geom_errors: string;
   diagnostics: string;
   preview_positions: Float32Array;
   preview_normals: Float32Array;
@@ -83,6 +123,47 @@ interface RawResult {
   free(): void;
 }
 
+interface RawExportResult {
+  ok: boolean;
+  error: string;
+  format: string;
+  is_2d: boolean;
+  triangle_count: number;
+  vertex_count: number;
+  volume: number;
+  area: number;
+  echo: string;
+  warnings: string;
+  geom_errors: string;
+  diagnostics: string;
+  viewport: string;
+  take_bytes(): Uint8Array<ArrayBuffer>;
+  free(): void;
+}
+
+const consumeExportResult = (result: RawExportResult): ExportShape3DOutput => {
+  try {
+    return {
+      ok: result.ok,
+      error: result.error,
+      bytes: result.take_bytes(),
+      format: result.format as ExportShape3DFormat,
+      is2d: result.is_2d,
+      triangleCount: result.triangle_count,
+      vertexCount: result.vertex_count,
+      volume: result.volume,
+      area: result.area,
+      echo: result.echo,
+      warnings: result.warnings,
+      geomErrors: result.geom_errors,
+      diagnostics: JSON.parse(result.diagnostics || "[]") as Diagnostic[],
+      viewport: result.viewport,
+    };
+  } finally {
+    result.free();
+  }
+};
+
 /** The generated wasm-bindgen exports this facade wraps. */
 export interface RawEngine {
   render_with_files(
@@ -91,6 +172,9 @@ export interface RawEngine {
     values: string[],
     fileNames: string[],
     fileContents: string[],
+    binNames: string[],
+    binData: string[],
+    fontBlobs: string[],
   ): RawResult;
   export_2d(
     source: string,
@@ -98,8 +182,36 @@ export interface RawEngine {
     values: string[],
     fileNames: string[],
     fileContents: string[],
+    binNames: string[],
+    binData: string[],
+    fontBlobs: string[],
     format: string,
   ): string;
+  export_3d(
+    source: string,
+    names: string[],
+    values: string[],
+    fileNames: string[],
+    fileContents: string[],
+    binNames: string[],
+    binData: string[],
+    fontBlobs: string[],
+    format: string,
+    includeEdges: boolean,
+    sourceUnitToMeters: number,
+    coordinateSystem: string,
+  ): RawExportResult;
+  render_to_glb(
+    source: string,
+    names: string[],
+    values: string[],
+    fileNames: string[],
+    fileContents: string[],
+    binNames: string[],
+    binData: string[],
+    fontBlobs: string[],
+    includeEdges: boolean,
+  ): RawExportResult;
   parameters(source: string): string;
   version(): string;
   clear_cache(): void;
@@ -109,24 +221,45 @@ function toLiteral(v: string | number | boolean): string {
   return typeof v === "string" ? v : String(v);
 }
 
+function toBase64(bytes: Uint8Array): string {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
+  }
+  return btoa(chunks.join(""));
+}
+
 /** Build the public API from the raw engine bindings and an init hook. */
 export function makeApi(engine: RawEngine, ensureReady: () => Promise<void>) {
   function split(opts: RenderOptions) {
     const paramEntries = Object.entries(opts.params ?? {});
     const fileEntries = Object.entries(opts.files ?? {});
+    const binaryEntries = Object.entries(opts.binaryFiles ?? {});
     return {
       names: paramEntries.map(([k]) => k),
       values: paramEntries.map(([, v]) => toLiteral(v)),
       fileNames: fileEntries.map(([k]) => k),
       fileContents: fileEntries.map(([, v]) => v),
+      binNames: binaryEntries.map(([k]) => k),
+      binData: binaryEntries.map(([, v]) => toBase64(v)),
+      fontBlobs: (opts.fontFiles ?? []).map(toBase64),
     };
   }
 
   /** Parse `.scad` source and render it to mesh + diagnostics. */
   async function render(source: string, opts: RenderOptions = {}): Promise<RenderOutput> {
     await ensureReady();
-    const { names, values, fileNames, fileContents } = split(opts);
-    const r = engine.render_with_files(source, names, values, fileNames, fileContents);
+    const { names, values, fileNames, fileContents, binNames, binData, fontBlobs } = split(opts);
+    const r = engine.render_with_files(
+      source,
+      names,
+      values,
+      fileNames,
+      fileContents,
+      binNames,
+      binData,
+      fontBlobs,
+    );
     try {
       return {
         ok: r.ok,
@@ -140,6 +273,7 @@ export function makeApi(engine: RawEngine, ensureReady: () => Promise<void>) {
         area: r.area,
         echo: r.echo,
         warnings: r.warnings,
+        geomErrors: r.geom_errors,
         diagnostics: JSON.parse(r.diagnostics || "[]") as Diagnostic[],
         preview: {
           positions: r.preview_positions,
@@ -165,8 +299,75 @@ export function makeApi(engine: RawEngine, ensureReady: () => Promise<void>) {
     opts: RenderOptions = {},
   ): Promise<string> {
     await ensureReady();
-    const { names, values, fileNames, fileContents } = split(opts);
-    return engine.export_2d(source, names, values, fileNames, fileContents, format);
+    const { names, values, fileNames, fileContents, binNames, binData, fontBlobs } = split(opts);
+    return engine.export_2d(
+      source,
+      names,
+      values,
+      fileNames,
+      fileContents,
+      binNames,
+      binData,
+      fontBlobs,
+      format,
+    );
+  }
+
+  /** Evaluate and serialize a 3D model natively to one owned byte array. */
+  async function exportShape3D(
+    source: string,
+    format: "glb",
+    opts?: ExportGlbOptions,
+  ): Promise<ExportShape3DOutput>;
+  async function exportShape3D(
+    source: string,
+    format: Exclude<ExportShape3DFormat, "glb">,
+    opts?: RenderOptions,
+  ): Promise<ExportShape3DOutput>;
+  async function exportShape3D(
+    source: string,
+    format: ExportShape3DFormat,
+    opts: ExportGlbOptions | RenderOptions = {},
+  ): Promise<ExportShape3DOutput> {
+    await ensureReady();
+    const { names, values, fileNames, fileContents, binNames, binData, fontBlobs } = split(opts);
+    const glb = format === "glb" ? (opts as ExportGlbOptions) : {};
+    const result = engine.export_3d(
+      source,
+      names,
+      values,
+      fileNames,
+      fileContents,
+      binNames,
+      binData,
+      fontBlobs,
+      format,
+      glb.includeEdges ?? false,
+      glb.sourceUnitToMeters ?? 0.001,
+      glb.coordinateSystem ?? "y-up",
+    );
+    return consumeExportResult(result);
+  }
+
+  /** Render preview-semantics geometry directly to GLB for an interactive viewer. */
+  async function renderToGlb(
+    source: string,
+    opts: RenderToGlbOptions = {},
+  ): Promise<ExportShape3DOutput> {
+    await ensureReady();
+    const { names, values, fileNames, fileContents, binNames, binData, fontBlobs } = split(opts);
+    const result = engine.render_to_glb(
+      source,
+      names,
+      values,
+      fileNames,
+      fileContents,
+      binNames,
+      binData,
+      fontBlobs,
+      opts.includeEdges ?? false,
+    );
+    return consumeExportResult(result);
   }
 
   /** The customizer parameter schema for a source string, as JSON
@@ -188,5 +389,5 @@ export function makeApi(engine: RawEngine, ensureReady: () => Promise<void>) {
     engine.clear_cache();
   }
 
-  return { render, exportShape2D, parameters, version, clearCache };
+  return { render, renderToGlb, exportShape2D, exportShape3D, parameters, version, clearCache };
 }

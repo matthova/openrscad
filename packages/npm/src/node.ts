@@ -7,6 +7,8 @@
 import {
   render_with_files as rawRenderWithFiles,
   export_2d as rawExport2d,
+  export_3d as rawExport3d,
+  render_to_glb as rawRenderToGlb,
   parameters as rawParameters,
   version as rawVersion,
   clear_cache as rawClearCache,
@@ -21,6 +23,8 @@ export function ensureReady(): Promise<void> {
 const engine = {
   render_with_files: rawRenderWithFiles,
   export_2d: rawExport2d,
+  export_3d: rawExport3d,
+  render_to_glb: rawRenderToGlb,
   parameters: rawParameters,
   version: rawVersion,
   clear_cache: rawClearCache,
@@ -29,9 +33,19 @@ const engine = {
 const api = makeApi(engine, ensureReady);
 
 export const render = api.render;
+export const renderToGlb = api.renderToGlb;
 export const exportShape2D = api.exportShape2D;
+export const exportShape3D = api.exportShape3D;
 export const parameters = api.parameters;
 export const version = api.version;
 export const clearCache = api.clearCache;
 
-export type { RenderOutput, RenderOptions, Diagnostic } from "./core.js";
+export type {
+  Diagnostic,
+  ExportGlbOptions,
+  ExportShape3DFormat,
+  ExportShape3DOutput,
+  RenderOptions,
+  RenderOutput,
+  RenderToGlbOptions,
+} from "./core.js";
