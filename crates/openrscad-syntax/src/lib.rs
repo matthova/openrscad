@@ -26,8 +26,14 @@ impl SyntaxError {
 
 /// Parse a complete program from source.
 pub fn parse(src: &str) -> Result<Program, SyntaxError> {
+    parse_with_source_id(src, 0)
+}
+
+/// Parse a complete program whose statement spans carry a request-local source
+/// identifier. The evaluator uses this for resolved `include`/`use` files.
+pub fn parse_with_source_id(src: &str, source_id: u32) -> Result<Program, SyntaxError> {
     let tokens = lexer::lex(src)?;
-    let mut parser = parser::Parser::new(tokens, src);
+    let mut parser = parser::Parser::with_source_id(tokens, src, source_id);
     parser.parse_program()
 }
 

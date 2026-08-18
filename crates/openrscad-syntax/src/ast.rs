@@ -7,11 +7,26 @@
 pub struct Spanned<T> {
     pub node: T,
     pub span: std::ops::Range<usize>,
+    /// Request-local source identifier. `parse()` uses 0 for the entry source;
+    /// embedders parsing resolved files can assign another stable identifier.
+    pub source_id: u32,
 }
 
 impl<T> Spanned<T> {
     pub fn new(node: T, span: std::ops::Range<usize>) -> Self {
-        Spanned { node, span }
+        Spanned {
+            node,
+            span,
+            source_id: 0,
+        }
+    }
+
+    pub(crate) fn with_source_id(node: T, span: std::ops::Range<usize>, source_id: u32) -> Self {
+        Spanned {
+            node,
+            span,
+            source_id,
+        }
     }
 }
 

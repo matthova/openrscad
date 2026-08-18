@@ -1,18 +1,36 @@
 //! Geometry: mesh types, the fragment formula + primitive tessellation, the
 //! `Kernel` trait (CSG boolean backend), and the CSG-tree -> mesh renderer.
 
+mod export3d;
 mod hull;
 mod kernel;
 mod mesh;
 mod shape2d;
+mod structured;
 mod tessellate;
 mod vector2d;
 
+#[cfg(test)]
+pub(crate) use export3d::{
+    edge_derivation_count, parse_glb_json, reset_edge_derivation_count, serialize_glb,
+};
+pub use export3d::{
+    export_3d, CoordinateSystem, Export3DArtifact, Export3DOptions, ExportFormat3D,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use kernel::ManifoldKernel;
 pub use kernel::{BoolmeshKernel, Kernel, RustManifoldKernel};
 pub use mesh::Mesh;
 pub use shape2d::Contour;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use structured::render_structured_native_cached;
+pub use structured::{render_structured_cached_diag, StructuredMesh};
+#[cfg(test)]
+pub(crate) use structured::{
+    render_structured_rust_cached, ContributionKind, SurfaceAttributionId,
+};
+#[cfg(feature = "benchmark-profile")]
+pub use structured::{reset_benchmark_profile, take_benchmark_profile, BenchmarkProfile};
 pub use tessellate::{cube, cylinder, fragments, polyhedron, sphere};
 pub use vector2d::{export_dxf, export_svg, import_dxf, import_svg};
 
@@ -67,7 +85,7 @@ pub fn render_contours_cached(
     render2d_lowered(node, &mut ctx).map(Some)
 }
 
-use openrscad_ir::{Node, Vec3};
+use openrscad_ir::{Node, ProvenanceFrame, SourceId, Vec3};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -77,6 +95,8 @@ pub enum GeomError {
     Kernel(String),
     #[error("input geometry is not manifold: {0}")]
     NonManifold(String),
+    #[error("structured geometry invariant: {0}")]
+    Invariant(String),
 }
 
 /// Non-fatal diagnostics from a render that still produced a mesh.
@@ -335,7 +355,7 @@ fn render_node(node: &Node, ctx: &mut Ctx) -> Result<Mesh, GeomError> {
 }
 
 /// How a preview group is displayed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DisplayMode {
     /// Normal solid (uses the group's color).
     Solid,
@@ -352,6 +372,13 @@ pub struct ColoredMesh {
     pub mode: DisplayMode,
 }
 
+struct TaggedColoredMesh {
+    mesh: Mesh,
+    color: [f32; 4],
+    mode: DisplayMode,
+    provenance: Vec<ProvenanceFrame>,
+}
+
 /// A geometry group tagged with the **stack** of enclosing source byte-spans that
 /// produced it (outermost statement first, innermost last), for hierarchical
 /// editor↔preview linking. Each entry is a `[start,end)` byte range into the main
@@ -362,6 +389,9 @@ pub struct ColoredMesh {
 /// containment (so a cursor on any enclosing call lights that whole subtree).
 pub struct TaggedMesh {
     pub mesh: Mesh,
+    pub frames: Vec<ProvenanceFrame>,
+    /// Compatibility projection used by the current editor channel: only entry
+    /// source ranges are included here.
     pub spans: Vec<std::ops::Range<usize>>,
 }
 
@@ -403,6 +433,24 @@ pub fn render_groups_cached(
     kernel: &dyn Kernel,
     cache: &mut GeomCache,
 ) -> Result<Vec<ColoredMesh>, GeomError> {
+    let tagged = render_tagged_groups_cached(node, kernel, cache)?;
+    let mut out = tagged
+        .into_iter()
+        .map(|group| ColoredMesh {
+            mesh: group.mesh,
+            color: group.color,
+            mode: group.mode,
+        })
+        .collect();
+    coalesce_groups(&mut out);
+    Ok(out)
+}
+
+fn render_tagged_groups_cached(
+    node: &Node,
+    kernel: &dyn Kernel,
+    cache: &mut GeomCache,
+) -> Result<Vec<TaggedColoredMesh>, GeomError> {
     let mut hashes = HashMap::new();
     hash_all(node, &mut hashes);
     let mut warnings = Vec::new();
@@ -421,8 +469,14 @@ pub fn render_groups_cached(
         errors: &mut errors,
     };
     let mut out = Vec::new();
-    partition_groups(node, DEFAULT_COLOR, DisplayMode::Solid, &mut ctx, &mut out)?;
-    coalesce_groups(&mut out);
+    partition_groups(
+        node,
+        DEFAULT_COLOR,
+        DisplayMode::Solid,
+        &mut Vec::new(),
+        &mut ctx,
+        &mut out,
+    )?;
     Ok(out)
 }
 
@@ -601,7 +655,7 @@ pub fn provenance_channel(groups: &[TaggedMesh]) -> (Vec<f32>, Vec<f32>, String)
 /// and 2D booleans) is an opaque leaf fused into one mesh taking the current stack.
 fn partition_provenance(
     node: &Node,
-    stack: &mut Vec<std::ops::Range<usize>>,
+    stack: &mut Vec<ProvenanceFrame>,
     ctx: &mut Ctx,
     out: &mut Vec<TaggedMesh>,
 ) -> Result<(), GeomError> {
@@ -610,8 +664,8 @@ fn partition_provenance(
         // Every provenance level is captured: push this span, recurse, pop. The
         // deepest span (last) is what a click selects; the whole stack is what the
         // cursor→preview highlight matches against by containment.
-        Node::Provenance { span: s, child } => {
-            stack.push(s.clone());
+        Node::Provenance { frame, child } => {
+            stack.push(frame.clone());
             let r = partition_provenance(child, stack, ctx, out);
             stack.pop();
             r?;
@@ -699,6 +753,7 @@ fn partition_provenance(
                         if !mesh.is_empty() {
                             out.push(TaggedMesh {
                                 mesh,
+                                frames: region.frames,
                                 spans: region.spans,
                             });
                         }
@@ -728,6 +783,7 @@ fn partition_provenance(
                         if !mesh.is_empty() {
                             out.push(TaggedMesh {
                                 mesh,
+                                frames: region.frames,
                                 spans: region.spans,
                             });
                         }
@@ -743,7 +799,12 @@ fn partition_provenance(
             if !mesh.tris.is_empty() {
                 out.push(TaggedMesh {
                     mesh,
-                    spans: stack.clone(),
+                    frames: stack.clone(),
+                    spans: stack
+                        .iter()
+                        .filter(|frame| frame.call_site.source_id == SourceId(0))
+                        .map(|frame| frame.call_site.start as usize..frame.call_site.end as usize)
+                        .collect(),
                 });
             }
         }
@@ -755,59 +816,64 @@ fn partition_groups(
     node: &Node,
     color: [f32; 4],
     mode: DisplayMode,
+    provenance: &mut Vec<ProvenanceFrame>,
     ctx: &mut Ctx,
-    out: &mut Vec<ColoredMesh>,
+    out: &mut Vec<TaggedColoredMesh>,
 ) -> Result<(), GeomError> {
     match node {
         Node::Empty => {}
         // Display attributes set the effective color/mode for their subtree.
-        Node::Color { rgba, child } => partition_groups(child, *rgba, mode, ctx, out)?,
-        Node::Highlight(child) => partition_groups(child, color, DisplayMode::Highlight, ctx, out)?,
-        Node::Background(child) => {
-            partition_groups(child, color, DisplayMode::Background, ctx, out)?
+        Node::Color { rgba, child } => partition_groups(child, *rgba, mode, provenance, ctx, out)?,
+        Node::Highlight(child) => {
+            partition_groups(child, color, DisplayMode::Highlight, provenance, ctx, out)?
         }
-        // Provenance is transparent to color: recurse so the child keeps its own
-        // colored regions. (The span is only read by the provenance partition.)
-        Node::Provenance { child, .. } => partition_groups(child, color, mode, ctx, out)?,
+        Node::Background(child) => {
+            partition_groups(child, color, DisplayMode::Background, provenance, ctx, out)?
+        }
+        Node::Provenance { frame, child } => {
+            provenance.push(frame.clone());
+            partition_groups(child, color, mode, provenance, ctx, out)?;
+            provenance.pop();
+        }
         // Transparent to color: recurse so each child keeps its own regions.
         Node::Group(children) | Node::Union(children) => {
             for c in children {
-                partition_groups(c, color, mode, ctx, out)?;
+                partition_groups(c, color, mode, provenance, ctx, out)?;
             }
         }
         // Affine transforms distribute over sub-meshes: recurse, then transform
         // each produced mesh (reusing the fused path's vertex mutators).
         Node::Translate { v, child } => {
             let start = out.len();
-            partition_groups(child, color, mode, ctx, out)?;
+            partition_groups(child, color, mode, provenance, ctx, out)?;
             out[start..]
                 .iter_mut()
                 .for_each(|cm| translate(&mut cm.mesh, *v));
         }
         Node::Rotate { deg, child } => {
             let start = out.len();
-            partition_groups(child, color, mode, ctx, out)?;
+            partition_groups(child, color, mode, provenance, ctx, out)?;
             out[start..]
                 .iter_mut()
                 .for_each(|cm| rotate(&mut cm.mesh, *deg));
         }
         Node::Scale { v, child } => {
             let start = out.len();
-            partition_groups(child, color, mode, ctx, out)?;
+            partition_groups(child, color, mode, provenance, ctx, out)?;
             out[start..]
                 .iter_mut()
                 .for_each(|cm| scale(&mut cm.mesh, *v));
         }
         Node::Mirror { v, child } => {
             let start = out.len();
-            partition_groups(child, color, mode, ctx, out)?;
+            partition_groups(child, color, mode, provenance, ctx, out)?;
             out[start..]
                 .iter_mut()
                 .for_each(|cm| mirror(&mut cm.mesh, *v));
         }
         Node::MultMatrix { m, child } => {
             let start = out.len();
-            partition_groups(child, color, mode, ctx, out)?;
+            partition_groups(child, color, mode, provenance, ctx, out)?;
             out[start..]
                 .iter_mut()
                 .for_each(|cm| mult_matrix(&mut cm.mesh, m));
@@ -821,7 +887,7 @@ fn partition_groups(
         Node::Difference(children) if !is_2d(node) => {
             if let Some((base, tools)) = children.split_first() {
                 let mut regions = Vec::new();
-                partition_groups(base, color, mode, ctx, &mut regions)?;
+                partition_groups(base, color, mode, provenance, ctx, &mut regions)?;
                 // Fuse the tools into one mesh, dropping empties (e.g. a disabled
                 // cutaway whose operand is `Empty`) so a no-op difference does
                 // zero extra kernel work and passes the base regions through.
@@ -833,10 +899,21 @@ fn partition_groups(
                     out.append(&mut regions);
                 } else {
                     let tool = ctx.kernel.union(tools)?;
-                    for ColoredMesh { mesh, color, mode } in regions {
+                    for TaggedColoredMesh {
+                        mesh,
+                        color,
+                        mode,
+                        provenance,
+                    } in regions
+                    {
                         let mesh = ctx.kernel.difference(mesh, vec![tool.clone()])?;
                         if !mesh.is_empty() {
-                            out.push(ColoredMesh { mesh, color, mode });
+                            out.push(TaggedColoredMesh {
+                                mesh,
+                                color,
+                                mode,
+                                provenance,
+                            });
                         }
                     }
                 }
@@ -848,16 +925,27 @@ fn partition_groups(
         Node::Intersection(children) if !is_2d(node) => {
             if let Some((base, rest)) = children.split_first() {
                 let mut regions = Vec::new();
-                partition_groups(base, color, mode, ctx, &mut regions)?;
+                partition_groups(base, color, mode, provenance, ctx, &mut regions)?;
                 if rest.is_empty() {
                     // `intersection()` of a single operand is that operand.
                     out.append(&mut regions);
                 } else {
                     let clip = ctx.kernel.intersection(render_all(rest, ctx)?)?;
-                    for ColoredMesh { mesh, color, mode } in regions {
+                    for TaggedColoredMesh {
+                        mesh,
+                        color,
+                        mode,
+                        provenance,
+                    } in regions
+                    {
                         let mesh = ctx.kernel.intersection(vec![mesh, clip.clone()])?;
                         if !mesh.is_empty() {
-                            out.push(ColoredMesh { mesh, color, mode });
+                            out.push(TaggedColoredMesh {
+                                mesh,
+                                color,
+                                mode,
+                                provenance,
+                            });
                         }
                     }
                 }
@@ -870,7 +958,12 @@ fn partition_groups(
         _ => {
             let mesh = render_node(node, ctx)?;
             if !mesh.tris.is_empty() {
-                out.push(ColoredMesh { mesh, color, mode });
+                out.push(TaggedColoredMesh {
+                    mesh,
+                    color,
+                    mode,
+                    provenance: provenance.clone(),
+                });
             }
         }
     }
@@ -974,8 +1067,8 @@ fn lower_projections(node: &Node, ctx: &mut Ctx) -> Result<Node, GeomError> {
         },
         Highlight(child) => Highlight(lower(child, ctx)?),
         Background(child) => Background(lower(child, ctx)?),
-        Provenance { span, child } => Provenance {
-            span: span.clone(),
+        Provenance { frame, child } => Provenance {
+            frame: frame.clone(),
             child: lower(child, ctx)?,
         },
         Group(cs) => Group(lower_children(cs, ctx)?),
@@ -2456,6 +2549,181 @@ mod tests {
         assert!(mesh.signed_volume() > 0.0);
     }
 
+    #[test]
+    fn structured_union_retains_each_input_surface_attribution() {
+        let node = Node::Union(vec![
+            Node::Color {
+                rgba: [1.0, 0.0, 0.0, 1.0],
+                child: Box::new(Node::Cube {
+                    size: [2.0, 2.0, 2.0],
+                    center: false,
+                }),
+            },
+            Node::Color {
+                rgba: [0.0, 0.0, 1.0, 1.0],
+                child: Box::new(Node::Translate {
+                    v: [1.0, 0.0, 0.0],
+                    child: Box::new(Node::Cube {
+                        size: [2.0, 2.0, 2.0],
+                        center: false,
+                    }),
+                }),
+            },
+        ]);
+        let structured =
+            render_structured_rust_cached(&node, &RustManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+
+        assert_eq!(
+            structured.exact.surface_ids.len(),
+            structured.exact.mesh.tris.len()
+        );
+        assert_eq!(
+            structured.exact.source_face_ids.len(),
+            structured.exact.mesh.tris.len()
+        );
+        let colors: std::collections::HashSet<_> = structured
+            .exact
+            .surface_ids
+            .iter()
+            .map(|id| {
+                let rgba = structured.attributions[id.0 as usize].rgba;
+                rgba.map(f32::to_bits)
+            })
+            .collect();
+        assert_eq!(colors.len(), 2);
+        assert!(colors.contains(&[1.0f32.to_bits(), 0, 0, 1.0f32.to_bits()]));
+        assert!(colors.contains(&[0, 0, 1.0f32.to_bits(), 1.0f32.to_bits()]));
+    }
+
+    #[test]
+    fn structured_difference_cut_faces_inherit_the_base_color() {
+        let node = Node::Difference(vec![
+            Node::Color {
+                rgba: [1.0, 0.0, 0.0, 1.0],
+                child: Box::new(Node::Cube {
+                    size: [4.0, 4.0, 4.0],
+                    center: false,
+                }),
+            },
+            Node::Color {
+                rgba: [0.0, 0.0, 1.0, 1.0],
+                child: Box::new(Node::Translate {
+                    v: [1.0, 1.0, 1.0],
+                    child: Box::new(Node::Cube {
+                        size: [4.0, 4.0, 4.0],
+                        center: false,
+                    }),
+                }),
+            },
+        ]);
+        let structured =
+            render_structured_rust_cached(&node, &RustManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+
+        assert!(structured
+            .exact
+            .surface_ids
+            .iter()
+            .all(|id| { structured.attributions[id.0 as usize].rgba == [1.0, 0.0, 0.0, 1.0] }));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn structured_rust_and_native_backends_agree_on_relation_classification() {
+        let node = Node::Union(vec![
+            Node::Color {
+                rgba: [1.0, 0.0, 0.0, 1.0],
+                child: Box::new(Node::Cube {
+                    size: [2.0, 2.0, 2.0],
+                    center: false,
+                }),
+            },
+            Node::Color {
+                rgba: [0.0, 0.0, 1.0, 1.0],
+                child: Box::new(Node::Translate {
+                    v: [1.0, 0.0, 0.0],
+                    child: Box::new(Node::Cube {
+                        size: [2.0, 2.0, 2.0],
+                        center: false,
+                    }),
+                }),
+            },
+        ]);
+        let rust =
+            render_structured_rust_cached(&node, &RustManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+        let native =
+            render_structured_native_cached(&node, &ManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+
+        assert!((rust.exact.mesh.volume() - native.exact.mesh.volume()).abs() < 1e-6);
+        assert_eq!(rust.solid_components.len(), native.solid_components.len());
+        let colors = |structured: &StructuredMesh| {
+            let mut colors: Vec<_> = structured
+                .exact
+                .surface_ids
+                .iter()
+                .map(|id| {
+                    structured.attributions[id.0 as usize]
+                        .rgba
+                        .map(f32::to_bits)
+                })
+                .collect();
+            colors.sort_unstable();
+            colors.dedup();
+            colors
+        };
+        assert_eq!(colors(&rust), colors(&native));
+    }
+
+    #[test]
+    fn native_glb_serializes_deterministic_named_parts_and_optional_edges() {
+        let node = Node::Color {
+            rgba: [1.0, 0.0, 0.0, 1.0],
+            child: Box::new(Node::Union(vec![
+                Node::Cube {
+                    size: [1.0, 1.0, 1.0],
+                    center: false,
+                },
+                Node::Translate {
+                    v: [0.0, 0.0, 2.0],
+                    child: Box::new(Node::Cube {
+                        size: [1.0, 1.0, 1.0],
+                        center: false,
+                    }),
+                },
+            ])),
+        };
+        let structured =
+            render_structured_rust_cached(&node, &RustManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+        let mut options = Export3DOptions::default();
+
+        reset_edge_derivation_count();
+        let plain = serialize_glb(&structured, &options).unwrap();
+        assert_eq!(&plain[..4], b"glTF");
+        assert_eq!(edge_derivation_count(), 0);
+        let plain_json = parse_glb_json(&plain);
+        assert_eq!(plain_json["nodes"].as_array().unwrap().len(), 2);
+        assert_eq!(plain_json["nodes"][0]["name"], "#FF0000FF Shape 1");
+        assert_eq!(plain_json["nodes"][1]["name"], "#FF0000FF Shape 2");
+        assert!(plain_json["meshes"].as_array().unwrap().iter().all(|mesh| {
+            mesh["primitives"].as_array().unwrap().len() == 1 && mesh["primitives"][0]["mode"] == 4
+        }));
+        assert_eq!(plain, serialize_glb(&structured, &options).unwrap());
+
+        options.include_edges = true;
+        let edged = serialize_glb(&structured, &options).unwrap();
+        assert!(edge_derivation_count() > 0);
+        let edged_json = parse_glb_json(&edged);
+        assert!(edged_json["meshes"].as_array().unwrap().iter().all(|mesh| {
+            let primitives = mesh["primitives"].as_array().unwrap();
+            primitives.len() == 2 && primitives[0]["mode"] == 4 && primitives[1]["mode"] == 1
+        }));
+        assert_eq!(edged_json["nodes"].as_array().unwrap().len(), 2);
+    }
+
     /// Bake-off: the pure-Rust Manifold kernel must agree with the C++ Manifold
     /// kernel to within tolerance on a mixed union/difference/intersection model.
     #[test]
@@ -2821,7 +3089,15 @@ mod tests {
     /// each `ModuleCall`.
     fn prov(span: std::ops::Range<usize>, child: Node) -> Node {
         Node::Provenance {
-            span,
+            frame: ProvenanceFrame {
+                call_site: openrscad_ir::SourceSpan {
+                    source_id: SourceId(0),
+                    start: span.start as u32,
+                    end: span.end as u32,
+                },
+                definition_site: None,
+                module_name: None,
+            },
             child: Box::new(child),
         }
     }

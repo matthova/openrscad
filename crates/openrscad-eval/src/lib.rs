@@ -14,7 +14,7 @@ mod vm;
 pub use text::{font_completions, register_font_data, register_system_fonts, FontCompletion};
 pub use value::{format_number, Value};
 
-use openrscad_ir::{FragmentSpec, Node, Vec3};
+use openrscad_ir::{FragmentSpec, Node, ProvenanceFrame, SourceId, SourceSpan, Vec3};
 use openrscad_syntax::ast::*;
 use std::collections::HashSet;
 
@@ -211,9 +211,8 @@ struct ModClosure {
     params: Vec<Param>,
     body: Vec<Spanned<Stmt>>,
     env: Vec<ScopeRef>,
-    /// Whether the module was defined in the main file — only then do its body's
-    /// statement spans index into the main source (used for diagnostics).
     is_main: bool,
+    definition_site: Option<SourceSpan>,
 }
 
 #[derive(Default)]
@@ -227,6 +226,10 @@ struct Scope {
 #[derive(Debug)]
 pub struct EvalOutput {
     pub node: Node,
+    /// Canonical resolver keys indexed by request-local [`SourceId`]. Empty on
+    /// ordinary evaluation; detailed provenance evaluation starts with the
+    /// directly supplied source at entry 0.
+    pub source_keys: Vec<String>,
     pub echoes: Vec<String>,
     pub warnings: Vec<Warning>,
     /// Number of `assert()`s that actually executed during evaluation. Used by
@@ -279,6 +282,11 @@ struct Interp<'a> {
     in_main: bool,
     /// Span of the main-source statement currently executing (for warnings/errors).
     cur_span: Option<std::ops::Range<usize>>,
+    /// Source-aware statement span used by factual geometry provenance.
+    cur_source_span: Option<SourceSpan>,
+    /// Whether evaluation should retain cross-file and authored-module facts.
+    /// The ordinary render path keeps its existing main-source spans only.
+    detailed_provenance: bool,
     /// For each active module call: the child statements, the caller's lexical
     /// scope chain (so `children()` evaluates them at the call site), and the
     /// caller's `in_main` flag (so their spans attribute correctly).
@@ -292,6 +300,8 @@ struct Interp<'a> {
     cur_dir: String,
     /// Files currently being loaded, for include/use cycle detection.
     loading: HashSet<String>,
+    source_keys: Vec<String>,
+    source_ids: FastMap<String, SourceId>,
     /// Customizer / `-D` overrides: these replace matching *top-level*
     /// assignments in the main file (they win, like OpenSCAD's `-D`).
     overrides: FastMap<String, Value>,
@@ -343,7 +353,7 @@ pub fn eval_program_with_budget(
     base_dir: &str,
     budget: u64,
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, &[], budget)
+    eval_program_impl(prog, resolver, base_dir, &[], budget, false, true)
 }
 
 /// Like [`eval_program_with`], but with customizer / `-D`-style parameter
@@ -355,7 +365,40 @@ pub fn eval_program_with_params(
     base_dir: &str,
     overrides: &[(String, Value)],
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX)
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, false, true)
+}
+
+/// Evaluate with downloadable-file semantics (`$preview=false`). Caller
+/// overrides cannot change the API-selected value of `$preview`.
+pub fn eval_program_with_params_export(
+    prog: &Program,
+    resolver: &dyn FileResolver,
+    base_dir: &str,
+    overrides: &[(String, Value)],
+) -> EResult<EvalOutput> {
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, false, false)
+}
+
+/// Like [`eval_program_with_params`], but retains factual cross-file and
+/// authored-module provenance for structured native exports. Ordinary render
+/// callers should use [`eval_program_with_params`] to avoid this extra work.
+pub fn eval_program_with_params_detailed(
+    prog: &Program,
+    resolver: &dyn FileResolver,
+    base_dir: &str,
+    overrides: &[(String, Value)],
+) -> EResult<EvalOutput> {
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, true, true)
+}
+
+/// Detailed-provenance evaluation with downloadable-file semantics.
+pub fn eval_program_with_params_detailed_export(
+    prog: &Program,
+    resolver: &dyn FileResolver,
+    base_dir: &str,
+    overrides: &[(String, Value)],
+) -> EResult<EvalOutput> {
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, true, false)
 }
 
 fn eval_program_impl(
@@ -364,6 +407,8 @@ fn eval_program_impl(
     base_dir: &str,
     overrides: &[(String, Value)],
     fuel: u64,
+    detailed_provenance: bool,
+    preview: bool,
 ) -> EResult<EvalOutput> {
     let mut base = Scope::default();
     base.vars
@@ -375,7 +420,7 @@ fn eval_program_impl(
     globals.insert("$fa".to_string(), Value::Number(12.0));
     globals.insert("$fs".to_string(), Value::Number(2.0));
     globals.insert("$t".to_string(), Value::Number(0.0));
-    globals.insert("$preview".to_string(), Value::Bool(true));
+    globals.insert("$preview".to_string(), Value::Bool(preview));
     // Viewport variables (the frontend overrides these with the live camera;
     // these defaults let scripts read them off-viewport, e.g. in the CLI).
     globals.insert(
@@ -399,7 +444,7 @@ fn eval_program_impl(
     // A `$`-named override (e.g. `$t` for animation, `$fn`) seeds the global
     // special-variable frame rather than a top-level assignment.
     for (name, value) in overrides {
-        if name.starts_with('$') {
+        if name.starts_with('$') && name != "$preview" {
             globals.insert(name.clone(), value.clone());
         }
     }
@@ -415,11 +460,19 @@ fn eval_program_impl(
         fuel,
         in_main: true,
         cur_span: None,
+        cur_source_span: None,
+        detailed_provenance,
         children_stack: Vec::new(),
         module_stack: Vec::new(),
         resolver,
         cur_dir: base_dir.to_string(),
         loading: HashSet::new(),
+        source_keys: if detailed_provenance {
+            vec!["<main>".to_string()]
+        } else {
+            Vec::new()
+        },
+        source_ids: FastMap::default(),
         overrides: overrides.iter().cloned().collect(),
         warned: HashSet::new(),
     };
@@ -436,6 +489,7 @@ fn eval_program_impl(
     };
     Ok(EvalOutput {
         node,
+        source_keys: interp.source_keys,
         echoes: interp.echoes,
         warnings: interp.warnings,
         asserts_run: interp.asserts_run,
@@ -521,12 +575,31 @@ impl Interp<'_> {
         None
     }
 
+    fn register_source(&mut self, key: &str) -> SourceId {
+        debug_assert!(self.detailed_provenance);
+        if let Some(id) = self.source_ids.get(key) {
+            return *id;
+        }
+        let id = SourceId(self.source_keys.len() as u32);
+        self.source_keys.push(key.to_string());
+        self.source_ids.insert(key.to_string(), id);
+        id
+    }
+
+    fn source_span(&self, s: &Spanned<Stmt>) -> SourceSpan {
+        SourceSpan {
+            source_id: SourceId(s.source_id),
+            start: s.span.start as u32,
+            end: s.span.end as u32,
+        }
+    }
+
     // ---- statements ----------------------------------------------------
 
     /// The diagnostic span for a statement: its byte range when we're executing
-    /// main-source statements and the span isn't a splice sentinel; else `None`.
+    /// main-source statements; else `None`.
     fn stmt_span(&self, s: &Spanned<Stmt>) -> Option<std::ops::Range<usize>> {
-        if self.in_main && s.span.start != usize::MAX {
+        if self.in_main && s.source_id == 0 && s.span.start != usize::MAX {
             Some(s.span.clone())
         } else {
             None
@@ -584,9 +657,12 @@ impl Interp<'_> {
                 _ => {
                     let sp = self.stmt_span(s);
                     let saved = self.cur_span.take();
+                    let source_saved = self.cur_source_span.take();
                     self.cur_span = sp.clone();
+                    self.cur_source_span = self.detailed_provenance.then(|| self.source_span(s));
                     let r = self.eval_geom(&s.node);
                     self.cur_span = saved;
+                    self.cur_source_span = source_saved;
                     out.extend(r.map_err(|e| e.or_span(sp))?);
                 }
             }
@@ -614,6 +690,7 @@ impl Interp<'_> {
                 }
                 Stmt::ModuleDef { name, params, body } => {
                     let env = self.scopes.clone();
+                    let definition_site = self.detailed_provenance.then(|| self.source_span(s));
                     self.scopes.last().unwrap().borrow_mut().modules.insert(
                         name.clone(),
                         Rc::new(ModClosure {
@@ -621,6 +698,7 @@ impl Interp<'_> {
                             body: body.clone(),
                             env,
                             is_main: self.in_main,
+                            definition_site,
                         }),
                     );
                 }
@@ -689,9 +767,6 @@ impl Interp<'_> {
         stmts: &[Spanned<Stmt>],
         in_include: bool,
     ) -> EResult<Vec<Spanned<Stmt>>> {
-        // Statements spliced in from an included file get a sentinel span so the
-        // evaluator never attributes a diagnostic to a library byte offset in the
-        // main editor.
         const SENTINEL: std::ops::Range<usize> = usize::MAX..usize::MAX;
         let mut out = Vec::new();
         for s in stmts {
@@ -704,9 +779,13 @@ impl Interp<'_> {
                     if !self.loading.insert(lf.key.clone()) {
                         continue; // cycle: already loading this file
                     }
-                    let prog = openrscad_syntax::parse(&lf.source).map_err(|e| {
-                        EvalError::new(format!("in include '{path}': {}", e.message))
-                    })?;
+                    let prog = if self.detailed_provenance {
+                        let source_id = self.register_source(&lf.key);
+                        openrscad_syntax::parse_with_source_id(&lf.source, source_id.0)
+                    } else {
+                        openrscad_syntax::parse(&lf.source)
+                    }
+                    .map_err(|e| EvalError::new(format!("in include '{path}': {}", e.message)))?;
                     let prev = std::mem::replace(&mut self.cur_dir, lf.dir.clone());
                     let expanded = self.expand_includes(&prog, true);
                     self.cur_dir = prev;
@@ -714,17 +793,21 @@ impl Interp<'_> {
                     out.extend(expanded?);
                 }
                 Stmt::Use { path } if in_include => {
-                    out.push(Spanned::new(
-                        Stmt::Use {
-                            path: join_dir(&self.cur_dir, path),
-                        },
-                        SENTINEL,
-                    ));
+                    let node = Stmt::Use {
+                        path: join_dir(&self.cur_dir, path),
+                    };
+                    out.push(if self.detailed_provenance {
+                        Spanned {
+                            node,
+                            span: s.span.clone(),
+                            source_id: s.source_id,
+                        }
+                    } else {
+                        Spanned::new(node, SENTINEL)
+                    });
                 }
-                node => {
-                    let span = if in_include { SENTINEL } else { s.span.clone() };
-                    out.push(Spanned::new(node.clone(), span));
-                }
+                _ if self.detailed_provenance || !in_include => out.push(s.clone()),
+                _ => out.push(Spanned::new(s.node.clone(), SENTINEL)),
             }
         }
         Ok(out)
@@ -741,8 +824,13 @@ impl Interp<'_> {
         if !self.loading.insert(lf.key.clone()) {
             return Ok(()); // cycle
         }
-        let prog = openrscad_syntax::parse(&lf.source)
-            .map_err(|e| EvalError::new(format!("in use '{path}': {}", e.message)))?;
+        let prog = if self.detailed_provenance {
+            let source_id = self.register_source(&lf.key);
+            openrscad_syntax::parse_with_source_id(&lf.source, source_id.0)
+        } else {
+            openrscad_syntax::parse(&lf.source)
+        }
+        .map_err(|e| EvalError::new(format!("in use '{path}': {}", e.message)))?;
 
         let file_scope: ScopeRef = Rc::new(RefCell::new(Scope::default()));
         let base = self.scopes[0].clone();
@@ -900,7 +988,7 @@ impl Interp<'_> {
             return Ok(Vec::new());
         }
 
-        let node = self.dispatch_module(name, args, children)?;
+        let (node, user_definition) = self.dispatch_module(name, args, children)?;
 
         // `#` highlight / `%` background wrap the produced node so the preview can
         // render them specially — `#` translucent red (kept in exports), `%`
@@ -923,9 +1011,22 @@ impl Interp<'_> {
         // call highlights its call site rather than the module body. Skipped when
         // no main-source span is available (spliced `include`/`use` statements)
         // or the call produced nothing.
-        let node = match &self.cur_span {
-            Some(span) if !matches!(node, Node::Empty) => Node::Provenance {
-                span: span.clone(),
+        let call_site = self.cur_source_span.clone().or_else(|| {
+            self.cur_span.as_ref().map(|span| SourceSpan {
+                source_id: SourceId(0),
+                start: span.start as u32,
+                end: span.end as u32,
+            })
+        });
+        let node = match call_site {
+            Some(call_site) if !matches!(node, Node::Empty) => Node::Provenance {
+                frame: ProvenanceFrame {
+                    call_site,
+                    definition_site: user_definition
+                        .as_ref()
+                        .and_then(|definition| definition.definition_site.clone()),
+                    module_name: user_definition.as_ref().map(|_| name.to_string()),
+                },
                 child: Box::new(node),
             },
             _ => node,
@@ -978,55 +1079,60 @@ impl Interp<'_> {
         name: &str,
         args: &[Arg],
         children: &[Spanned<Stmt>],
-    ) -> EResult<Node> {
+    ) -> EResult<(Node, Option<Rc<ModClosure>>)> {
+        let builtin = |result: EResult<Node>| result.map(|node| (node, None));
         match name {
-            "cube" => self.b_cube(args),
-            "sphere" => self.b_sphere(args),
-            "cylinder" => self.b_cylinder(args),
-            "polyhedron" => self.b_polyhedron(args),
-            "square" => self.b_square(args),
-            "circle" => self.b_circle(args),
-            "polygon" => self.b_polygon(args),
-            "text" => self.b_text(args),
-            "linear_extrude" => self.b_linear_extrude(args, children),
-            "rotate_extrude" => self.b_rotate_extrude(args, children),
-            "offset" => self.b_offset(args, children),
+            "cube" => builtin(self.b_cube(args)),
+            "sphere" => builtin(self.b_sphere(args)),
+            "cylinder" => builtin(self.b_cylinder(args)),
+            "polyhedron" => builtin(self.b_polyhedron(args)),
+            "square" => builtin(self.b_square(args)),
+            "circle" => builtin(self.b_circle(args)),
+            "polygon" => builtin(self.b_polygon(args)),
+            "text" => builtin(self.b_text(args)),
+            "linear_extrude" => builtin(self.b_linear_extrude(args, children)),
+            "rotate_extrude" => builtin(self.b_rotate_extrude(args, children)),
+            "offset" => builtin(self.b_offset(args, children)),
             "projection" => {
                 let m = self.bind_named(&["cut"], args)?;
                 let cut = m.get("cut").map(Value::truthy).unwrap_or(false);
-                Ok(Node::Projection {
-                    cut,
-                    child: Box::new(Node::group(self.eval_children(children)?)),
-                })
+                Ok((
+                    Node::Projection {
+                        cut,
+                        child: Box::new(Node::group(self.eval_children(children)?)),
+                    },
+                    None,
+                ))
             }
-            "translate" => self.transform(args, children, TransformKind::Translate),
-            "rotate" => self.transform(args, children, TransformKind::Rotate),
-            "scale" => self.transform(args, children, TransformKind::Scale),
-            "mirror" => self.transform(args, children, TransformKind::Mirror),
-            "multmatrix" => self.b_multmatrix(args, children),
-            "resize" => self.b_resize(args, children),
+            "translate" => builtin(self.transform(args, children, TransformKind::Translate)),
+            "rotate" => builtin(self.transform(args, children, TransformKind::Rotate)),
+            "scale" => builtin(self.transform(args, children, TransformKind::Scale)),
+            "mirror" => builtin(self.transform(args, children, TransformKind::Mirror)),
+            "multmatrix" => builtin(self.b_multmatrix(args, children)),
+            "resize" => builtin(self.b_resize(args, children)),
             // `color()` tints the preview; geometry is unaffected. `render()` is
             // a plain passthrough.
-            "color" => self.b_color(args, children),
-            "render" => Ok(Node::group(self.eval_children(children)?)),
-            "union" => Ok(Node::Union(self.eval_children(children)?)),
-            "difference" => Ok(Node::Difference(self.eval_children(children)?)),
-            "intersection" => Ok(Node::Intersection(self.eval_children(children)?)),
-            "intersection_for" => self.b_intersection_for(args, children),
-            "hull" => Ok(Node::Hull(self.eval_children(children)?)),
-            "minkowski" => Ok(Node::Minkowski(self.eval_children(children)?)),
-            "import" => self.b_import(args),
-            "surface" => self.b_surface(args),
-            "group" => Ok(Node::group(self.eval_children(children)?)),
-            "echo" => self.b_echo(args, children),
-            "assert" => self.b_assert(args, children),
-            "children" => self.b_children(args),
+            "color" => builtin(self.b_color(args, children)),
+            "render" => builtin(Ok(Node::group(self.eval_children(children)?))),
+            "union" => builtin(Ok(Node::Union(self.eval_children(children)?))),
+            "difference" => builtin(Ok(Node::Difference(self.eval_children(children)?))),
+            "intersection" => builtin(Ok(Node::Intersection(self.eval_children(children)?))),
+            "intersection_for" => builtin(self.b_intersection_for(args, children)),
+            "hull" => builtin(Ok(Node::Hull(self.eval_children(children)?))),
+            "minkowski" => builtin(Ok(Node::Minkowski(self.eval_children(children)?))),
+            "import" => builtin(self.b_import(args)),
+            "surface" => builtin(self.b_surface(args)),
+            "group" => builtin(Ok(Node::group(self.eval_children(children)?))),
+            "echo" => builtin(self.b_echo(args, children)),
+            "assert" => builtin(self.b_assert(args, children)),
+            "children" => builtin(self.b_children(args)),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
-                    self.instantiate_module(name, &def, args, children)
+                    let node = self.instantiate_module(name, &def, args, children)?;
+                    Ok((node, self.detailed_provenance.then_some(def)))
                 } else {
                     self.warn(format!("Ignoring unknown module '{name}'"));
-                    Ok(Node::Empty)
+                    Ok((Node::Empty, None))
                 }
             }
         }
@@ -4322,6 +4428,143 @@ mod tests {
         let prog = openrscad_syntax::parse("include <lib.scad>\necho(sqr(4), K);").unwrap();
         let out = eval_program_with(&prog, &resolver, ".").unwrap();
         assert_eq!(out.echoes, vec!["ECHO: \"libran\"", "ECHO: 16, 7"]);
+    }
+
+    fn collect_provenance_frames<'a>(
+        node: &'a Node,
+        frames: &mut Vec<&'a openrscad_ir::ProvenanceFrame>,
+    ) {
+        match node {
+            Node::Provenance { frame, child } => {
+                frames.push(frame);
+                collect_provenance_frames(child, frames);
+            }
+            Node::Group(children) | Node::Union(children) => {
+                for child in children {
+                    collect_provenance_frames(child, frames);
+                }
+            }
+            Node::Translate { child, .. } => collect_provenance_frames(child, frames),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn ordinary_eval_skips_detailed_provenance() {
+        let source = "module part() { cube(1); } part();";
+        let output = eval_program(&openrscad_syntax::parse(source).unwrap()).unwrap();
+        let mut frames = Vec::new();
+        collect_provenance_frames(&output.node, &mut frames);
+
+        assert!(output.source_keys.is_empty());
+        assert!(frames.iter().all(|frame| frame.module_name.is_none()));
+        assert!(frames.iter().all(|frame| frame.definition_site.is_none()));
+    }
+
+    #[test]
+    fn api_mode_owns_preview_even_when_params_try_to_override_it() {
+        let program = openrscad_syntax::parse("if ($preview) cube(1); else sphere(1);").unwrap();
+        let force_false = vec![("$preview".to_string(), Value::Bool(false))];
+        let preview = eval_program_with_params(&program, &NullResolver, ".", &force_false).unwrap();
+        let force_true = vec![("$preview".to_string(), Value::Bool(true))];
+        let export =
+            eval_program_with_params_export(&program, &NullResolver, ".", &force_true).unwrap();
+
+        assert!(matches!(strip_provenance(preview.node), Node::Cube { .. }));
+        assert!(matches!(strip_provenance(export.node), Node::Sphere { .. }));
+    }
+
+    #[test]
+    fn provenance_keeps_nested_user_module_names_and_main_source_spans() {
+        let source = "module inner() { cube(1); } module outer() { inner(); } outer();";
+        let output = eval_program_with_params_detailed(
+            &openrscad_syntax::parse(source).unwrap(),
+            &NullResolver,
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut frames = Vec::new();
+        collect_provenance_frames(&output.node, &mut frames);
+
+        assert_eq!(output.source_keys, vec!["<main>"]);
+        assert_eq!(frames[0].module_name.as_deref(), Some("outer"));
+        assert_eq!(frames[1].module_name.as_deref(), Some("inner"));
+        assert_eq!(frames[2].module_name, None);
+        assert_eq!(frames[0].call_site.source_id.0, 0);
+        assert_eq!(
+            &source[frames[0].call_site.start as usize..frames[0].call_site.end as usize],
+            "outer();"
+        );
+    }
+
+    #[test]
+    fn provenance_keeps_use_definition_and_call_sources() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "lib.scad".to_string(),
+            "module part() { cube(1); }".to_string(),
+        );
+        let source = "use <lib.scad>\npart();";
+        let output = eval_program_with_params_detailed(
+            &openrscad_syntax::parse(source).unwrap(),
+            &MapResolver(files),
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut frames = Vec::new();
+        collect_provenance_frames(&output.node, &mut frames);
+
+        assert_eq!(output.source_keys, vec!["<main>", "lib.scad"]);
+        assert_eq!(frames[0].module_name.as_deref(), Some("part"));
+        assert_eq!(frames[0].call_site.source_id.0, 0);
+        assert_eq!(frames[0].definition_site.as_ref().unwrap().source_id.0, 1);
+        assert_eq!(frames[1].call_site.source_id.0, 1);
+    }
+
+    #[test]
+    fn provenance_keeps_included_top_level_source() {
+        let mut files = std::collections::HashMap::new();
+        files.insert("included.scad".to_string(), "cube(1);".to_string());
+        let output = eval_program_with_params_detailed(
+            &openrscad_syntax::parse("include <included.scad>").unwrap(),
+            &MapResolver(files),
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut frames = Vec::new();
+        collect_provenance_frames(&output.node, &mut frames);
+
+        assert_eq!(output.source_keys, vec!["<main>", "included.scad"]);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].call_site.source_id.0, 1);
+        assert_eq!(frames[0].module_name, None);
+    }
+
+    #[test]
+    fn repeated_module_calls_keep_distinct_call_sites() {
+        let source = "module part() { cube(1); } part(); translate([0,0,2]) part();";
+        let output = eval_program_with_params_detailed(
+            &openrscad_syntax::parse(source).unwrap(),
+            &NullResolver,
+            ".",
+            &[],
+        )
+        .unwrap();
+        let mut frames = Vec::new();
+        collect_provenance_frames(&output.node, &mut frames);
+        let calls: Vec<_> = frames
+            .into_iter()
+            .filter(|frame| frame.module_name.as_deref() == Some("part"))
+            .map(|frame| frame.call_site.clone())
+            .collect();
+
+        assert_eq!(calls.len(), 2);
+        assert_ne!(calls[0], calls[1]);
+        assert_eq!(calls[0].source_id.0, 0);
+        assert_eq!(calls[1].source_id.0, 0);
     }
 
     // ---- diagnostic spans (for inline editor squiggles) ----------------

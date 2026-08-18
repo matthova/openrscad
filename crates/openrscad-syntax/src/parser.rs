@@ -9,6 +9,7 @@ pub struct Parser<'a> {
     pos: usize,
     /// Source text, for reconstructing `<include paths>` and EOF spans.
     src: &'a str,
+    source_id: u32,
 }
 
 type PResult<T> = Result<T, SyntaxError>;
@@ -23,10 +24,15 @@ fn describe(tok: Option<&Token>) -> String {
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<SpannedToken>, src: &'a str) -> Self {
+        Self::with_source_id(tokens, src, 0)
+    }
+
+    pub(crate) fn with_source_id(tokens: Vec<SpannedToken>, src: &'a str, source_id: u32) -> Self {
         Parser {
             tokens,
             pos: 0,
             src,
+            source_id,
         }
     }
 
@@ -60,7 +66,7 @@ impl<'a> Parser<'a> {
         let start = self.span_here().start;
         let node = self.parse_statement()?;
         let end = self.prev_end().max(start);
-        Ok(Spanned::new(node, start..end))
+        Ok(Spanned::with_source_id(node, start..end, self.source_id))
     }
 
     fn at_end(&self) -> bool {

@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+benchmark-profile = ["dep:web-time"]
+
 [dependencies]
 openrscad-ir = { workspace = true }
 thiserror = { workspace = true }
@@ -18,7 +21,12 @@ earcutr = { workspace = true }
 geo = { workspace = true }
 # DEFLATE decompression for 3MF import (ZIP entries are deflate-compressed).
 miniz_oxide = { workspace = true }
+serde_json = "1"
+web-time = { version = "1", optional = true }
 
 # C++ Manifold kernel — native only (does not target wasm32-unknown-unknown).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 manifold-csg = "0.3"
+
+[dev-dependencies]
+roxmltree = "0.20"

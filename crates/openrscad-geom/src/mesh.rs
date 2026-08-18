@@ -356,23 +356,81 @@ impl Mesh {
         let xml = String::from_utf8_lossy(&model);
         let mut verts: Vec<[f64; 3]> = Vec::new();
         let mut tris: Vec<[u32; 3]> = Vec::new();
-        for tag in xml_tags(&xml, "vertex") {
-            verts.push([
-                xml_attr_f64(tag, "x").unwrap_or(0.0),
-                xml_attr_f64(tag, "y").unwrap_or(0.0),
-                xml_attr_f64(tag, "z").unwrap_or(0.0),
-            ]);
-        }
-        for tag in xml_tags(&xml, "triangle") {
-            if let (Some(a), Some(b), Some(c)) = (
-                xml_attr_f64(tag, "v1"),
-                xml_attr_f64(tag, "v2"),
-                xml_attr_f64(tag, "v3"),
-            ) {
-                tris.push([a as u32, b as u32, c as u32]);
+        for mesh in split_elements(&xml, "mesh") {
+            let offset = verts.len() as u32;
+            for tag in xml_tags(mesh, "vertex") {
+                verts.push([
+                    xml_attr_f64(tag, "x").unwrap_or(0.0),
+                    xml_attr_f64(tag, "y").unwrap_or(0.0),
+                    xml_attr_f64(tag, "z").unwrap_or(0.0),
+                ]);
+            }
+            for tag in xml_tags(mesh, "triangle") {
+                if let (Some(a), Some(b), Some(c)) = (
+                    xml_attr_f64(tag, "v1"),
+                    xml_attr_f64(tag, "v2"),
+                    xml_attr_f64(tag, "v3"),
+                ) {
+                    tris.push([offset + a as u32, offset + b as u32, offset + c as u32]);
+                }
             }
         }
         Mesh { verts, tris }
+    }
+
+    /// Parse 3MF geometry plus its resolved per-triangle base-material colors.
+    /// Missing material assignments remain `None` so an enclosing SCAD color can
+    /// supply the display color.
+    pub(crate) fn from_3mf_attributed(bytes: &[u8]) -> Option<(Mesh, Vec<Option<[f32; 4]>>)> {
+        let model = zip_read_entry(bytes, "3D/3dmodel.model")?;
+        let xml = String::from_utf8_lossy(&model);
+        let mut materials = std::collections::BTreeMap::new();
+        for (attributes, content) in xml_elements(&xml, "basematerials") {
+            let Some(resource_id) = xml_attr_f64(attributes, "id").map(|value| value as u32) else {
+                continue;
+            };
+            for (index, base) in xml_tags(content, "base").into_iter().enumerate() {
+                if let Some(color) = xml_attr_text(base, "displaycolor").and_then(parse_hex_color) {
+                    materials.insert((resource_id, index as u32), color);
+                }
+            }
+        }
+
+        let mut verts = Vec::new();
+        let mut tris = Vec::new();
+        let mut colors = Vec::new();
+        for (object_attributes, object_content) in xml_elements(&xml, "object") {
+            let object_pid = xml_attr_f64(object_attributes, "pid").map(|value| value as u32);
+            let object_index = xml_attr_f64(object_attributes, "pindex").map(|value| value as u32);
+            for mesh in split_elements(object_content, "mesh") {
+                let offset = verts.len() as u32;
+                for tag in xml_tags(mesh, "vertex") {
+                    verts.push([
+                        xml_attr_f64(tag, "x").unwrap_or(0.0),
+                        xml_attr_f64(tag, "y").unwrap_or(0.0),
+                        xml_attr_f64(tag, "z").unwrap_or(0.0),
+                    ]);
+                }
+                for tag in xml_tags(mesh, "triangle") {
+                    let (Some(a), Some(b), Some(c)) = (
+                        xml_attr_f64(tag, "v1"),
+                        xml_attr_f64(tag, "v2"),
+                        xml_attr_f64(tag, "v3"),
+                    ) else {
+                        continue;
+                    };
+                    tris.push([offset + a as u32, offset + b as u32, offset + c as u32]);
+                    let pid = xml_attr_f64(tag, "pid")
+                        .map(|value| value as u32)
+                        .or(object_pid);
+                    let index = xml_attr_f64(tag, "p1")
+                        .map(|value| value as u32)
+                        .or(object_index);
+                    colors.push(pid.zip(index).and_then(|key| materials.get(&key).copied()));
+                }
+            }
+        }
+        (tris.len() == colors.len()).then_some((Mesh { verts, tris }, colors))
     }
 
     /// Parse an AMF document (plain XML) into an indexed mesh.
@@ -525,6 +583,28 @@ impl Mesh {
         s.push_str(&format!("endsolid {name}\n"));
         s
     }
+}
+
+pub(crate) fn package_3mf(model: &str) -> Vec<u8> {
+    const CONTENT_TYPES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n\
+        \x20<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n\
+        \x20<Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/>\n\
+        </Types>\n";
+    const RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n\
+        \x20<Relationship Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\" Target=\"/3D/3dmodel.model\" Id=\"rel0\"/>\n\
+        </Relationships>\n";
+    let mut zip = Zip::new();
+    zip.add("[Content_Types].xml", CONTENT_TYPES.as_bytes());
+    zip.add("_rels/.rels", RELS.as_bytes());
+    zip.add("3D/3dmodel.model", model.as_bytes());
+    zip.finish()
+}
+
+#[cfg(test)]
+pub(crate) fn read_3mf_model(bytes: &[u8]) -> Option<String> {
+    String::from_utf8(zip_read_entry(bytes, "3D/3dmodel.model")?).ok()
 }
 
 fn parse_binary_stl(bytes: &[u8]) -> Vec<[[f64; 3]; 3]> {
@@ -861,6 +941,10 @@ fn xml_tags<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
 
 /// Parse a numeric XML attribute (`attr="..."` / `attr='...'`) from a tag region.
 fn xml_attr_f64(tag: &str, attr: &str) -> Option<f64> {
+    xml_attr_text(tag, attr)?.trim().parse().ok()
+}
+
+fn xml_attr_text<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
     let mut from = 0;
     while let Some(rel) = tag[from..].find(attr) {
         let i = from + rel;
@@ -871,12 +955,58 @@ fn xml_attr_f64(tag: &str, attr: &str) -> Option<f64> {
             let q = rest.chars().next()?;
             if q == '"' || q == '\'' {
                 let end = rest[1..].find(q)?;
-                return rest[1..1 + end].trim().parse().ok();
+                return Some(&rest[1..1 + end]);
             }
         }
         from = i + attr.len();
     }
     None
+}
+
+fn parse_hex_color(value: &str) -> Option<[f32; 4]> {
+    let value = value.strip_prefix('#')?;
+    if value.len() != 6 && value.len() != 8 {
+        return None;
+    }
+    let byte = |start| u8::from_str_radix(&value[start..start + 2], 16).ok();
+    Some([
+        f32::from(byte(0)?) / 255.0,
+        f32::from(byte(2)?) / 255.0,
+        f32::from(byte(4)?) / 255.0,
+        f32::from(if value.len() == 8 { byte(6)? } else { 255 }) / 255.0,
+    ])
+}
+
+/// Opening-tag attributes and inner content for each non-self-closing element.
+fn xml_elements<'a>(xml: &'a str, name: &str) -> Vec<(&'a str, &'a str)> {
+    let open = format!("<{name}");
+    let close = format!("</{name}>");
+    let mut out = Vec::new();
+    let mut index = 0;
+    while let Some(relative) = xml[index..].find(&open) {
+        let start = index + relative;
+        if !tag_boundary(xml, start + 1, name.len()) {
+            index = start + open.len();
+            continue;
+        }
+        let Some(end) = xml[start..].find('>') else {
+            break;
+        };
+        let content_start = start + end + 1;
+        if xml.as_bytes().get(start + end - 1) == Some(&b'/') {
+            index = content_start;
+            continue;
+        }
+        let Some(close_relative) = xml[content_start..].find(&close) else {
+            break;
+        };
+        out.push((
+            &xml[start + open.len()..start + end],
+            &xml[content_start..content_start + close_relative],
+        ));
+        index = content_start + close_relative + close.len();
+    }
+    out
 }
 
 /// The inner content of each `<name>...</name>` element (non-self-closing).
@@ -992,6 +1122,28 @@ mod io_tests {
             "vol {}",
             back.volume()
         );
+    }
+
+    #[test]
+    fn threemf_multi_object_roundtrip_offsets_local_indices() {
+        let first = crate::cube([2.0, 2.0, 2.0], false);
+        let mut second = first.clone();
+        for vertex in &mut second.verts {
+            vertex[2] += 4.0;
+        }
+        let bytes = Mesh::to_3mf_colored(&[
+            (&first, [1.0, 0.0, 0.0, 1.0]),
+            (&second, [0.0, 0.0, 1.0, 1.0]),
+        ]);
+
+        let back = Mesh::from_3mf(&bytes);
+        assert_eq!(back.tris.len(), 24);
+        assert_eq!(back.bbox(), Some(([0.0, 0.0, 0.0], [2.0, 2.0, 6.0])));
+        assert!((back.volume() - 16.0).abs() < 1e-6);
+
+        let (_, colors) = Mesh::from_3mf_attributed(&bytes).unwrap();
+        assert_eq!(colors[..12], [Some([1.0, 0.0, 0.0, 1.0]); 12]);
+        assert_eq!(colors[12..], [Some([0.0, 0.0, 1.0, 1.0]); 12]);
     }
 
     #[test]

@@ -8,6 +8,27 @@
 pub type Vec3 = [f64; 3];
 pub type Vec2 = [f64; 2];
 
+/// Request-local identifier of a parsed source file. Resolve through the
+/// evaluator's source table; it is never a host filesystem identity by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SourceId(pub u32);
+
+/// Byte range in one request-local source file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SourceSpan {
+    pub source_id: SourceId,
+    pub start: u32,
+    pub end: u32,
+}
+
+/// Factual authored provenance for one evaluated module call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProvenanceFrame {
+    pub call_site: SourceSpan,
+    pub definition_site: Option<SourceSpan>,
+    pub module_name: Option<String>,
+}
+
 /// The `$fn` / `$fa` / `$fs` values in effect when a curved primitive was
 /// instantiated. The concrete fragment count is derived from these plus the
 /// radius by the geometry kernel (bit-exact fragment formula).
@@ -174,7 +195,7 @@ pub enum Node {
     /// provenance partition pass reads the span, emitting a per-statement pickable
     /// group. Wrapped around each `ModuleCall` result during evaluation.
     Provenance {
-        span: core::ops::Range<usize>,
+        frame: ProvenanceFrame,
         child: Box<Node>,
     },
 }
