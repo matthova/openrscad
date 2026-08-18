@@ -1,0 +1,12 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "openrscad-release-root": "0.11.0-beta.0"
+  },
+  "changesets": [
+    "cli-glb-feature-edges",
+    "fix-wasm-facade-abi",
+    "native-structured-3d-export"
+  ]
+}

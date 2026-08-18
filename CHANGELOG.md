@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0-beta.1
+
+### Minor Changes
+
+- Add native `exportShape3D` support for STL, OFF, OBJ, 3MF, AMF, and deterministic multipart GLB, plus `renderToGlb` for preview-semantics viewers. GLB preserves authored user-module hierarchy, source provenance, desktop-compatible materials, anonymous hexadecimal fallback parts, and optional owner-local feature lines. 3MF keeps complete authored geometry in independently named manifold objects with per-triangle materials and namespace-qualified provenance metadata. Export diagnostics now retain evaluation and geometry warnings/errors, and one production Wasm ABI ships every API without a feature-gated variant.
+
+### Patch Changes
+
+- `openrscad` writes `.glb` from the `-o` flag, carrying the authored scene hierarchy and per-owner materials, and `--edges` adds source-derived feature lines to it. Feature-edge lines are opaque black rather than translucent grey, so a renderer that consumes the file as written draws them the same way the desktop preview does. A model that renders to nothing now exports a valid empty document instead of one with empty glTF arrays, and zero-area faces export a unit normal instead of a zero vector.
+
+- Forward binary files and fonts through the npm facade and expose recoverable geometry errors.
+
 ## 0.10.1
 
 ### Patch Changes

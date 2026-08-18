@@ -926,7 +926,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openrscad-cli"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-eval"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "fontdb",
  "openrscad-ir",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-geom"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "earcutr",
  "geo",
@@ -962,16 +962,19 @@ dependencies = [
  "manifold-rust",
  "miniz_oxide",
  "openrscad-ir",
+ "roxmltree",
+ "serde_json",
  "thiserror",
+ "web-time",
 ]
 
 [[package]]
 name = "openrscad-ir"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 
 [[package]]
 name = "openrscad-lsp"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "openrscad-eval",
  "openrscad-geom",
@@ -984,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-syntax"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "logos",
  "serde_json",
@@ -993,15 +996,18 @@ dependencies = [
 
 [[package]]
 name = "openrscad-wasm"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "console_error_panic_hook",
+ "js-sys",
  "openrscad-eval",
  "openrscad-geom",
  "openrscad-ir",
  "openrscad-syntax",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-time",
 ]
 
 [[package]]
@@ -1652,6 +1658,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31d56021e873866c968588ed85ccdf56db5c426e44afdb4618c39895104b920"
 
 [[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1683,7 +1699,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.10.1"
+version = "0.11.0-beta.1"
 dependencies = [
  "openrscad-eval",
  "openrscad-geom",
