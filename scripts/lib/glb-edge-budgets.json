@@ -1,0 +1,204 @@
+{
+  "$comment": "Per-model ceiling on feature-edge line segments, measured from a known-good export. Passed to validate-glb-corpus.mjs with --budgets. A model may draw fewer segments than its entry (seam closure is what guards the other direction); drawing more means a classifier stopped recognising a surface. An optional danglingEndpoints entry raises the closure allowance from its default of zero.",
+  "geom/bool_coplanar.scad": {
+    "lineSegments": 16
+  },
+  "geom/bool_difference.scad": {
+    "lineSegments": 284
+  },
+  "geom/bool_intersection.scad": {
+    "lineSegments": 320
+  },
+  "geom/bool_intersection_for.scad": {
+    "lineSegments": 12
+  },
+  "geom/bool_nested.scad": {
+    "lineSegments": 100
+  },
+  "geom/bool_union.scad": {
+    "lineSegments": 30
+  },
+  "geom/bool_union_disjoint.scad": {
+    "lineSegments": 24
+  },
+  "geom/d2_difference_hole.scad": {
+    "lineSegments": 76
+  },
+  "geom/d2_island.scad": {
+    "lineSegments": 36
+  },
+  "geom/d2_offset_concave_grow.scad": {
+    "lineSegments": 18
+  },
+  "geom/d2_offset_concave_inset.scad": {
+    "lineSegments": 18
+  },
+  "geom/d2_offset_concave_round.scad": {
+    "lineSegments": 92
+  },
+  "geom/d2_offset_delta.scad": {
+    "lineSegments": 12
+  },
+  "geom/d2_offset_hole_close.scad": {
+    "lineSegments": 72
+  },
+  "geom/d2_offset_r.scad": {
+    "lineSegments": 56
+  },
+  "geom/d2_proj_offset_cut.scad": {
+    "lineSegments": 32
+  },
+  "geom/d2_proj_offset_flat.scad": {
+    "lineSegments": 12
+  },
+  "geom/d2_projection_cut.scad": {
+    "lineSegments": 128
+  },
+  "geom/d2_projection_flat.scad": {
+    "lineSegments": 12
+  },
+  "geom/d2_union.scad": {
+    "lineSegments": 14
+  },
+  "geom/ext_linear.scad": {
+    "lineSegments": 12
+  },
+  "geom/ext_linear_2d_diff.scad": {
+    "lineSegments": 192
+  },
+  "geom/ext_linear_center.scad": {
+    "lineSegments": 64
+  },
+  "geom/ext_linear_scale.scad": {
+    "lineSegments": 64
+  },
+  "geom/ext_linear_slices.scad": {
+    "lineSegments": 88
+  },
+  "geom/ext_linear_v.scad": {
+    "lineSegments": 12
+  },
+  "geom/ext_linear_v_tilt.scad": {
+    "lineSegments": 12
+  },
+  "geom/ext_rotate_angle.scad": {
+    "lineSegments": 72
+  },
+  "geom/ext_rotate_negative_x.scad": {
+    "lineSegments": 32
+  },
+  "geom/ext_rotate_over360.scad": {
+    "lineSegments": 96
+  },
+  "geom/ext_rotate_partial_fn.scad": {
+    "lineSegments": 32
+  },
+  "geom/hullmink_hull_2d.scad": {
+    "lineSegments": 52
+  },
+  "geom/hullmink_hull_points.scad": {
+    "lineSegments": 13
+  },
+  "geom/hullmink_minkowski_2d.scad": {
+    "lineSegments": 62
+  },
+  "geom/hullmink_minkowski_3d.scad": {
+    "lineSegments": 208
+  },
+  "geom/hullmink_minkowski_concave.scad": {
+    "lineSegments": 102
+  },
+  "geom/import_3mf.scad": {
+    "lineSegments": 268
+  },
+  "geom/import_dxf.scad": {
+    "lineSegments": 24
+  },
+  "geom/import_off.scad": {
+    "lineSegments": 12
+  },
+  "geom/import_stl.scad": {
+    "lineSegments": 12
+  },
+  "geom/import_svg.scad": {
+    "lineSegments": 12
+  },
+  "geom/minkowski_union.scad": {
+    "lineSegments": 45
+  },
+  "geom/prim_circle_ext.scad": {
+    "lineSegments": 12
+  },
+  "geom/prim_cone.scad": {
+    "lineSegments": 96
+  },
+  "geom/prim_cube.scad": {
+    "lineSegments": 12
+  },
+  "geom/prim_cube_center.scad": {
+    "lineSegments": 12
+  },
+  "geom/prim_cylinder.scad": {
+    "lineSegments": 64
+  },
+  "geom/prim_cylinder_center.scad": {
+    "lineSegments": 12
+  },
+  "geom/prim_polygon_ext.scad": {
+    "lineSegments": 9
+  },
+  "geom/prim_polygon_hole_ext.scad": {
+    "lineSegments": 24
+  },
+  "geom/prim_polyhedron.scad": {
+    "lineSegments": 6
+  },
+  "geom/prim_square_center_ext.scad": {
+    "lineSegments": 12
+  },
+  "geom/prim_square_ext.scad": {
+    "lineSegments": 12
+  },
+  "geom/text_mono.scad": {
+    "lineSegments": 582
+  },
+  "geom/text_sans_bold.scad": {
+    "lineSegments": 459
+  },
+  "geom/text_sans_italic.scad": {
+    "lineSegments": 569
+  },
+  "geom/text_serif.scad": {
+    "lineSegments": 815
+  },
+  "geom/xf_mirror.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_multmatrix.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_resize.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_rotate_axis.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_rotate_euler.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_rotate_named.scad": {
+    "lineSegments": 64
+  },
+  "geom/xf_scale.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_translate.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_translate_2d.scad": {
+    "lineSegments": 12
+  },
+  "geom/xf_translate_named.scad": {
+    "lineSegments": 12
+  }
+}

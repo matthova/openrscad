@@ -300,6 +300,58 @@ jobs:
   # browsers actually run, and the one the Manifold-vs-boolmesh differential
   # exists to protect. Chrome is preinstalled on the runner; wasm-pack fetches a
   # matching chromedriver. No cmake: manifold-csg (C++) is cfg'd out on wasm.
+  # Export the geometry corpus to GLB through the Node Wasm facade and gate it
+  # on Khronos validation plus the feature-edge budgets. The budgets are the only
+  # thing standing between an edge-classifier regression and a shipped thumbnail:
+  # a classifier that stops recognising a surface silently goes back to drawing
+  # every triangle, and nothing else in this repo would notice.
+  glb-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable, wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Share the cache key deploy-pages.yml / the web job warm.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the Node Wasm facade
+        working-directory: packages/npm
+        run: npm run build
+
+      - name: Corpus export scripts
+        run: npm run test:scripts
+
+      - name: Validate GLB corpus
+        run: >-
+          npm run validate:glb-corpus --
+          --root corpus --budgets scripts/lib/glb-edge-budgets.json 'geom/*.scad'
+
   wasm-test:
     runs-on: ubuntu-latest
     steps:
