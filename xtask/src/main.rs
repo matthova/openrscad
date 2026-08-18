@@ -731,7 +731,7 @@ fn warm_edit_bench(root: &Path, models: &[(&str, &str)]) {
         } else {
             "-".into()
         };
-        println!("{:<12} {:>10.1} {:>10.2} {:>10}", name, cold, warm, speedup);
+        println!("{name:<12} {cold:>10.1} {warm:>10.2} {speedup:>10}");
     }
     println!("\n(warm = unchanged tree, all cache hits — the incremental-edit floor.)");
 }
