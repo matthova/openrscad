@@ -1371,13 +1371,25 @@ fn rotate_extrude_patch_ids(
         .collect()
 }
 
-/// Classifies the faces of a convex hull by which operand they lie on.
+/// Classifies the faces of a convex hull by which operand they lie on, then
+/// cuts each of those patches at its creases.
 ///
 /// A hull's output vertices are a subset of its operands' vertices, so a face
 /// whose corners all came from one operand lies on that operand's surface and
 /// inherits its identity. Faces spanning operands form the ruled band between
 /// them and are keyed by the set they span, which keeps an A–B band distinct
 /// from an A–C one.
+///
+/// Operand identity alone is too coarse to derive edges from: hulling two
+/// cylinders files each operand's flat caps *and* its curved wall under one
+/// patch, so the 90° rim between them falls inside a patch and never gets
+/// drawn, and the ruled band's four mutually perpendicular planes share one
+/// patch too. The [`smooth_components`] pass therefore splits every hull patch
+/// wherever adjacent faces meet at [`crate::export3d::PATCH_MERGE_DEGREES`] or
+/// more; the boundary-component stage in `export3d` then rejoins whatever is
+/// genuinely smooth across those cuts. A hulled coarse primitive keeps its
+/// facet creases as a result — above that threshold they are real creases, and
+/// splitting is what makes rims and cap outlines appear at all.
 ///
 /// Without this every hull is a single unclassified blob, and its boundary with
 /// anything it is later cut by can only be judged edge by edge — which erodes
@@ -1395,7 +1407,8 @@ fn hull_patch_ids(mesh: &Mesh, children: &[Node], ctx: &mut Ctx) -> Vec<u64> {
         }
     }
     let mut patches = BTreeMap::new();
-    mesh.tris
+    let operands: Vec<u64> = mesh
+        .tris
         .iter()
         .map(|triangle| {
             let mut spans: Vec<usize> = triangle
@@ -1408,6 +1421,49 @@ fn hull_patch_ids(mesh: &Mesh, children: &[Node], ctx: &mut Ctx) -> Vec<u64> {
             spans.sort_unstable();
             spans.dedup();
             intern_patch(&mut patches, spans)
+        })
+        .collect();
+    smooth_components(mesh, &operands)
+}
+
+/// Re-interns `patches` so that each one is split into the pieces a crease of
+/// at least [`crate::export3d::PATCH_MERGE_DEGREES`] separates.
+///
+/// Scoped to hull faces on purpose: a plain primitive's classification already
+/// names its real surfaces, and splitting those would draw every tessellation
+/// facet of a coarse `$fn` cylinder.
+fn smooth_components(mesh: &Mesh, patches: &[u64]) -> Vec<u64> {
+    let limit = super::export3d::PATCH_MERGE_DEGREES.to_radians();
+    let mut union = UnionFind::new(mesh.tris.len());
+    let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+    for (triangle, corners) in mesh.tris.iter().enumerate() {
+        for edge in [
+            [corners[0], corners[1]],
+            [corners[1], corners[2]],
+            [corners[2], corners[0]],
+        ] {
+            let key = (edge[0].min(edge[1]), edge[0].max(edge[1]));
+            let Some(other) = edges.insert(key, triangle) else {
+                continue;
+            };
+            // A zero-area triangle has no normal and reads as a right angle,
+            // which cuts here rather than merging — the conservative answer.
+            if patches[other] == patches[triangle]
+                && patches[triangle] != UNCLASSIFIED_PATCH_ID
+                && dihedral_between(mesh, other, triangle) < limit
+            {
+                union.union(other, triangle);
+            }
+        }
+    }
+    let mut components = BTreeMap::new();
+    (0..mesh.tris.len())
+        .map(|triangle| {
+            if patches[triangle] == UNCLASSIFIED_PATCH_ID {
+                return UNCLASSIFIED_PATCH_ID;
+            }
+            let component = union.find(triangle);
+            intern_patch(&mut components, (patches[triangle], component))
         })
         .collect()
 }
@@ -2359,6 +2415,41 @@ mod tests {
         assert_eq!(generated[0].status, AttributionStatus::Exact);
     }
 
+    /// Keying a hull face by operand alone files a cylinder's two flat caps and
+    /// its curved wall under one patch, and the whole ruled band under another,
+    /// so the 90° rims land inside a patch and never reach the edge derivation.
+    /// A capsule has to come out as ten surfaces: wall, top cap and bottom cap
+    /// per operand, plus the band's top strip, bottom strip and two tangent
+    /// side planes.
+    #[test]
+    fn hulled_capsule_splits_into_its_smooth_surfaces() {
+        use std::collections::BTreeSet;
+
+        let end = |x: f64| Node::Translate {
+            v: [x, 0.0, 0.0],
+            child: Box::new(Node::Cylinder {
+                h: 4.0,
+                r1: 2.5,
+                r2: 2.5,
+                center: false,
+                frags: openrscad_ir::FragmentSpec {
+                    fn_: 32.0,
+                    ..Default::default()
+                },
+            }),
+        };
+        let structured = render_structured_rust_cached(
+            &Node::Hull(vec![end(-8.0), end(8.0)]),
+            &super::super::RustManifoldKernel::new(),
+            &mut GeomCache::new(),
+        )
+        .unwrap();
+        let patches: BTreeSet<_> = structured.exact.source_face_ids.iter().copied().collect();
+
+        assert!(!patches.contains(&UNCLASSIFIED_PATCH_ID));
+        assert_eq!(patches.len(), 10);
+    }
+
     /// Patch identity has to survive whichever Manifold implementation the build
     /// links: `manifold-rust` on Wasm, `manifold-csg` natively. Before the run
     /// channel carried `(surface, patch)` the two disagreed, and a model exported
@@ -2380,6 +2471,10 @@ mod tests {
         };
         let sphere = Node::Sphere { r: 12.0, frags };
 
+        // Hull is deliberately absent here: the two implementations triangulate
+        // a hull differently, so the census of its patches differs even though
+        // the surfaces do not. `both_relation_kernels_draw_the_same_hull_feature_edges`
+        // covers hull at the level that is actually observable — the segments.
         for node in [
             Node::Difference(vec![cube.clone(), sphere.clone()]),
             Node::Intersection(vec![cube, Node::Sphere { r: 13.0, frags }]),

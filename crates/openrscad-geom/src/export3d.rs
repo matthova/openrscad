@@ -680,14 +680,20 @@ pub(crate) fn edge_derivation_count() -> usize {
     EDGE_DERIVATIONS.get()
 }
 
-/// Two adjacent source patches are one surface when the sharpest dihedral
-/// anywhere along their shared boundary stays under this angle. Deciding per
-/// pair rather than per edge keeps a boundary that is sharp somewhere drawn
-/// along its whole length, including where it flattens toward tangency.
+/// Two adjacent source patches are one surface along a shared boundary when the
+/// sharpest dihedral anywhere on that *connected* boundary stays under this
+/// angle. Deciding per component rather than per edge keeps a seam that is sharp
+/// somewhere drawn along its whole length, including where it flattens toward
+/// tangency; deciding per component rather than per patch pair keeps a pair whose
+/// boundary is smooth in one place and creased in another from being judged by
+/// either half alone.
+///
+/// [`crate::structured::hull_patch_ids`] reuses the same angle to split a hull's
+/// operand patches into their smooth pieces, so the split and the rejoin agree.
 ///
 /// Matches the threshold Tau's cross-kernel edge middleware applies to meshes
 /// that arrive without authored lines.
-const PATCH_MERGE_DEGREES: f64 = 30.0;
+pub(crate) const PATCH_MERGE_DEGREES: f64 = 30.0;
 
 /// Geometry with no source topology — `import`, `surface`, and the ruled bands
 /// of `hull` and `minkowski` — has no patches to pair up, so each edge is
@@ -708,14 +714,23 @@ fn dihedral_degrees(mesh: &Mesh, left: usize, right: usize) -> f64 {
     cosine.acos().to_degrees()
 }
 
-/// Groups patches whose shared boundary is nowhere a crease, returning the
-/// representative each patch resolves to.
-fn merged_patches(
+/// Decides, for every edge that separates two distinct classified patches,
+/// whether it is part of a boundary that creases.
+///
+/// The edges of one patch pair are grouped into connected components (joined
+/// through shared vertices) and each component is judged by its own sharpest
+/// dihedral. A pair can bound two surfaces in more than one place — two hulled
+/// strokes sharing a cylinder touch tangentially along one arc and cross at a
+/// notch elsewhere — and only per-component verdicts answer both correctly.
+fn boundary_component_verdicts(
     mesh: &Mesh,
     source_face_ids: &[u64],
     adjacency: &BTreeMap<(u32, u32), Vec<u32>>,
-) -> HashMap<u64, u64> {
-    let mut sharpest: BTreeMap<(u64, u64), f64> = BTreeMap::new();
+) -> HashMap<(u32, u32), bool> {
+    /// One edge of a patch-pair boundary: its two vertices and its dihedral.
+    type BoundaryEdge = ((u32, u32), f64);
+
+    let mut by_pair: BTreeMap<(u64, u64), Vec<BoundaryEdge>> = BTreeMap::new();
     for ((left_vertex, right_vertex), local) in adjacency {
         if local.len() != 2
             || mesh.verts[*left_vertex as usize] == mesh.verts[*right_vertex as usize]
@@ -730,41 +745,42 @@ fn merged_patches(
         {
             continue;
         }
-        let angle = dihedral_degrees(mesh, left, right);
-        let entry = sharpest
+        by_pair
             .entry((left_patch.min(right_patch), left_patch.max(right_patch)))
-            .or_insert(0.0);
-        if angle > *entry {
-            *entry = angle;
+            .or_default()
+            .push((
+                (*left_vertex, *right_vertex),
+                dihedral_degrees(mesh, left, right),
+            ));
+    }
+
+    let mut verdicts = HashMap::new();
+    for edges in by_pair.into_values() {
+        let mut slots: HashMap<u32, usize> = HashMap::new();
+        let mut union = super::structured::UnionFind::new(edges.len() * 2);
+        let mut anchors = Vec::with_capacity(edges.len());
+        for ((left, right), _) in &edges {
+            let next = slots.len();
+            let left = *slots.entry(*left).or_insert(next);
+            let next = slots.len();
+            let right = *slots.entry(*right).or_insert(next);
+            union.union(left, right);
+            anchors.push(left);
+        }
+        let mut sharpest: HashMap<usize, f64> = HashMap::new();
+        for (anchor, (_, angle)) in anchors.iter().zip(&edges) {
+            let component = union.find(*anchor);
+            let entry = sharpest.entry(component).or_insert(0.0);
+            if *angle > *entry {
+                *entry = *angle;
+            }
+        }
+        for (anchor, (edge, _)) in anchors.iter().zip(&edges) {
+            let component = union.find(*anchor);
+            verdicts.insert(*edge, sharpest[&component] >= PATCH_MERGE_DEGREES);
         }
     }
-    if sharpest.is_empty() {
-        return HashMap::new();
-    }
-
-    let mut slots: HashMap<u64, usize> = HashMap::new();
-    let mut patches: Vec<u64> = Vec::new();
-    let mut slot_of = |patch: u64, patches: &mut Vec<u64>| {
-        *slots.entry(patch).or_insert_with(|| {
-            patches.push(patch);
-            patches.len() - 1
-        })
-    };
-    let pairs: Vec<_> = sharpest
-        .iter()
-        .filter(|(_, angle)| **angle < PATCH_MERGE_DEGREES)
-        .map(|((left, right), _)| (slot_of(*left, &mut patches), slot_of(*right, &mut patches)))
-        .collect();
-
-    let mut union = super::structured::UnionFind::new(patches.len());
-    for (left, right) in pairs {
-        union.union(left, right);
-    }
-    patches
-        .iter()
-        .enumerate()
-        .map(|(slot, patch)| (*patch, patches[union.find(slot)]))
-        .collect()
+    verdicts
 }
 
 fn feature_edges(source: MeshSource<'_>, selection: &MeshSelection) -> Vec<[u32; 2]> {
@@ -789,8 +805,7 @@ fn feature_edges(source: MeshSource<'_>, selection: &MeshSelection) -> Vec<[u32;
             adjacency.entry(key).or_default().push(*triangle_id);
         }
     }
-    let roots = merged_patches(mesh, &source.exact.source_face_ids, &adjacency);
-    let resolve = |patch: u64| roots.get(&patch).copied().unwrap_or(patch);
+    let verdicts = boundary_component_verdicts(mesh, &source.exact.source_face_ids, &adjacency);
 
     let mut result = Vec::new();
     for ((a, b), local) in adjacency {
@@ -807,7 +822,9 @@ fn feature_edges(source: MeshSource<'_>, selection: &MeshSelection) -> Vec<[u32;
             if left_patch != super::structured::UNCLASSIFIED_PATCH_ID
                 && right_patch != super::structured::UNCLASSIFIED_PATCH_ID
             {
-                resolve(left_patch) != resolve(right_patch)
+                // Absent from the map means the two faces share a patch, so
+                // there is no boundary here at all.
+                verdicts.get(&(a, b)).copied().unwrap_or(false)
             } else {
                 dihedral_degrees(mesh, left, right) >= RAW_CREASE_DEGREES
             }
@@ -2073,6 +2090,174 @@ mod tests {
             "every hull face should resolve to an operand or a ruled band"
         );
         assert_eq!(patches.len(), 3, "two operand surfaces and one ruled band");
+    }
+
+    /// Every feature segment the exporter would write, in model coordinates,
+    /// deduplicated across edge groups (a boundary edge is emitted once per
+    /// adjacent group).
+    fn feature_segments(structured: &StructuredMesh) -> Vec<[[f64; 3]; 2]> {
+        let compiled = compile_glb(structured);
+        let mut segments: BTreeMap<[[u64; 3]; 2], [[f64; 3]; 2]> = BTreeMap::new();
+        for component in &compiled.components {
+            for group in &component.edge_groups {
+                for edge in feature_edges(group.source, &group.selection) {
+                    let points = edge.map(|vertex| group.source.exact.mesh.verts[vertex as usize]);
+                    let mut key = points.map(|point| point.map(|value| value.to_bits()));
+                    key.sort_unstable();
+                    segments.insert(key, points);
+                }
+            }
+        }
+        segments.into_values().collect()
+    }
+
+    fn stroke(from: [f64; 2], to: [f64; 2], diameter: f64, height: f64) -> Node {
+        let end = |at: [f64; 2]| Node::Translate {
+            v: [at[0], at[1], 0.0],
+            child: Box::new(Node::Cylinder {
+                h: height,
+                r1: diameter / 2.0,
+                r2: diameter / 2.0,
+                center: false,
+                // The plaque's `$fa = 2; $fs = 0.4;` — ~9° wall facets, well
+                // under the merge threshold, so the walls must stay smooth.
+                frags: FragmentSpec {
+                    fa: 2.0,
+                    fs: 0.4,
+                    ..FragmentSpec::default()
+                },
+            }),
+        };
+        Node::Hull(vec![end(from), end(to)])
+    }
+
+    /// A letter "A" of three hulled cylinder pairs, raised on a plate: the
+    /// model that exposed hull patches being classified by operand alone. Its
+    /// top face is the same outline as where it meets the plate, so the rim at
+    /// `z = 9` has to close and to measure the same as the loop at `z = 6`.
+    #[test]
+    fn hulled_letter_draws_a_closed_top_rim_and_no_wall_seams() {
+        let letter = Node::Union(vec![
+            stroke([-9.0, -13.0], [0.0, 11.0], 5.0, 3.1),
+            stroke([9.0, -13.0], [0.0, 11.0], 5.0, 3.1),
+            stroke([-5.5, -3.0], [5.5, -3.0], 4.0, 3.1),
+        ]);
+        let structured = rendered(&Node::Union(vec![
+            Node::Translate {
+                v: [-20.0, -20.0, 0.0],
+                child: Box::new(Node::Cube {
+                    size: [40.0, 40.0, 6.0],
+                    center: false,
+                }),
+            },
+            Node::Translate {
+                v: [0.0, 0.0, 5.9],
+                child: Box::new(letter),
+            },
+        ]));
+        let segments = feature_segments(&structured);
+
+        let on_plate_wall = |segment: &[[f64; 3]; 2]| {
+            segment.iter().all(|point| {
+                (point[0].abs() - 20.0).abs() < 1e-6 || (point[1].abs() - 20.0).abs() < 1e-6
+            })
+        };
+        let in_plane = |segment: &[[f64; 3]; 2], z: f64| {
+            segment.iter().all(|point| (point[2] - z).abs() < 1e-6)
+        };
+        let length = |segment: &[[f64; 3]; 2]| -> f64 {
+            (0..3)
+                .map(|axis| (segment[1][axis] - segment[0][axis]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        };
+        let total = |group: &[&[[f64; 3]; 2]]| group.iter().copied().map(length).sum::<f64>();
+
+        let base: Vec<_> = segments
+            .iter()
+            .filter(|segment| in_plane(segment, 6.0) && !on_plate_wall(segment))
+            .collect();
+        let rim: Vec<_> = segments
+            .iter()
+            .filter(|segment| in_plane(segment, 9.0))
+            .collect();
+
+        // Every rim vertex meets exactly two rim segments: closed loops, and no
+        // chord cutting across a rounded stroke cap (a chord would land two
+        // extra segments on a pair of existing vertices).
+        let mut degrees: BTreeMap<[u64; 3], usize> = BTreeMap::new();
+        for segment in &rim {
+            for point in segment.iter() {
+                *degrees
+                    .entry(point.map(|value| canonical_zero(value).to_bits()))
+                    .or_default() += 1;
+            }
+        }
+        assert!(
+            degrees.values().all(|degree| *degree == 2),
+            "top rim is not a set of closed loops: {:?}",
+            degrees.values().filter(|degree| **degree != 2).count()
+        );
+        let (base_length, rim_length) = (total(&base), total(&rim));
+        assert!(
+            (rim_length - base_length).abs() / base_length < 0.02,
+            "top rim {rim_length} mm should match the base outline {base_length} mm"
+        );
+
+        // The only creases running up a stroke wall are where the crossbar
+        // meets each leg (four) and where the two legs cross at the letter's
+        // inner notch (one). Tangent seams and the arc the two legs share over
+        // the apex cylinder are smooth and must not be drawn.
+        let mut junctions: Vec<i64> = segments
+            .iter()
+            .filter(|segment| {
+                (segment[0][2] - segment[1][2]).abs() > 1e-6 && !on_plate_wall(segment)
+            })
+            .map(|segment| (segment[0][0] * 1e3).round() as i64)
+            .collect();
+        junctions.sort_unstable();
+        assert_eq!(junctions, [-3333, -1833, 0, 1833, 3333]);
+    }
+
+    /// Feature edges have to survive whichever Manifold implementation the
+    /// build links — `manifold-rust` on Wasm, `manifold-csg` natively —
+    /// otherwise a model exported from Tau draws lines the native CLI never
+    /// shows. The two hull *differently* (different triangle counts, and the
+    /// cap disks get chopped into a different number of patch islands), so the
+    /// patch census cannot match; the segments they draw must.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn both_relation_kernels_draw_the_same_hull_feature_edges() {
+        use crate::{render_structured_native_cached, ManifoldKernel};
+
+        let node = Node::Union(vec![
+            stroke([-9.0, -13.0], [0.0, 11.0], 5.0, 4.0),
+            stroke([9.0, -13.0], [0.0, 11.0], 5.0, 4.0),
+        ]);
+        // Micrometres: the two kernels agree on the hull's vertices to about a
+        // nanometre, and quantising absorbs that without hiding a real
+        // difference (the shortest segment here is a 0.4 mm wall facet).
+        let canonical = |structured: &StructuredMesh| {
+            let mut segments: Vec<[[i64; 3]; 2]> = feature_segments(structured)
+                .into_iter()
+                .map(|segment| {
+                    let mut points =
+                        segment.map(|point| point.map(|value| (value * 1e3).round() as i64));
+                    points.sort_unstable();
+                    points
+                })
+                .collect();
+            segments.sort_unstable();
+            segments
+        };
+        let native =
+            render_structured_native_cached(&node, &ManifoldKernel::new(), &mut GeomCache::new())
+                .unwrap();
+
+        let (rust_edges, native_edges) = (canonical(&rendered(&node)), canonical(&native));
+        assert!(!rust_edges.is_empty());
+        assert_eq!(rust_edges.len(), native_edges.len());
+        assert_eq!(rust_edges, native_edges);
     }
 
     #[test]
