@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.2
+
+### Patch Changes
+
+- [#98](https://github.com/matthova/openrscad/pull/98) [`9e458af`](https://github.com/matthova/openrscad/commit/9e458afd77cb7300606edd8e223ddf44cab6b2ad) Thanks [@matthova](https://github.com/matthova)! - Recursion that exceeds the depth limit is now non-fatal, matching OpenSCAD's "Recursion detected calling function/module '…'" behavior. The offending call raises a contained error that aborts its enclosing CSG node, and at the program root the top-level traversal stops at the first such abort: geometry from statements _before_ it still renders, while the offending statement and everything after it are dropped. Models that recurse forever on a corner case — e.g. the Ultimate Parametric Battery Organizer, whose helper recurses without bound on a single-slot row — now render exactly as they do in OpenSCAD (identical bounding box and volume), instead of aborting the whole render or leaving stray triangles behind.
+
+- [#98](https://github.com/matthova/openrscad/pull/98) [`9e458af`](https://github.com/matthova/openrscad/commit/9e458afd77cb7300606edd8e223ddf44cab6b2ad) Thanks [@matthova](https://github.com/matthova)! - Fix stray sliver triangles on the web/desktop-wasm build's CSG output. The pure-Rust Manifold kernel used on `wasm32` (`manifold-rust`) was upgraded 0.9.2 → 0.13.1, which cleans up the triangulation of complex coplanar faces (e.g. a tray top punched with many pockets). Previously such faces could emit zero-area, collinear "spear" triangles and dashed sliver artifacts — most visible on models like the Ultimate Parametric Battery Organizer. The mesh is now closer to the native C++ kernel's (fewer, non-degenerate triangles) with an identical bounding box and volume.
+
 ## 0.10.1
 
 ### Patch Changes
