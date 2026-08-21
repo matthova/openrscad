@@ -18,26 +18,19 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **Twisted extrudes of off-axis or holed profiles triangulate the walls
-  differently.** A twisted wall quad is non-planar, so its two diagonals enclose
-  different volumes. The split now follows the twist direction and contour
-  winding — exact for profiles that straddle the Z axis, still 0.6% high for a
-  hole and 1.3% for a profile translated off the axis. The vertex positions match
-  OpenSCAD exactly in these cases; only the triangulation differs.
+- **Extrudes with non-planar walls triangulate them differently in three
+  cases.** A twisted or non-uniformly scaled wall quad is non-planar, so its two
+  diagonals enclose different volumes. The split follows the twist direction and
+  contour winding — exact for twisted profiles that straddle the Z axis, still
+  0.6% high for a hole, 1.3% for a profile translated off the axis, and 0.13%
+  for a non-uniformly scaled curved profile. In every one of these the vertex
+  positions, slice count and triangle count match OpenSCAD exactly; only which
+  diagonal splits each quad differs.
 
   ```scad
   linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
   linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
-  ```
-
-- **Non-uniform `scale` does not refine the profile or add slices.** OpenSCAD
-  treats a non-uniform scale like a twist — it re-tessellates the outline and
-  adds slices. Alone this is volume-neutral and only changes the triangle count;
-  combined with twist it reads 0.8% high. Uniform scale is unaffected.
-
-  ```scad
-  linear_extrude(height=10, scale=[0.2,2]) square(10);        // 596 tris vs 12
-  linear_extrude(height=7, twist=200, scale=[0.4,1.6]) square([8,5]);
+  $fn=24; linear_extrude(height=10, scale=[0.2,2]) circle(5);
   ```
 
 ## Missing or partial compatibility
@@ -108,9 +101,24 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **92/92**, and BOSL2
+The current gates are `corpus/echo` **27/27**, geometry **94/94**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Non-uniform `scale` refines the profile and adds slices.** OpenSCAD treats
+  a non-uniform scale like a twist: the outline is re-tessellated and extra
+  slices are swept, while a uniform scale keeps every wall planar and refines
+  nothing however far from 1 it is. An edge earns its share of the segment
+  budget by `max(original, scaled)` length, and the slice count comes from how
+  far the worst-placed profile point travels to its scaled position,
+  `ceil(hypot(travel, height) / $fs)`, with `$fn` replacing it outright. This is
+  volume-neutral on its own, so the two corpus cases pin `tris` as well —
+  596 triangles for the scaled square, 12 for the uniform frustum.
+
+  ```scad
+  linear_extrude(height=10, scale=[0.2,2]) square(10);  // 596 triangles, as upstream
+  linear_extrude(height=10, scale=0.5) square(10);      // 12, unrefined
+  ```
 
 - **Unusable export suffixes are rejected.** An unrecognized or missing `-o`
   suffix now exits non-zero and writes nothing, matching OpenSCAD, instead of

@@ -56,12 +56,12 @@ Each manifest entry has exactly one status:
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
 | `xtask echo` | 27/27 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 92/92 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask geom` | 94/94 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 188 surfaces: 117 `verified`, 51
-`implemented` but not yet oracle-proven, 18 `missing`, one warned divergence,
+The executable manifest currently classifies 188 surfaces: 118 `verified`, 51
+`implemented` but not yet oracle-proven, 17 `missing`, one warned divergence,
 and one permanent divergence. Of those, 183 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
@@ -79,7 +79,7 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 
 | id | gap | current effect | first fix |
 |---|---|---|---|
-| F-G3 | `linear_extrude` wall triangulation and non-uniform scale. | The twist refinement rules are closed and oracle-gated. What remains: the non-planar wall quad's diagonal is still wrong for off-axis (+1.3%) and holed (+0.6%) profiles, and non-uniform `scale` does not refine the profile or add slices (+0.8% combined with twist). | Identify the per-quad diagonal criterion; model the scale-driven refinement. Vertex positions already match, so both are triangulation/count problems, not placement ones. |
+| F-G3 | `linear_extrude` wall triangulation. | The twist and non-uniform-scale refinement rules are both closed and oracle-gated. What remains is only the non-planar wall quad's diagonal: off-axis (+1.3%), holed (+0.6%), and non-uniformly scaled curved (+0.13%) profiles. | Identify the per-quad criterion. Vertex positions, slice counts and triangle counts already match in all three, so this is purely which diagonal splits each quad. |
 
 ### P1 — missing core surface or broad fidelity work
 
@@ -181,7 +181,7 @@ M10 is complete only when all of the following are CI-enforced:
 - `COMPAT.md`, completion metadata, and the manifest cannot drift without a CI
   failure.
 
-Passing 92/92 or 505/513 remains useful evidence, but completion is defined by
+Passing 94/94 or 505/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
 
 ## Completed during the initial Track F pass

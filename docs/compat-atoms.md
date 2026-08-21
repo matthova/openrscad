@@ -73,38 +73,25 @@ translated away from it, or for a hole.
 | `linear_extrude(height=10,twist=90) difference(){square(10);translate([3,3])square(4);}` | 847.626 | 842.424 | +0.61% |
 | `linear_extrude(height=10,twist=90,slices=4) translate([20,0]) square(10);` | 987.383 | 1000.14 | +1.29% |
 | `linear_extrude(height=10,twist=90,slices=4,segments=8) translate([20,0]) square(10);` | 1006.52 | 1038.41 | +3.17% |
+| `$fn=24; linear_extrude(height=10,scale=[0.2,2]) circle(5);` | 646.225 | 647.048 | +0.13% |
 
-The vertex sets are *identical* to OpenSCAD's in these cases — only the
-triangulation differs — so the segment and slice counts are right and this is
-purely the diagonal rule. No single global rule fits: forcing either diagonal,
-or choosing the shorter one per quad, is worse overall, and on the holed case
-OpenSCAD disagrees with our choice on only half the hole's quads. It evidently
-uses a local criterion that has not been identified.
+A third case joined this atom when the scale refinement landed: a non-uniformly
+scaled *curved* profile, `$fn=24; linear_extrude(height=10, scale=[0.2,2])
+circle(5);`, is 0.127% off (646.225 vs 647.048). Its bottom-cap points, slice
+count and triangle count are all identical to OpenSCAD's, so non-planar walls
+from *scale* need the same unknown criterion that non-planar walls from twist
+do — the atom is not twist-specific.
+
+The vertex sets are *identical* to OpenSCAD's in every one of these cases — only
+the triangulation differs — so the segment and slice counts are right and this
+is purely the diagonal rule. No single global rule fits: forcing either
+diagonal, or choosing the shorter one per quad, is worse overall, and on the
+holed case OpenSCAD disagrees with our choice on only half the hole's quads. It
+evidently uses a local criterion that has not been identified.
 
 class S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`. Closes
 when the per-quad criterion is identified, gated by holed and off-axis twisted
 corpus cases.
-
-### A-G10 — non-uniform `scale` does not refine the profile or add slices
-
-Non-uniform scaling makes the walls non-planar in the same way twist does, and
-OpenSCAD refines for it. OpenRSCAD only refines for twist.
-
-| repro | OpenSCAD | OpenRSCAD |
-|---|---|---|
-| `linear_extrude(height=10, scale=[0.2,2]) square(10);` | 596 tris (30 profile segments, 9 slices) | 12 tris (4 segments, 1 slice) |
-| `linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true,$fa=8,$fs=1.5) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
-
-Scale alone is volume-neutral (the walls stay ruled surfaces, so 833.333 either
-way) and only the triangle count differs; combined with twist it moves the
-volume. Uniform scale correctly refines nothing.
-
-Partially characterised: the slice count is
-`ceil(hypot(max travel of a profile point, height) / $fs)`, verified at four
-heights and `$fs` values. The per-edge refinement uses `max(original, scaled)`
-edge length rather than the twist rule's budget apportionment, and the combined
-twist+scale case does not yet fit either. class S · gap `F-G3` · manifest
-`module.linear_extrude.scale_refinement`.
 
 ## Class W / P — visible differences
 
@@ -218,6 +205,46 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-G10 — non-uniform `scale` did not refine the profile — **closed**
+
+| repro | OpenSCAD | before | now |
+|---|---|---|---|
+| `linear_extrude(height=10, scale=[0.2,2]) square(10);` | 596 tris (30 segments, 9 slices) | 12 tris (4 segments, 1 slice) | 596 tris |
+| `linear_extrude(height=10, scale=[2,1]) square([10,3]);` | 428 tris | 12 tris | 428 tris |
+| `linear_extrude(height=10, scale=0.5) square(10);` (uniform) | 12 tris | 12 tris | 12 tris |
+
+was S · gap `F-G3` · manifest `module.linear_extrude.scale_refinement`, now
+`verified`. Guarded by `corpus/geom/ext_linear_scale_nonuniform.scad` and
+`ext_linear_scale_uniform_tris.scad`.
+
+A non-uniform scale bends the walls exactly as a twist does, and upstream
+refines for it; a *uniform* scale keeps every wall planar — a frustum's faces
+are flat — so it refines nothing however far from 1 it is. The rules, measured
+the same way as the twist family:
+
+- **Refinement** reuses the twist machinery, but an edge earns its share of the
+  budget by `max(original, scaled)` length: under `scale=[1,2]` the y-aligned
+  edges stretch to 20 and take twice the share of the x-aligned ones. The `$fs`
+  cap uses the same stretched length, which is why raising `$fs` from 2 to 1
+  changes nothing on a square — the budget, not `$fs`, is binding.
+- **Slices** come from how far the worst-placed profile point travels to its
+  scaled position: `ceil(hypot(travel, height) / $fs)`, matched at four heights
+  and `$fs` values. `$fa` plays no part — there is no angle to bound — and `$fn`
+  replaces the count outright. Twist and scale each propose a count and the
+  larger wins.
+
+**This is volume-neutral**, because the walls stay ruled surfaces: the scaled
+square is 833.333 either way. Only the tessellation changes, so both corpus
+cases pin `tris` — the first use of the `// oracle: tris` directive. Blessing
+them turned up a wrinkle worth recording: a case must hold **one** top-level
+object, because several are unioned and the kernel merges the coplanar wall
+facets straight back together, collapsing 596 triangles to 12 and hiding the
+very thing the case exists to check.
+
+What did *not* close: a non-uniformly scaled **curved** profile is still 0.13%
+off. Its cap points, slices and triangle count all match, so that residue is the
+wall-diagonal rule and now sits under A-G09.
 
 ### A-X01, A-X02 — unusable export suffixes silently wrote binary STL — **closed**
 
@@ -417,12 +444,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 2 | A-G09, A-G10 |
+| S — silent | 1 | A-G09 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 16 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 10 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-L08, A-X02 |
+| closed | 11 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-G10, A-L08, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the
