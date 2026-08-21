@@ -18,19 +18,14 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **Extrudes with non-planar walls triangulate them differently in three
-  cases.** A twisted or non-uniformly scaled wall quad is non-planar, so its two
-  diagonals enclose different volumes. The split follows the twist direction and
-  contour winding — exact for twisted profiles that straddle the Z axis, still
-  0.6% high for a hole, 1.3% for a profile translated off the axis, and 0.13%
-  for a non-uniformly scaled curved profile. In every one of these the vertex
-  positions, slice count and triangle count match OpenSCAD exactly; only which
-  diagonal splits each quad differs.
+- **`linear_extrude` combining twist with a non-uniform scale refines the
+  profile differently.** Twist alone and non-uniform scale alone each have a
+  measured, exact rule, but applying both at once weights the profile edges the
+  *other* way round upstream — the edge that shrinks earns more segments, not
+  fewer — which no rule yet explains. The mesh reads 0.8% high in volume.
 
   ```scad
-  linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
-  linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
-  $fn=24; linear_extrude(height=10, scale=[0.2,2]) circle(5);
+  linear_extrude(height=7, twist=200, scale=[0.4,1.6], center=true) square([8,5]);
   ```
 
 ## Missing or partial compatibility
@@ -101,9 +96,25 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **94/94**, and BOSL2
+The current gates are `corpus/echo` **27/27**, geometry **97/97**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Non-planar extrude walls are split along the shorter diagonal.** A twisted
+  or non-uniformly scaled wall quad is not planar, so its two diagonals enclose
+  different volumes — on a 32-gon twisted by one vertex step per slice, one
+  reproduces the prism exactly and the other cuts 1.3% off. OpenSCAD picks the
+  shorter one per quad, falling back to the wall's lean (the twist direction,
+  flipped for a hole) only when the two are exactly equal, which is the common
+  case on symmetric profiles. Matched per quad against the oracle over 3142
+  quads. This closed the last three known silent geometry differences at once:
+  holed profiles (was 0.6% high), profiles translated off the Z axis (1.3%), and
+  non-uniformly scaled curved profiles (0.13%).
+
+  ```scad
+  linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
+  linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
+  ```
 
 - **Non-uniform `scale` refines the profile and adds slices.** OpenSCAD treats
   a non-uniform scale like a twist: the outline is re-tessellated and extra

@@ -61,37 +61,30 @@ Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
 These are the release blockers. Each produces a wrong answer with no warning on
 stdout or stderr.
 
-### A-G09 — twisted extrudes of off-axis or holed profiles pick the wrong wall diagonal
+### A-G11 — twist combined with a non-uniform scale refines the profile differently
 
-A twisted wall quad is not planar, so its two diagonals enclose different
-volumes. The split now follows the twist direction and the contour winding,
-which is exact for profiles that straddle the Z axis — but not yet for a profile
-translated away from it, or for a hole.
+Twist alone and non-uniform scale alone each have an exact, measured rule (A-G07,
+A-G10). Applying both at once does not follow either.
 
-| repro | OpenSCAD | OpenRSCAD | delta |
-|---|---:|---:|---:|
-| `linear_extrude(height=10,twist=90) difference(){square(10);translate([3,3])square(4);}` | 847.626 | 842.424 | +0.61% |
-| `linear_extrude(height=10,twist=90,slices=4) translate([20,0]) square(10);` | 987.383 | 1000.14 | +1.29% |
-| `linear_extrude(height=10,twist=90,slices=4,segments=8) translate([20,0]) square(10);` | 1006.52 | 1038.41 | +3.17% |
-| `$fn=24; linear_extrude(height=10,scale=[0.2,2]) circle(5);` | 646.225 | 647.048 | +0.13% |
+| repro | OpenSCAD | OpenRSCAD |
+|---|---:|---:|
+| `$fa=8;$fs=1.5; linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
 
-A third case joined this atom when the scale refinement landed: a non-uniformly
-scaled *curved* profile, `$fn=24; linear_extrude(height=10, scale=[0.2,2])
-circle(5);`, is 0.127% off (646.225 vs 647.048). Its bottom-cap points, slice
-count and triangle count are all identical to OpenSCAD's, so non-planar walls
-from *scale* need the same unknown criterion that non-planar walls from twist
-do — the atom is not twist-specific.
+Upstream weights the profile edges the *opposite* way from the pure-scale rule:
+under `twist=90, scale=[1,2]` on a square the x-aligned edge — the one that does
+**not** stretch — takes 9 segments and the y-aligned edge that stretches to 20
+takes 6. Pure scale gives 5 and 10. Confirmed from raw cap coordinates, so it is
+not an indexing artifact. `max(original, scaled)` length, `original + scaled`,
+and their reciprocals were all fitted and all fail on at least one of
+`scale=[1,2]` and `scale=[0.2,2]`, which disagree even though their
+`max(original, scaled)` values are identical — so the rule depends on the scale
+factors themselves, not just the resulting lengths.
 
-The vertex sets are *identical* to OpenSCAD's in every one of these cases — only
-the triangulation differs — so the segment and slice counts are right and this
-is purely the diagonal rule. No single global rule fits: forcing either
-diagonal, or choosing the shorter one per quad, is worse overall, and on the
-holed case OpenSCAD disagrees with our choice on only half the hole's quads. It
-evidently uses a local criterion that has not been identified.
-
-class S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`. Closes
-when the per-quad criterion is identified, gated by holed and off-axis twisted
-corpus cases.
+The implementation deliberately keeps the twist-only lengths for this
+combination rather than encoding a guess. class S · gap `F-G3` · manifest
+`module.linear_extrude.scale_refinement` (needs its own entry). Closes when the
+combined weighting is identified; the per-quad harness used for A-G09 is the
+tool for it, applied to segment counts instead of diagonals.
 
 ## Class W / P — visible differences
 
@@ -205,6 +198,51 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-G09 — non-planar wall quads used the wrong diagonal — **closed**
+
+| repro | OpenSCAD | before | now |
+|---|---:|---:|---|
+| twisted square with a hole | 847.626 | 842.424 (+0.61%) | 847.626 |
+| twisted square, two holes | 3762.287 | 3753.624 (+0.23%) | 3762.287 |
+| twisted square off the axis | 987.383 | 1000.14 (+1.29%) | 987.383 |
+| …with `segments=8` | 1006.52 | 1038.41 (+3.17%) | 1006.52 |
+| `$fn=24` circle, `scale=[0.2,2]` | 646.225 | 647.048 (+0.13%) | 646.225 |
+
+was S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`, now
+`verified`. Guarded by `corpus/geom/ext_linear_twist_hole.scad`,
+`ext_linear_twist_offaxis.scad` and `ext_linear_scale_round.scad`, all with
+`tris` pinned.
+
+**The rule: split each quad along its shorter diagonal; when the two are exactly
+equal, fall back to the wall's lean** (the twist direction, flipped for a hole
+because its indices run the other way round).
+
+This atom resisted two earlier attempts, and the reason is worth recording,
+because the failure was one of method rather than of the hypothesis. Both
+attempts guessed a *global* rule and scored it by comparing final volumes — and
+"shorter diagonal" was tried and rejected that way, because it made things
+worse. It was the right rule all along: ties are pervasive (any profile
+symmetric about the sweep leaves the two diagonals exactly equal — the plain
+twisted square is 160 quads, *all* ties), and resolving them arbitrarily
+corrupted the majority of quads while the minority that actually differ were
+being fixed.
+
+What broke it open was measuring the *dependent variable directly* instead of a
+downstream aggregate: reconstructing the ring/index structure and reading which
+diagonal OpenSCAD used **per quad**, then scoring candidate predicates against
+3142 individual choices spanning positive and negative twist, off-axis profiles,
+pure scale, and a 720° sweep. With that signal the pattern was immediate — the
+choice is identical across layers and varies only by profile edge — and the
+composite rule scored 3142/3142 on the first try.
+
+Two details the per-quad data settled that volume comparisons never could:
+
+- the base ring must be taken from the *oracle's own output*, not assumed:
+  OpenSCAD re-refines even an explicit `polygon()`, so a hand-built profile
+  silently desynchronises the index mapping and every "measurement" after that
+  is noise;
+- the tie-break needs the winding term, so a hole leans opposite its outer.
 
 ### A-G10 — non-uniform `scale` did not refine the profile — **closed**
 
@@ -444,12 +482,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 1 | A-G09 |
+| S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 16 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 11 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-G10, A-L08, A-X02 |
+| closed | 12 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-G09, A-G10, A-L08, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

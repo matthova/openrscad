@@ -1163,13 +1163,13 @@ pub fn linear_extrude(
 
     // Walls: each contour range forms a loop at every layer.
     //
-    // A twisted quad is not planar, so its two diagonals enclose *different*
-    // volumes — on a 32-gon twisted by exactly one vertex step, one diagonal
-    // reproduces the prism exactly and the other cuts ~1.3% off it. Which one
-    // is correct depends on how the wall leans, i.e. on the twist direction
-    // and on whether this contour is an outer (CCW) or a hole (CW), since a
-    // hole's indices run the other way round. Split along `a-c` when those
-    // agree and `b-d` when they do not.
+    // A twisted or non-uniformly scaled quad is not planar, so its two diagonals
+    // enclose *different* volumes — on a 32-gon twisted by exactly one vertex
+    // step, one reproduces the prism exactly and the other cuts ~1.3% off it.
+    // OpenSCAD splits along the **shorter** diagonal, falling back to the wall's
+    // lean only when the two are equal. Matched per quad against the oracle over
+    // 3142 quads spanning positive and negative twist, off-axis profiles, pure
+    // scale, and a 720-degree sweep.
     for &(start, len) in &ranges {
         let area2: f64 = (0..len)
             .map(|k| {
@@ -1179,14 +1179,28 @@ pub fn linear_extrude(
             })
             .sum();
         let ccw = area2 >= 0.0;
+        // Ties are pervasive — any profile symmetric about the sweep leaves the
+        // two diagonals exactly equal — and they break by which way the wall
+        // leans: the twist direction, flipped for a hole because its indices run
+        // the other way round.
         let lean_ac = (twist >= 0.0) == ccw;
+        let dsq = |p: u32, q: u32| {
+            let (p, q) = (mesh.verts[p as usize], mesh.verts[q as usize]);
+            (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)
+        };
         for layer in 0..slices {
             for k in 0..len {
                 let i = start + k;
                 let j = start + (k + 1) % len;
                 let (a, b) = (ring(layer, i), ring(layer, j));
                 let (cc, d) = (ring(layer + 1, j), ring(layer + 1, i));
-                if lean_ac {
+                let (ac, bd) = (dsq(a, cc), dsq(b, d));
+                let split_ac = if (ac - bd).abs() <= 1e-9 * ac.max(bd) {
+                    lean_ac
+                } else {
+                    ac < bd
+                };
+                if split_ac {
                     mesh.tris.push([a, b, cc]);
                     mesh.tris.push([a, cc, d]);
                 } else {
@@ -1635,8 +1649,11 @@ mod extrude_refinement_tests {
         );
     }
 
+    /// The shorter diagonal is not merely a heuristic here: on a 32-gon twisted
+    /// by exactly one vertex step per slice the solid is still a prism, and only
+    /// one diagonal reproduces it. Both twist directions must land on it.
     #[test]
-    fn twisted_walls_pick_the_diagonal_that_matches_the_lean() {
+    fn twisted_walls_pick_the_shorter_diagonal() {
         // A 32-gon twisted by exactly one vertex step per slice is still a
         // prism; the wrong diagonal shaves ~1.3% off its volume.
         let n = 32;
