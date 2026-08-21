@@ -56,13 +56,13 @@ Each manifest entry has exactly one status:
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
 | `xtask echo` | 26/26 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 82/82 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask geom` | 90/90 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 503/513 blocks | broad real-library function behavior | all BOSL2 modules or the ten expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 182 surfaces: 107 `verified`, 50
-`implemented` but not yet oracle-proven, 23 `missing`, one warned divergence,
-and one permanent divergence. Of those, 177 belong to the 2021.01 core or its
+The executable manifest currently classifies 186 surfaces: 110 `verified`, 50
+`implemented` but not yet oracle-proven, 24 `missing`, one warned divergence,
+and one permanent divergence. Of those, 181 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
 
@@ -80,7 +80,8 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 | id | gap | current effect | first fix |
 |---|---|---|---|
 | F-G2 | Invalid primitive dimensions are accepted. | Negative cube/square dimensions, cylinder height/radii, and extrusion height produce solids where OpenSCAD produces no geometry. | Add shared validation, matching warnings, and empty-node behavior with oracle cases. |
-| F-G3 | `linear_extrude` omits documented refinement behavior. | `segments` is ignored, omitted `slices` does not follow `$fn`, and the 2D profile is never re-tessellated under twist — the last is not avoided by pinning `slices` and dominates the error (up to +16.4% volume). | Implement the documented slice/refinement rules and add twist × `$fn` × `segments` corpus cases, including a fixed-`slices` × varying-`$fn` matrix. |
+| F-G3 | `linear_extrude` wall triangulation and non-uniform scale. | The twist refinement rules are closed and oracle-gated. What remains: the non-planar wall quad's diagonal is still wrong for off-axis (+1.3%) and holed (+0.6%) profiles, and non-uniform `scale` does not refine the profile or add slices (+0.8% combined with twist). | Identify the per-quad diagonal criterion; model the scale-driven refinement. Vertex positions already match, so both are triangulation/count problems, not placement ones. |
+| F-L7 | `$`-prefixed call arguments are not dynamically scoped to children. | `linear_extrude($fn=32) circle(5)` renders the circle from `$fa`/`$fs`, silently changing the resolution of every child of such a call. | Push `$` arguments onto the dynamic frame for the callee's children. |
 | F-X1 | Unsupported export suffixes silently produce binary STL. | `-o out.csg` writes STL bytes named `.csg`, and any unrecognized suffix does the same; OpenSCAD rejects an invalid suffix. | Reject unknown suffixes; serialize the operation tree for `.csg` (see F-I4). |
 
 ### P1 — missing core surface or broad fidelity work
@@ -135,7 +136,9 @@ Land one behavior family per commit, each with a black-box oracle repro:
 
 ### F2 — close geometry operations
 
-1. F-G3 `linear_extrude` refinement.
+1. ~~F-G3 `linear_extrude` refinement.~~ The twist rules (`segments=`, implicit
+   `slices`, and profile re-tessellation) are complete and oracle-gated; the
+   wall-diagonal and non-uniform-scale remainders are re-scoped above.
 2. ~~F-G4 `rotate_extrude` side/sweep rules.~~ Complete.
 3. ~~F-G6 kernel-aware vector projection export.~~ Complete across CLI, wasm/npm,
    LSP, and desktop.

@@ -82,8 +82,17 @@ pub enum Node {
         twist: f64,
         /// Scale of the top relative to the bottom.
         scale: Vec2,
-        /// Number of intermediate layers (>=1).
-        slices: u32,
+        /// Explicit `slices=` (>=1). `None` derives the count from the twist,
+        /// the profile's radius, and `frags` — it needs the evaluated profile,
+        /// so the geometry layer resolves it.
+        slices: Option<u32>,
+        /// Explicit `segments=`: subdivide each profile outline into this many
+        /// pieces. 0 means unset, in which case `frags` drives the refinement
+        /// (and only when twisting).
+        segments: u32,
+        /// `$fn`/`$fa`/`$fs` at the call site, for the profile refinement and
+        /// the implicit slice count.
+        frags: FragmentSpec,
         child: Box<Node>,
     },
     RotateExtrude {

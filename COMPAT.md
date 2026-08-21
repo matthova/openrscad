@@ -28,15 +28,36 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   linear_extrude(height=-5) square(2);
   ```
 
-- **Linear-extrusion refinement differs.** `linear_extrude(segments=)` is ignored,
-  omitted `slices` does not follow `$fn`, and the 2D profile is never re-tessellated
-  under twist. The last part is not avoided by pinning `slices`: with
-  `slices=3` fixed, OpenSCAD's volume moves with `$fn`/`$fa`/`$fs` (988.7 → 972.0 →
-  963.7) while OpenRSCAD stays at 1122.0, up to 16% high.
+- **Twisted extrudes of off-axis or holed profiles triangulate the walls
+  differently.** A twisted wall quad is non-planar, so its two diagonals enclose
+  different volumes. The split now follows the twist direction and contour
+  winding — exact for profiles that straddle the Z axis, still 0.6% high for a
+  hole and 1.3% for a profile translated off the axis. The vertex positions match
+  OpenSCAD exactly in these cases; only the triangulation differs.
 
   ```scad
-  linear_extrude(height=10, twist=90, $fn=40) square(10);     // 1001.1 vs 1074.9
-  linear_extrude(height=10, twist=90, slices=3, $fa=3, $fs=0.5) square(10);
+  linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
+  linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
+  ```
+
+- **Non-uniform `scale` does not refine the profile or add slices.** OpenSCAD
+  treats a non-uniform scale like a twist — it re-tessellates the outline and
+  adds slices. Alone this is volume-neutral and only changes the triangle count;
+  combined with twist it reads 0.8% high. Uniform scale is unaffected.
+
+  ```scad
+  linear_extrude(height=10, scale=[0.2,2]) square(10);        // 596 tris vs 12
+  linear_extrude(height=7, twist=200, scale=[0.4,1.6]) square([8,5]);
+  ```
+
+- **`$fn`/`$fa`/`$fs` passed as call arguments do not reach children.** A
+  `$`-prefixed argument binds for the call itself but is not pushed onto the
+  dynamic frame its children evaluate in, so the child resolves its own
+  fragments from the enclosing scope instead.
+
+  ```scad
+  linear_extrude(height=1, $fn=32) circle(5);   // 16-gon here, 32-gon upstream
+  $fn = 32; linear_extrude(height=1) circle(5); // both correct
   ```
 
 - **Unsupported export suffixes silently produce binary STL.** `-o out.csg` writes
@@ -116,9 +137,25 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **26/26**, geometry **82/82**, and BOSL2
+The current gates are `corpus/echo` **26/26**, geometry **90/90**, and BOSL2
 **503/513** with ten explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`linear_extrude` refinement under twist.** `segments=` is honoured, the
+  implicit slice count follows `$fn`/`$fa`/`$fs`, and the 2D profile is
+  re-tessellated before a twisted sweep. Previously these read 6–16% high in
+  volume; across an 18-case matrix, cases outside the 0.1% oracle tolerance went
+  from 15/18 to 2/18 (the rest is tracked as the wall-diagonal and non-uniform
+  scale entries above). The rules, derived black-box from OpenSCAD 2024.12.17:
+  each contour gets a segment budget (`segments=`, else `$fn`, else `360/$fa`)
+  apportioned across its edges by length, with a one-segment floor per edge and
+  a `ceil(len/$fs)` per-edge cap; the slice count is the tighter of the `$fa`
+  per-slice twist limit and the `$fs` helical-travel limit. Gated by
+  `corpus/geom/ext_linear_twist*.scad` and `ext_linear_segments*.scad`.
+
+  ```scad
+  linear_extrude(height=10, twist=90, slices=3, $fa=3, $fs=0.5) square(10);
+  ```
 
 - **`$preview` follows the render path.** Evaluation mode is now an explicit
   input rather than a hardcoded `true`, so a script that branches on `$preview`

@@ -82,59 +82,67 @@ warning) for every non-positive dimension, with one corpus case per primitive.
 Track these as four atoms rather than one: they live in different constructors
 and a single fix is easy to land for three of them and miss the fourth.
 
-### A-G05 — `linear_extrude(segments=)` is accepted and ignored
+### A-G09 — twisted extrudes of off-axis or holed profiles pick the wrong wall diagonal
+
+A twisted wall quad is not planar, so its two diagonals enclose different
+volumes. The split now follows the twist direction and the contour winding,
+which is exact for profiles that straddle the Z axis — but not yet for a profile
+translated away from it, or for a hole.
+
+| repro | OpenSCAD | OpenRSCAD | delta |
+|---|---:|---:|---:|
+| `linear_extrude(height=10,twist=90) difference(){square(10);translate([3,3])square(4);}` | 847.626 | 842.424 | +0.61% |
+| `linear_extrude(height=10,twist=90,slices=4) translate([20,0]) square(10);` | 987.383 | 1000.14 | +1.29% |
+| `linear_extrude(height=10,twist=90,slices=4,segments=8) translate([20,0]) square(10);` | 1006.52 | 1038.41 | +3.17% |
+
+The vertex sets are *identical* to OpenSCAD's in these cases — only the
+triangulation differs — so the segment and slice counts are right and this is
+purely the diagonal rule. No single global rule fits: forcing either diagonal,
+or choosing the shorter one per quad, is worse overall, and on the holed case
+OpenSCAD disagrees with our choice on only half the hole's quads. It evidently
+uses a local criterion that has not been identified.
+
+class S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`. Closes
+when the per-quad criterion is identified, gated by holed and off-axis twisted
+corpus cases.
+
+### A-G10 — non-uniform `scale` does not refine the profile or add slices
+
+Non-uniform scaling makes the walls non-planar in the same way twist does, and
+OpenSCAD refines for it. OpenRSCAD only refines for twist.
+
+| repro | OpenSCAD | OpenRSCAD |
+|---|---|---|
+| `linear_extrude(height=10, scale=[0.2,2]) square(10);` | 596 tris (30 profile segments, 9 slices) | 12 tris (4 segments, 1 slice) |
+| `linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true,$fa=8,$fs=1.5) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
+
+Scale alone is volume-neutral (the walls stay ruled surfaces, so 833.333 either
+way) and only the triangle count differs; combined with twist it moves the
+volume. Uniform scale correctly refines nothing.
+
+Partially characterised: the slice count is
+`ceil(hypot(max travel of a profile point, height) / $fs)`, verified at four
+heights and `$fs` values. The per-edge refinement uses `max(original, scaled)`
+edge length rather than the twist rule's budget apportionment, and the combined
+twist+scale case does not yet fit either. class S · gap `F-G3` · manifest
+`module.linear_extrude.scale_refinement`.
+
+### A-L08 — `$fn`/`$fa`/`$fs` passed as call arguments do not reach children
 
 | | |
 |---|---|
-| repro A | `linear_extrude(height=10, segments=8) square(10);` |
-| | OpenSCAD 28 triangles · OpenRSCAD 12 triangles (volume 1000 both) |
-| repro B | `linear_extrude(height=10, twist=90, slices=4, segments=8) square(10);` |
-| | OpenSCAD volume **1038.41**, 76 triangles · OpenRSCAD **1102.19**, 36 triangles |
-| delta | +6.1% volume once twist is involved; profile silently under-tessellated |
-| class | S · gap `F-G3` · manifest `module.linear_extrude.segments` |
-| closes when | `segments` subdivides the profile perimeter, oracle-gated with and without twist |
+| repro | `linear_extrude(height=1, $fn=32) circle(5);` |
+| OpenSCAD | the circle sees `$fn=32` → 32-gon, area **78.036** |
+| OpenRSCAD | the circle falls back to `$fa`/`$fs` → 16-gon, area **76.537** (−1.9%) |
+| class | S · gap `F-L7` · manifest `syntax.arguments.special_variable_scope` |
+| closes when | a `$`-prefixed argument to a module call is pushed onto the dynamic frame for that call's children |
 
-Repro A shows the parameter is ignored even where it is volume-neutral — worth
-keeping as its own case, because a fix that only handles the twisted path would
-still pass a volume-only assertion.
-
-### A-G06 — omitted `slices` ignores `$fn`/`$fa`/`$fs`
-
-| repro (`linear_extrude(height=10, twist=90, …) square(10);`) | OpenSCAD | OpenRSCAD |
-|---|---:|---:|
-| defaults | 1006.60 (356 tris) | 1074.91 (52 tris) |
-| `$fn=8` | 1020.22 (44 tris) | 1074.91 (52 tris) |
-| `$fn=40` | 1001.11 (876 tris) | 1074.91 (52 tris) |
-
-OpenRSCAD returns the *same* mesh in all three cases: its default slice count is
-derived from the twist angle alone and never consults the fragment variables.
-Delta up to **+7.4%** volume. class S · gap `F-G3` · manifest
-`module.linear_extrude.implicit_slices`.
-
-Closes when the implicit slice count follows the documented `$fn`/`$fa`/`$fs`
-rule, gated by a twist × fragment-variable corpus matrix.
-
-### A-G07 — the profile perimeter is never refined under twist
-
-Distinct from A-G05 and A-G06, and not yet recorded in `COMPAT.md`: even with
-`slices` given explicitly, OpenSCAD re-tessellates the *2D profile* according to
-the fragment variables before sweeping it, and OpenRSCAD does not.
-
-| repro (`linear_extrude(height=10, twist=90, slices=3, …) square(10);`) | OpenSCAD | OpenRSCAD |
-|---|---:|---:|
-| defaults | 988.675 (156 tris) | 1122.01 (28 tris) |
-| `$fn=8` | 1038.68 (60 tris) | 1122.01 (28 tris) |
-| `$fn=40` | 972.008 (316 tris) | 1122.01 (28 tris) |
-| `$fa=3, $fs=0.5` | 963.675 (636 tris) | 1122.01 (28 tris) |
-
-OpenSCAD's volume moves with refinement while OpenRSCAD's is pinned at 1122.01 —
-**up to +16.4%**. This is the dominant error term in the twisted-extrude family,
-and pinning `slices` (the obvious workaround for A-G06) does not avoid it.
-
-class S · gap `F-G3` · manifest `module.linear_extrude.implicit_slices` (shared
-with A-G06; this atom warrants its own entry). Closes when profile refinement is
-applied independently of the slice count, gated by the fixed-`slices` ×
-varying-`$fn` matrix above.
+`$fn=32; linear_extrude(height=1) circle(5);` (outer variable) and
+`circle(5,$fn=32)` (on the child itself) are both correct, so this is specific to
+the argument form. OpenSCAD scopes a `$` argument dynamically over the callee's
+children; we bind it only for the call itself. Found while measuring A-G07 —
+it is an evaluator scoping bug, not a geometry one, and it silently changes the
+resolution of every child of such a call.
 
 ### A-X01 — `-o out.csg` silently writes binary STL
 
@@ -278,6 +286,58 @@ golden both exist.
 
 ## Closed
 
+### A-G05, A-G06, A-G07 — `linear_extrude` refinement under twist — **closed**
+
+Three atoms in one code path, all silent volume errors, all now exact against
+OpenSCAD 2024.12.17:
+
+| atom | was | now |
+|---|---|---|
+| A-G05 `segments=` accepted and ignored | +6.1% | exact |
+| A-G06 omitted `slices` ignores `$fn`/`$fa`/`$fs` | +7.4% | exact |
+| A-G07 profile never re-tessellated under twist | +16.4% | exact |
+
+Measured across an 18-case matrix, cases outside the 0.1% oracle tolerance went
+from **15/18 to 2/18**; the two that remain (A-G09, A-G10) improved from 6.5% and
+7.9% to 0.61% and 0.77%.
+
+| repro | oracle | before | after |
+|---|---:|---:|---:|
+| `twist=90` defaults | 1006.601 | 1074.915 (+6.8%) | 1006.601 |
+| `twist=90, $fn=40` | 1001.111 | 1074.915 (+7.4%) | 1001.111 |
+| `twist=90, slices=3, $fa=3, $fs=0.5` | 963.675 | 1122.009 (+16.4%) | 963.675 |
+| `twist=180, $fa=6, $fs=1` on `square([10,3])` | 301.717 | 343.611 (+13.9%) | 301.717 |
+| `twist=-90` | 1006.601 | 902.369 (−10.4%) | 1006.601 |
+| `twist=720, $fa=6, $fs=1` | 243.133 | 271.783 (+11.8%) | 243.133 |
+
+Guarded by `corpus/geom/ext_linear_twist{,_fn,_profile,_neg,_round,_shape}.scad`
+and `ext_linear_segments{,_twist}.scad`, plus unit tests in
+`crates/openrscad-geom/src/shape2d.rs` that pin the derived rules without needing
+the oracle binary.
+
+The three rules, each derived black-box by exporting meshes and counting the
+points on every profile edge (no OpenSCAD source was read), then validated at
+130/130 randomized cases before any code was written:
+
+- **Profile refinement.** Each closed contour gets a budget — `segments=` if
+  given, else `$fn`, else `360/$fa` — apportioned across its edges in proportion
+  to length. An edge whose share is under one segment takes one anyway and
+  leaves the pool, shrinking the budget for the rest. Whole segments go out
+  first, the remainder to the largest fractional shares; a tie wider than what
+  is left goes unawarded, which is why an equilateral outline rounds *down*
+  (a square at `$fa=12` gets 28 segments, not 30). `$fs` then caps each edge at
+  `ceil(len/$fs)`, but only when `$fa` set the budget. Without twist there is no
+  refinement unless `segments=` asks for it.
+- **Slice count.** The tighter of two limits: no slice twists more than `$fa`
+  degrees, and no slice moves the outermost profile point more than `$fs` along
+  its helical path, `hypot(r·twist, height)`. `$fn` replaces both with `$fn`
+  slices per revolution.
+- **Wall diagonal.** A twisted quad is non-planar, so its two diagonals enclose
+  different volumes — on a 32-gon twisted one vertex step per slice, one gives
+  the prism exactly and the other cuts 1.3% off. The split follows the twist
+  direction and the contour winding. (Still wrong for off-axis and holed
+  profiles: see A-G09.)
+
 ### A-L01 — `$preview` was `true` during exact render and export — **closed**
 
 | | |
@@ -318,15 +378,17 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 9 | A-G01…A-G07, A-X01, A-X02 |
+| S — silent | 9 | A-G01…A-G04, A-G09, A-G10, A-L08, A-X01, A-X02 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 1 | A-L01 |
+| closed | 4 | A-L01, A-G05, A-G06, A-G07 |
 
-Two of the silent atoms (A-G07, A-X01/A-X02) were found while measuring for this
-document and are finer-grained than the corresponding `COMPAT.md` prose.
+Six of the open atoms were found by measuring rather than by reading docs:
+A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the
+twist family. Fixing one atom exactly is what exposed the next three — each was
+hidden behind an error an order of magnitude larger.
 
 ## Maintaining this document
 

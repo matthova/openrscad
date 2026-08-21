@@ -1592,18 +1592,19 @@ impl Interp<'_> {
             }
             _ => [1.0, 1.0],
         };
+        // An omitted `slices` stays `None`: OpenSCAD derives it from the twist,
+        // the profile's outermost radius, and `$fn`/`$fa`/`$fs`, and the profile
+        // is only known once the child has been rendered to contours.
         let slices = m
             .get("slices")
             .and_then(Value::as_number)
-            .map(|s| s as u32)
-            .unwrap_or_else(|| {
-                if twist == 0.0 {
-                    1
-                } else {
-                    (twist.abs() / 15.0).ceil().max(1.0) as u32
-                }
-            })
-            .max(1);
+            .map(|s| (s as u32).max(1));
+        let segments = m
+            .get("segments")
+            .and_then(Value::as_number)
+            .map(|s| s.max(0.0) as u32)
+            .unwrap_or(0);
+        let frags = self.frag_spec(&m);
         let child = Box::new(Node::group(self.eval_children(children)?));
         // `v`: extrude the profile along a direction vector instead of straight
         // up Z. OpenSCAD places the top profile at `height * normalize(v)`,
@@ -1632,6 +1633,8 @@ impl Interp<'_> {
                         twist,
                         scale,
                         slices,
+                        segments,
+                        frags,
                         child,
                     };
                     // Shear: a point at height z is displaced in xy by
@@ -1655,6 +1658,8 @@ impl Interp<'_> {
             twist,
             scale,
             slices,
+            segments,
+            frags,
             child,
         })
     }
@@ -3363,6 +3368,8 @@ mod tests {
                 twist,
                 scale,
                 slices,
+                segments,
+                frags,
                 child,
             } => LinearExtrude {
                 height,
@@ -3370,6 +3377,8 @@ mod tests {
                 twist,
                 scale,
                 slices,
+                segments,
+                frags,
                 child: b(*child),
             },
             RotateExtrude {
