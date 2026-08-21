@@ -2803,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-desktop"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "notify",
  "openrscad-eval",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-eval"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "fontdb",
  "openrscad-ir",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "openrscad-geom"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "earcutr",
  "geo",
@@ -2850,11 +2850,11 @@ dependencies = [
 
 [[package]]
 name = "openrscad-ir"
-version = "0.10.1"
+version = "0.10.2"
 
 [[package]]
 name = "openrscad-syntax"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "logos",
  "serde_json",
