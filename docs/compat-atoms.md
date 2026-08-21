@@ -1,0 +1,317 @@
+# Compatibility atoms
+
+An **atom** is the smallest independently closable difference between OpenRSCAD
+and OpenSCAD: one minimal `.scad` repro, one observed OpenSCAD result, one
+observed OpenRSCAD result, and one test that will fail until it is fixed.
+
+Atoms sit one level below the two registers we already keep:
+
+| document | grain | answers |
+|---|---|---|
+| [`COMPAT.md`](../COMPAT.md) | prose entry per behavior family | "what should a user not trust?" |
+| [`compatibility/openscad-2021.01.json`](../compatibility/openscad-2021.01.json) | one status per documented surface | "is this surface classified and evidenced?" |
+| this document | one measured repro per difference | "what exactly is different, by how much, and what closes it?" |
+| [Track F](roadmap/track-f-measured-openscad-compatibility.md) | `F-*` gap per work batch | "what is the plan and priority?" |
+
+A Track F gap usually decomposes into several atoms. `F-G3` alone is three:
+`segments` is ignored, implicit `slices` ignores `$fn`, and the profile perimeter
+is never refined under twist. Each fails for a different reason and each needs
+its own oracle case, so each is tracked separately here.
+
+## How to read an atom
+
+- **id** — `A-<area><nn>`, stable once assigned. Areas mirror Track F: `L`
+  language/evaluator, `G` geometry, `I` import, `T` text, `X` export/CLI.
+- **class** —
+  - **S (silent)** — OpenRSCAD produces a different answer with no diagnostic.
+    Release-blocking; a silent wrong answer is a trust bug.
+  - **W (warned)** — different, but the user is told at runtime.
+  - **P (permanent)** — intentionally different, with a rationale.
+  - **M (missing)** — OpenRSCAD refuses or ignores the construct loudly.
+  - **U (unproven)** — no known difference, but no upstream oracle evidence
+    either. Not a defect; it is the absence of a measurement.
+- **delta** — measured, not estimated. Volume/triangle numbers come from the
+  protocol below.
+- **closes when** — the concrete artifact that retires the atom.
+
+## Measurement protocol
+
+Every number in this document was produced by running both engines on the same
+file and comparing exported STL:
+
+```sh
+cargo build --release -p openrscad-cli
+openscad -o oracle.stl atom.scad          # OpenSCAD 2024.12.17, /opt/homebrew/bin
+./target/release/openrscad -o ours.stl atom.scad
+```
+
+Volume is the signed-tetrahedron sum over the exported triangles; "empty" means
+OpenSCAD reported `Current top level object is empty.` and wrote no file.
+Triangle counts are recorded because they expose refinement differences that
+volume alone can hide. This is the same geometric comparison the `xtask geom`
+oracle uses (volume ±0.1%, bounds/centroid ±0.01 mm), applied by hand to
+constructs that have no corpus case yet.
+
+Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
+
+---
+
+## Class S — silent differences
+
+These are the release blockers. Each produces a wrong answer with no warning on
+stdout or stderr.
+
+### A-L01 — `$preview` is `true` during exact render and export
+
+| | |
+|---|---|
+| repro | `if ($preview) sphere(20); else cube(10);` |
+| OpenSCAD | takes the `else` branch during `-o` export → volume **1000**, 12 triangles |
+| OpenRSCAD | takes the `if` branch → volume **32902.9**, 896 triangles |
+| delta | wrong branch: a preview-only model is exported as the deliverable |
+| class | S · gap `F-L2` · manifest `special.preview` |
+| closes when | evaluation mode is an explicit input (preview vs exact), with a corpus case asserting the exported branch on CLI, wasm, npm, and desktop |
+
+`echo($preview)` alone is not a sufficient test: both engines print `true` in
+echo-only mode. The atom is specifically about the render/export path.
+
+### A-G01…A-G04 — invalid dimensions build solids instead of nothing
+
+OpenSCAD treats a non-positive dimension as "no geometry" and writes no file.
+OpenRSCAD builds a reflected solid and exports it.
+
+| id | repro | OpenSCAD | OpenRSCAD |
+|---|---|---:|---:|
+| A-G01 | `cube([-2,3,4]);` | empty | volume 24 |
+| A-G02 | `cylinder(h=-5, r=2);` | empty | volume 54.7282 |
+| A-G03 | `linear_extrude(1) square([-2,3]);` | empty | volume 6 |
+| A-G04 | `linear_extrude(height=-5) square(2);` | empty | volume 20 |
+
+class S · gap `F-G2` · manifest `module.cube.invalid_dimensions`,
+`module.cylinder.invalid_dimensions`, `module.square.invalid_dimensions`,
+`module.linear_extrude.invalid_height`.
+
+Closes when a shared validation path yields empty geometry (plus OpenSCAD's
+warning) for every non-positive dimension, with one corpus case per primitive.
+Track these as four atoms rather than one: they live in different constructors
+and a single fix is easy to land for three of them and miss the fourth.
+
+### A-G05 — `linear_extrude(segments=)` is accepted and ignored
+
+| | |
+|---|---|
+| repro A | `linear_extrude(height=10, segments=8) square(10);` |
+| | OpenSCAD 28 triangles · OpenRSCAD 12 triangles (volume 1000 both) |
+| repro B | `linear_extrude(height=10, twist=90, slices=4, segments=8) square(10);` |
+| | OpenSCAD volume **1038.41**, 76 triangles · OpenRSCAD **1102.19**, 36 triangles |
+| delta | +6.1% volume once twist is involved; profile silently under-tessellated |
+| class | S · gap `F-G3` · manifest `module.linear_extrude.segments` |
+| closes when | `segments` subdivides the profile perimeter, oracle-gated with and without twist |
+
+Repro A shows the parameter is ignored even where it is volume-neutral — worth
+keeping as its own case, because a fix that only handles the twisted path would
+still pass a volume-only assertion.
+
+### A-G06 — omitted `slices` ignores `$fn`/`$fa`/`$fs`
+
+| repro (`linear_extrude(height=10, twist=90, …) square(10);`) | OpenSCAD | OpenRSCAD |
+|---|---:|---:|
+| defaults | 1006.60 (356 tris) | 1074.91 (52 tris) |
+| `$fn=8` | 1020.22 (44 tris) | 1074.91 (52 tris) |
+| `$fn=40` | 1001.11 (876 tris) | 1074.91 (52 tris) |
+
+OpenRSCAD returns the *same* mesh in all three cases: its default slice count is
+derived from the twist angle alone and never consults the fragment variables.
+Delta up to **+7.4%** volume. class S · gap `F-G3` · manifest
+`module.linear_extrude.implicit_slices`.
+
+Closes when the implicit slice count follows the documented `$fn`/`$fa`/`$fs`
+rule, gated by a twist × fragment-variable corpus matrix.
+
+### A-G07 — the profile perimeter is never refined under twist
+
+Distinct from A-G05 and A-G06, and not yet recorded in `COMPAT.md`: even with
+`slices` given explicitly, OpenSCAD re-tessellates the *2D profile* according to
+the fragment variables before sweeping it, and OpenRSCAD does not.
+
+| repro (`linear_extrude(height=10, twist=90, slices=3, …) square(10);`) | OpenSCAD | OpenRSCAD |
+|---|---:|---:|
+| defaults | 988.675 (156 tris) | 1122.01 (28 tris) |
+| `$fn=8` | 1038.68 (60 tris) | 1122.01 (28 tris) |
+| `$fn=40` | 972.008 (316 tris) | 1122.01 (28 tris) |
+| `$fa=3, $fs=0.5` | 963.675 (636 tris) | 1122.01 (28 tris) |
+
+OpenSCAD's volume moves with refinement while OpenRSCAD's is pinned at 1122.01 —
+**up to +16.4%**. This is the dominant error term in the twisted-extrude family,
+and pinning `slices` (the obvious workaround for A-G06) does not avoid it.
+
+class S · gap `F-G3` · manifest `module.linear_extrude.implicit_slices` (needs a
+separate entry). Closes when profile refinement is applied independently of the
+slice count, gated by the fixed-`slices` × varying-`$fn` matrix above.
+
+### A-X01 — `-o out.csg` silently writes binary STL
+
+| | |
+|---|---|
+| repro | `openrscad -o out.csg model.scad` where `model.scad` is `cube(3);` |
+| OpenSCAD | writes the CSG tree: `cube(size = [3, 3, 3], center = false);` |
+| OpenRSCAD | writes 684 bytes of **binary STL** named `out.csg`, prints `wrote out.csg`, exits 0 |
+| class | S · gap `F-I4` · manifest `export.csg` |
+| closes when | `.csg` either serializes the operation tree or fails with an unsupported-format error; CLI fixture asserts the file is not STL |
+
+The manifest classifies `export.csg` as `missing`, which understates it: the
+format is not merely absent, it is silently substituted. A user asking for a CSG
+tree gets a mesh with the wrong extension.
+
+### A-X02 — unknown export suffixes fall back to binary STL
+
+| | |
+|---|---|
+| repro | `openrscad -o out.foo model.scad` |
+| OpenSCAD | `Invalid suffix foo. Either add a valid suffix or specify one using the --export-format option.` |
+| OpenRSCAD | writes binary STL to `out.foo`, exits 0 |
+| class | S · gap `F-I4` (CLI parity) · manifest — no entry yet |
+| closes when | unrecognized suffixes are rejected, or an explicit format flag is required; CLI test asserts a non-zero exit |
+
+A-X01 is a consequence of A-X02, but they close differently: A-X02 is CLI
+argument handling, A-X01 additionally needs the tree serializer. Keep both.
+
+---
+
+## Class W / P — visible differences
+
+### A-G08 — 3D `minkowski()` of a concave leaf is a convex approximation
+
+| | |
+|---|---|
+| repro | `minkowski(){ linear_extrude(6) polygon([[0,0],[24,0],[24,6],[6,6],[6,24],[0,24]]); sphere(2,$fn=16); }` |
+| OpenSCAD | volume **4312.57**, 412 triangles |
+| OpenRSCAD | volume **5739.28**, 510 triangles — **+33.1%** |
+| warning | `minkowski: non-convex operand; result is the convex approximation for that part (exact minkowski distributes over union() but not over arbitrary concave meshes)` |
+| class | W · gap `F-G7` · manifest `module.minkowski.concave_leaf` |
+| closes when | either bounded convex decomposition lands, or Track F records this as permanent with the +33.1% figure |
+
+Unions of convex parts are exact and are not part of this atom
+(`corpus/geom/minkowski_union.scad`). The open decision is decomposition versus
+permanence — not whether the warning is loud enough.
+
+### A-L02 — `rands()` sequence is not bit-compatible
+
+| | |
+|---|---|
+| repro | `echo(rands(0,1,3,seed=42));` |
+| OpenSCAD | `ECHO: [0.796543, 0.183435, 0.779691]` |
+| OpenRSCAD | `ECHO: [0.542627, 0.633134, 0.917741]` |
+| class | P · manifest `function.rands` |
+| closes when | never — range, reproducibility, and seeded-advance semantics match; the generator deliberately differs |
+
+Kept as an atom so the measured pair is on record: if a future change alters our
+sequence, that is a regression against *our* contract even though it can never
+match OpenSCAD's.
+
+---
+
+## Class M — missing surface
+
+Loud failures. No silent wrong answers here, but each is a script that runs
+upstream and does not run here.
+
+| id | repro | OpenSCAD | OpenRSCAD | manifest |
+|---|---|---|---|---|
+| A-L03 | `assign(x=5) echo(x);` | `DEPRECATED: …assign() will be removed…` then `ECHO: 5` | `WARNING: Ignoring unknown module 'assign'`, no echo | `syntax.assign_legacy` |
+| A-L04 | `module m(){ child(0); } m() cube(1);` | `DEPRECATED: child()…`, renders the cube | `WARNING: Ignoring unknown module 'child'`, empty | `module.child_legacy` |
+| A-L05 | `echo(dxf_dim(file="x.dxf", name="d"));` | opens the file (warns if absent), `ECHO: undef` | `ECHO: undef` + unknown-function warning | `function.dxf_dim` |
+| A-L06 | `echo(dxf_cross(file="x.dxf", layer="l"));` | as above | as above | `function.dxf_cross` |
+| A-I01 | `import_stl("m.stl");` | `DEPRECATED: …`, imports | `WARNING: Ignoring unknown module 'import_stl'` | `import.alias_stl` |
+| A-I02 | `import_dxf("m.dxf");` | `DEPRECATED: …`, imports | `WARNING: Ignoring unknown module 'import_dxf'` | `import.alias_dxf` |
+
+All six are gap `F-L6` and share one decision: implement the retained deprecated
+2021.01 aliases, or declare them out of scope. A-L05/A-L06 are the mildest — the
+returned value already matches; only the diagnostic and the file access differ.
+
+### Import and text atoms
+
+These are known-incomplete rather than individually measured; each needs a
+fixture before it becomes a proper atom with numbers.
+
+| id | surface | gap | manifest |
+|---|---|---|---|
+| A-I03 | `import(…, layer=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.layer` |
+| A-I04 | `import(…, origin=, scale=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.origin_scale` |
+| A-I05 | DXF bulges, splines, ellipses, caller fragment controls | `F-I2` | `import.dxf.curves` |
+| A-I06 | SVG `layer`/`id` selectors — accepted, ignored | `F-I2` | `import.svg.layer_id` |
+| A-I07 | SVG transforms, units, DPI | `F-I2` | `import.svg.transforms_dpi` |
+| A-I08 | SVG nesting, `<use>`, style, visibility | `F-I2` | `import.svg.structure_style` |
+| A-I09 | AMF/3MF units, object index spaces, components, build transforms | `F-I3` | `import.amf_3mf.scene_graph` |
+| A-T01 | `text()` kerning, ligatures, complex-script shaping | `F-I1` | `module.text.shaping` |
+| A-T02 | `text(direction=, language=, script=)` — RTL only reverses codepoints | `F-I1` | `module.text.direction_language_script` |
+
+An accepted-and-ignored parameter (A-I03, A-I04, A-I06) is arguably class S, not
+M: the import succeeds and returns the wrong contents. They are listed here
+because that is how the manifest currently classifies them; re-classifying is a
+decision for the `F-I2` batch, not a documentation change.
+
+---
+
+## Class U — implemented but unproven
+
+Fifty manifest entries are `implemented`: present, locally tested, no known
+difference, but with no committed upstream oracle case. They are not defects and
+they are not evidence. Track F's exit criterion requires every 2021.01 core
+entry to reach `verified`, so each is an atom-shaped unit of measurement work.
+
+| family | count | examples |
+|---|---:|---|
+| syntax | 10 | `if/else`, `for`, `let`, blocks, the four modifiers, comments |
+| module parameters | 13 | `sphere(d=)`, `cylinder(d1/d2)`, every `convexity=`, `text()` layout |
+| export formats | 7 | STL, OFF, AMF, 3MF, DXF, SVG, PNG |
+| special variables | 5 | `$t`, `$vpr`, `$vpt`, `$vpd`, `$vpf` |
+| modules | 5 | `color`, `render`, `group`, `assert`, `children` |
+| functions | 3 | `atan`, `version`, `is_range` (OpenRSCAD extension) |
+| file semantics | 3 | raw include/use paths, relative resolution, `OPENSCADPATH` |
+| imports | 3 | AMF basic, OBJ, `surface()` PNG heightmaps |
+| operators | 1 | vector/matrix arithmetic |
+
+Regenerate the exact list from the manifest:
+
+```sh
+python3 -c "
+import json
+for f in json.load(open('compatibility/openscad-2021.01.json'))['features']:
+    if f['status'] == 'implemented':
+        print(f['category'], f['id'], '—', f['surface'])
+" | sort
+```
+
+Promote an entry by adding an `echo:`/`geom:` case and flipping it to
+`verified`; `compatibility/validate.py` enforces that the linked case and its
+golden both exist.
+
+---
+
+## Ledger
+
+| class | atoms | meaning |
+|---|---:|---|
+| S — silent | 9 | A-L01, A-G01…A-G07, A-X01, A-X02 |
+| W — warned | 1 | A-G08 |
+| P — permanent | 1 | A-L02 |
+| M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
+| U — unproven | 50 | manifest `implemented` entries |
+
+Two of the silent atoms (A-G07, A-X01/A-X02) were found while measuring for this
+document and are finer-grained than the corresponding `COMPAT.md` prose.
+
+## Maintaining this document
+
+1. **One atom, one repro, one number.** If a repro needs two sentences of "and
+   also", it is two atoms. Splitting is cheap; a half-closed atom is not.
+2. **Measure both engines before adding a row.** Use the protocol above and
+   record the version and commit. An atom without numbers is a TODO, not an atom.
+3. **Keep the links live.** Every atom names its Track F gap and its manifest
+   entry, or explicitly says none exists yet. When the manifest gains an entry,
+   update the row.
+4. **Retire, don't delete.** A closed atom moves to a "Closed" section with the
+   corpus case that now guards it, so a regression has somewhere to point.
+5. **Class S is a release blocker.** Anything that lands here must also appear in
+   `COMPAT.md` under "Known silent differences" until it is fixed.

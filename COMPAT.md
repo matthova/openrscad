@@ -12,6 +12,10 @@ This register records confirmed differences. A silently wrong answer is a trust
 bug, so silent entries stay here until fixed; intentional differences must warn
 at runtime or be justified as permanent.
 
+Each entry below is decomposed into minimal, individually measured repros in the
+[compatibility atom register](docs/compat-atoms.md) — one atom per closable
+difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
+
 ## Known silent differences
 
 - **Exact renders still evaluate `$preview` as `true`.** The evaluator seeds the
@@ -33,11 +37,24 @@ at runtime or be justified as permanent.
   linear_extrude(height=-5) square(2);
   ```
 
-- **Linear-extrusion refinement differs.** `linear_extrude(segments=)` is ignored
-  and omitted `slices` does not follow `$fn`.
+- **Linear-extrusion refinement differs.** `linear_extrude(segments=)` is ignored,
+  omitted `slices` does not follow `$fn`, and the 2D profile is never re-tessellated
+  under twist. The last part is not avoided by pinning `slices`: with
+  `slices=3` fixed, OpenSCAD's volume moves with `$fn`/`$fa`/`$fs` (988.7 → 972.0 →
+  963.7) while OpenRSCAD stays at 1122.0, up to 16% high.
 
   ```scad
-  linear_extrude(height=10, twist=90, $fn=40) square(10);
+  linear_extrude(height=10, twist=90, $fn=40) square(10);     // 1001.1 vs 1074.9
+  linear_extrude(height=10, twist=90, slices=3, $fa=3, $fs=0.5) square(10);
+  ```
+
+- **Unsupported export suffixes silently produce binary STL.** `-o out.csg` writes
+  STL bytes named `.csg` and exits 0 rather than serializing a CSG tree, and any
+  unrecognized suffix does the same; OpenSCAD rejects an invalid suffix outright.
+
+  ```sh
+  openrscad -o out.csg model.scad   # binary STL, no warning
+  openrscad -o out.foo model.scad   # binary STL, no warning
   ```
 
 ## Missing or partial compatibility
