@@ -64,27 +64,60 @@ stdout or stderr.
 ### A-G11 — twist combined with a non-uniform scale refines the profile differently
 
 Twist alone and non-uniform scale alone each have an exact, measured rule (A-G07,
-A-G10). Applying both at once does not follow either.
+A-G10). Applying both at once follows neither.
 
 | repro | OpenSCAD | OpenRSCAD |
 |---|---:|---:|
 | `$fa=8;$fs=1.5; linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
 
-Upstream weights the profile edges the *opposite* way from the pure-scale rule:
-under `twist=90, scale=[1,2]` on a square the x-aligned edge — the one that does
-**not** stretch — takes 9 segments and the y-aligned edge that stretches to 20
-takes 6. Pure scale gives 5 and 10. Confirmed from raw cap coordinates, so it is
-not an indexing artifact. `max(original, scaled)` length, `original + scaled`,
-and their reciprocals were all fitted and all fail on at least one of
-`scale=[1,2]` and `scale=[0.2,2]`, which disagree even though their
-`max(original, scaled)` values are identical — so the rule depends on the scale
-factors themselves, not just the resulting lengths.
+class S · gap `F-G3` · manifest `module.linear_extrude.twist_scale_refinement`.
+The implementation deliberately keeps the twist-only lengths here rather than
+encoding a guess.
 
-The implementation deliberately keeps the twist-only lengths for this
-combination rather than encoding a guess. class S · gap `F-G3` · manifest
-`module.linear_extrude.scale_refinement` (needs its own entry). Closes when the
-combined weighting is identified; the per-quad harness used for A-G09 is the
-tool for it, applied to segment counts instead of diagonals.
+**What is now known.** Measuring per-edge counts on `square(10)`, `twist=90`,
+`$fa=12`, `$fs=2` over a 5×5 grid of scale factors (`n_x` = segments on each
+x-aligned edge, `n_y` on each y-aligned):
+
+| | sy=0.5 | sy=1 | sy=1.5 | sy=2 | sy=3 |
+|---|---|---|---|---|---|
+| **sx=0.5** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
+| **sx=1** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
+| **sx=1.5** | (6,8) | (6,8) | (7,7) | (9,6) | (10,5) |
+| **sx=2** | (6,9) | (6,9) | (6,9) | (7,7) | (9,6) |
+| **sx=3** | (5,10) | (5,10) | (5,10) | (6,9) | (7,7) |
+
+- The table is antisymmetric under swapping the axes, as it must be.
+- **Only `max(sx, sy)` matters**, and which axis attains it. Every entry with
+  `sy=2, sx≤1.5` is identical, so the rule cannot be a function of the resulting
+  edge lengths — `max(original, scaled)` is the same for `sx=1` and `sx=1.5`.
+- **The weighting inverts relative to pure scale.** Under `scale=[1,2]` without
+  twist the stretching y-edge takes 10 segments and the x-edge 5; add twist and
+  it becomes 9 and 6 — the edge that does *not* stretch earns more. Confirmed
+  from raw cap coordinates, so it is not an indexing artifact.
+- Scaling *down* alone changes nothing: `[0.2,1]` and `[1,0.5]` both give the
+  pure-twist `(5,5)`. Only a factor above 1 has any effect.
+- Uniform scale ≥1.5 gives `(7,7)` where pure twist gives `(5,5)`, which pins one
+  sub-rule exactly: the `$fs` cap uses the edge's **longest length over the
+  sweep**, `original × max(1, scale)`. That alone does not explain the
+  non-uniform rows, where `n_x` exceeds any such cap.
+
+Sweeping `sx=1` and reading the quotas back out of the tie-blocking (a total of
+28 instead of 30 means both fractional parts were exactly ½):
+
+| max scale | 1 | 1.25 | 1.5 | 1.75 | 2 | 2.5 | 3 | 4 | 6 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `(n_x, n_y)` | (5,5) | (7,6) | (8,6) | (9,6) | (9,6) | (10,5) | (10,5) | (10,5) | (10,4) | (11,4) |
+| implied `q_x` | 7.5 | — | 8.5 | 9 | 9 | 10 | 10 | 10 | 10.5 | 11 |
+
+`q_x` grows sublinearly in the maximum scale factor and no closed form tried
+(linear, `m/(m+1)`, logarithmic, powers) reproduces all of it; the `m=1.25` row
+sums to 26, which the tie rule does not explain either, so at least one further
+mechanism is involved.
+
+Closes when that mechanism is identified. The per-quad harness that settled
+A-G09 is the right tool — applied to segment counts rather than diagonals — and
+the base ring must again be taken from the oracle's own output, since OpenSCAD
+re-refines even an explicit `polygon()`.
 
 ## Class W / P — visible differences
 
