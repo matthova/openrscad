@@ -18,16 +18,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **Invalid dimensions create solids instead of empty geometry.** Negative
-  cube/square dimensions, cylinder height/radii, and extrusion height are not
-  rejected consistently.
-
-  ```scad
-  cube([-2,3,4]);
-  cylinder(h=-5, r=2);
-  linear_extrude(height=-5) square(2);
-  ```
-
 - **Twisted extrudes of off-axis or holed profiles triangulate the walls
   differently.** A twisted wall quad is non-planar, so its two diagonals enclose
   different volumes. The split now follows the twist direction and contour
@@ -126,9 +116,23 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **91/91**, and BOSL2
+The current gates are `corpus/echo` **27/27**, geometry **92/92**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Non-positive dimensions yield no geometry.** Zero or negative `cube`/`square`
+  components, `sphere`/`circle` radii, `cylinder` height or radii, and
+  `linear_extrude` height now produce nothing, matching upstream; a single zero
+  `cylinder` radius is still a valid cone, and an extrude's children are still
+  evaluated so their `echo`/`assert` side effects run. This was worse than a
+  zero-volume result: the degenerate triangles were non-manifold, so
+  `difference(){ cube(10); cube(0); }` failed in the CSG kernel and fell back to
+  un-combined geometry. Gated by `corpus/geom/prim_invalid_dims.scad`.
+
+  ```scad
+  cube([-2,3,4]); cylinder(h=-5, r=2); linear_extrude(height=-5) square(2);
+  cylinder(h=5, r1=0, r2=3);   // still a cone
+  ```
 
 - **`$` arguments are dynamically scoped over the callee and its children.**
   `linear_extrude($fn=32) circle(5)` now gives the circle 32 fragments instead

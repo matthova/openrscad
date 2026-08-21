@@ -61,27 +61,6 @@ Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
 These are the release blockers. Each produces a wrong answer with no warning on
 stdout or stderr.
 
-### A-G01…A-G04 — invalid dimensions build solids instead of nothing
-
-OpenSCAD treats a non-positive dimension as "no geometry" and writes no file.
-OpenRSCAD builds a reflected solid and exports it.
-
-| id | repro | OpenSCAD | OpenRSCAD |
-|---|---|---:|---:|
-| A-G01 | `cube([-2,3,4]);` | empty | volume 24 |
-| A-G02 | `cylinder(h=-5, r=2);` | empty | volume 54.7282 |
-| A-G03 | `linear_extrude(1) square([-2,3]);` | empty | volume 6 |
-| A-G04 | `linear_extrude(height=-5) square(2);` | empty | volume 20 |
-
-class S · gap `F-G2` · manifest `module.cube.invalid_dimensions`,
-`module.cylinder.invalid_dimensions`, `module.square.invalid_dimensions`,
-`module.linear_extrude.invalid_height`.
-
-Closes when a shared validation path yields empty geometry (plus OpenSCAD's
-warning) for every non-positive dimension, with one corpus case per primitive.
-Track these as four atoms rather than one: they live in different constructors
-and a single fix is easy to land for three of them and miss the fourth.
-
 ### A-G09 — twisted extrudes of off-axis or holed profiles pick the wrong wall diagonal
 
 A twisted wall quad is not planar, so its two diagonals enclose different
@@ -269,6 +248,48 @@ golden both exist.
 
 ## Closed
 
+### A-G01…A-G04 — invalid dimensions built solids instead of nothing — **closed**
+
+| id | repro | OpenSCAD | before | now |
+|---|---|---|---:|---|
+| A-G01 | `cube([-2,3,4]);` | empty | volume 24 | empty |
+| A-G02 | `cylinder(h=-5, r=2);` | empty | volume 54.7282 | empty |
+| A-G03 | `linear_extrude(1) square([-2,3]);` | empty | volume 6 | empty |
+| A-G04 | `linear_extrude(height=-5) square(2);` | empty | volume 20 | empty |
+
+was S · gap `F-G2` · manifest `module.{cube,cylinder,square}.invalid_dimensions`
+and `module.linear_extrude.invalid_height`, all now `verified`; the sweep also
+covered `sphere(r<=0)` and `circle(r<=0)`, which gained entries. Guarded by
+`corpus/geom/prim_invalid_dims.scad`.
+
+Measuring this turned up something the register understated. The zero cases —
+`cube(0)`, `sphere(0)`, `cylinder(h=0)` — did not merely produce a zero-volume
+solid; they emitted **non-manifold triangles that broke the enclosing boolean**:
+
+```scad
+difference() { cube(10); cube(0); }
+// before: WARNING: difference: kernel error: ManifoldStatus(NotManifold)
+//         -- showing un-combined geometry (the boolean was skipped)
+```
+
+So a stray `cube(0)` anywhere in a model could silently disable a CSG operation
+elsewhere in the tree. That is a strictly larger blast radius than "produces a
+degenerate solid", and it is why this was worth closing before the remaining
+sub-percent geometry atoms.
+
+The rule is uniform — every dimension must be **finite** and strictly positive —
+with two exceptions worth stating, both of which the oracle had to settle:
+
+- `cylinder(r1=0, r2=3)` is a legitimate cone and stays; both radii zero is empty.
+- For `linear_extrude` a *non-finite* height (`inf`, `NaN`) counts as **unset**
+  and falls back to the default 100, where for a primitive it means empty.
+  `linear_extrude(height=1/0) square(2)` is upstream a solid of volume 400.
+
+`linear_extrude(height=0)` still evaluates its children, so their `echo`/`assert`
+side effects run. NaN and infinity were the parts most likely to be got wrong by
+inspection: `x <= 0.0` is false for NaN, so a "reject non-positive" test written
+the obvious way would have built geometry from `cube(0/0)`.
+
 ### A-L08 — `$` arguments did not reach children — **closed**
 
 | | |
@@ -396,12 +417,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 8 | A-G01…A-G04, A-G09, A-G10, A-X01, A-X02 |
+| S — silent | 4 | A-G09, A-G10, A-X01, A-X02 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 5 | A-L01, A-G05, A-G06, A-G07, A-L08 |
+| closed | 9 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-L08 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

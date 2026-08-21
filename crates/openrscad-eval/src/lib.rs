@@ -332,6 +332,13 @@ struct Interp<'a> {
     warned: HashSet<(String, usize)>,
 }
 
+/// A dimension OpenSCAD will actually build geometry from: finite and strictly
+/// positive. Zero, negative, NaN, and infinity all yield an empty result
+/// upstream, and each is easy to miss on its own, so the test lives here.
+fn valid_dim(x: f64) -> bool {
+    x.is_finite() && x > 0.0
+}
+
 /// Which kind of run this is — the value `$preview` reports to the script.
 ///
 /// OpenSCAD sets `$preview` false *exactly* when it performs an exact (F6)
@@ -1372,6 +1379,13 @@ impl Interp<'_> {
             _ => [1.0, 1.0, 1.0],
         };
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        // A dimension that is not finite and positive yields no geometry at
+        // all, as upstream. It is not merely zero-volume: a degenerate box emits
+        // triangles that the CSG kernel rejects as non-manifold, taking the
+        // whole enclosing boolean down with it.
+        if !size.iter().copied().all(valid_dim) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Cube { size, center })
     }
 
@@ -1382,6 +1396,9 @@ impl Interp<'_> {
         } else {
             m.get("r").and_then(Value::as_number).unwrap_or(1.0)
         };
+        if !valid_dim(r) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Sphere {
             r,
             frags: self.frag_spec(&m),
@@ -1415,6 +1432,13 @@ impl Interp<'_> {
             .unwrap_or(1.0);
 
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        // Height must be finite and positive, and neither radius negative or
+        // non-finite. One radius may be zero — that is a cone — but both zero
+        // is empty.
+        let radius_ok = |r: f64| r.is_finite() && r >= 0.0;
+        if !valid_dim(h) || !radius_ok(r1) || !radius_ok(r2) || !(valid_dim(r1) || valid_dim(r2)) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Cylinder {
             h,
             r1,
@@ -1508,6 +1532,9 @@ impl Interp<'_> {
             _ => [1.0, 1.0],
         };
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        if !size.iter().copied().all(valid_dim) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Square { size, center })
     }
 
@@ -1518,6 +1545,9 @@ impl Interp<'_> {
         } else {
             m.get("r").and_then(Value::as_number).unwrap_or(1.0)
         };
+        if !valid_dim(r) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Circle {
             r,
             frags: self.frag_spec(&m),
@@ -1624,7 +1654,14 @@ impl Interp<'_> {
         // so it falls back to the default of 100 (OpenSCAD warns "variable h not
         // specified as parameter" and does the same). Accepting `h` here would
         // silently disagree with OpenSCAD, e.g. BOSL2-style `linear_extrude(h=x)`.
-        let height = m.get("height").and_then(Value::as_number).unwrap_or(100.0);
+        // A non-finite height (inf/NaN) is treated as *unset* and falls back to
+        // the default 100, unlike the primitives where it means empty. Only a
+        // finite, non-positive height extrudes nothing.
+        let height = m
+            .get("height")
+            .and_then(Value::as_number)
+            .filter(|h| h.is_finite())
+            .unwrap_or(100.0);
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
         let twist = m.get("twist").and_then(Value::as_number).unwrap_or(0.0);
         let scale = match m.get("scale") {
@@ -1648,7 +1685,13 @@ impl Interp<'_> {
             .map(|s| s.max(0.0) as u32)
             .unwrap_or(0);
         let frags = self.frag_spec(&m);
+        // A non-positive height extrudes nothing, as upstream — the children are
+        // still evaluated so their `echo`/`assert` side effects run.
+        let empty_height = height <= 0.0;
         let child = Box::new(Node::group(self.eval_children(children)?));
+        if empty_height {
+            return Ok(Node::Empty);
+        }
         // `v`: extrude the profile along a direction vector instead of straight
         // up Z. OpenSCAD places the top profile at `height * normalize(v)`,
         // forming an oblique prism — equivalent to a straight extrude of the
