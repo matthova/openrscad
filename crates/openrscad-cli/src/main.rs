@@ -128,12 +128,11 @@ impl Cli {
         if self.check {
             return RenderMode::Preview;
         }
-        // PNG (including `--animate`) is a preview raster upstream.
+        // PNG (including `--animate`) is a preview raster upstream. An
+        // unclassifiable suffix is reported later, by `run`.
         let png = self.animate.is_some()
             || self.output.as_deref().is_some_and(|p| {
-                p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+                OutputFormat::from_path(p).is_ok_and(OutputFormat::is_preview_raster)
             });
         if png {
             RenderMode::Preview
@@ -153,6 +152,67 @@ enum StlFormat {
 enum Proj {
     Perspective,
     Ortho,
+}
+
+/// The export format an `-o` path selects, by suffix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Stl,
+    Off,
+    Obj,
+    ThreeMf,
+    Amf,
+    Dxf,
+    Svg,
+    Png,
+}
+
+impl OutputFormat {
+    /// Classify an output path by its suffix, case-insensitively as OpenSCAD
+    /// does (`out.STL` is an STL).
+    ///
+    /// An unrecognized suffix is an error, not a silent fallback: writing STL
+    /// bytes to `model.csg` and exiting 0 tells the user they got a CSG tree
+    /// when they did not. OpenSCAD rejects the same input with
+    /// "Invalid suffix foo" and writes nothing.
+    fn from_path(path: &Path) -> Result<Self> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        Ok(match ext.as_str() {
+            "stl" => OutputFormat::Stl,
+            "off" => OutputFormat::Off,
+            "obj" => OutputFormat::Obj,
+            "3mf" => OutputFormat::ThreeMf,
+            "amf" => OutputFormat::Amf,
+            "dxf" => OutputFormat::Dxf,
+            "svg" => OutputFormat::Svg,
+            "png" => OutputFormat::Png,
+            // A real OpenSCAD format we do not implement yet. Worth its own
+            // message so it does not read as a typo.
+            "csg" => anyhow::bail!(
+                "CSG tree export (.csg) is not supported yet; \
+                 see COMPAT.md. Supported: stl, off, obj, 3mf, amf, dxf, svg, png"
+            ),
+            "" => anyhow::bail!(
+                "output path '{}' has no suffix; \
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png",
+                path.display()
+            ),
+            other => anyhow::bail!(
+                "invalid output suffix '{other}'; \
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png"
+            ),
+        })
+    }
+
+    /// Whether this format is produced without an exact render (see
+    /// [`Cli::render_mode`]).
+    fn is_preview_raster(self) -> bool {
+        self == OutputFormat::Png
+    }
 }
 
 /// Parse `--imgsize` (`W,H` or `WxH`).
@@ -290,6 +350,14 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // Reject an unusable output suffix before doing any work, so a long render
+    // is not thrown away on a typo.
+    let format = cli
+        .output
+        .as_deref()
+        .map(OutputFormat::from_path)
+        .transpose()?;
+
     let src = std::fs::read_to_string(&cli.input)
         .with_context(|| format!("reading {}", cli.input.display()))?;
 
@@ -377,29 +445,31 @@ fn run() -> Result<()> {
     }
 
     // 2D vector export (DXF/SVG): write contours directly, no 3D mesh needed.
-    if let Some(path) = &cli.output {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if matches!(ext.as_str(), "dxf" | "svg") {
-            let kernel = openrscad_geom::ManifoldKernel::new();
-            match openrscad_geom::render_contours_with(&out.node, &kernel) {
-                Ok(Some(contours)) => {
-                    let text = if ext == "dxf" {
-                        openrscad_geom::export_dxf(&contours)
-                    } else {
-                        openrscad_geom::export_svg(&contours)
-                    };
-                    std::fs::write(path, text)?;
-                    eprintln!("wrote {} ({} contours)", path.display(), contours.len());
-                }
-                Ok(None) => anyhow::bail!("{} export requires a 2D object", ext.to_uppercase()),
-                Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
+    if let (Some(path), Some(format @ (OutputFormat::Dxf | OutputFormat::Svg))) =
+        (&cli.output, format)
+    {
+        let kernel = openrscad_geom::ManifoldKernel::new();
+        match openrscad_geom::render_contours_with(&out.node, &kernel) {
+            Ok(Some(contours)) => {
+                let text = if format == OutputFormat::Dxf {
+                    openrscad_geom::export_dxf(&contours)
+                } else {
+                    openrscad_geom::export_svg(&contours)
+                };
+                std::fs::write(path, text)?;
+                eprintln!("wrote {} ({} contours)", path.display(), contours.len());
             }
-            return Ok(());
+            Ok(None) => anyhow::bail!(
+                "{} export requires a 2D object",
+                if format == OutputFormat::Dxf {
+                    "DXF"
+                } else {
+                    "SVG"
+                }
+            ),
+            Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
         }
+        return Ok(());
     }
 
     // Render.
@@ -437,18 +507,16 @@ fn run() -> Result<()> {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("openrscad");
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("stl")
-            .to_ascii_lowercase();
-        match ext.as_str() {
-            "off" => std::fs::write(path, mesh.to_off())?,
-            "obj" => std::fs::write(path, mesh.to_obj())?,
+        // Classified up front, so the only formats left here are the 3D ones
+        // plus PNG; DXF/SVG returned above.
+        let format = format.unwrap_or(OutputFormat::Stl);
+        match format {
+            OutputFormat::Off => std::fs::write(path, mesh.to_off())?,
+            OutputFormat::Obj => std::fs::write(path, mesh.to_obj())?,
             // 3MF carries per-object color: partition into color groups (dropping
             // `%` background) and write one object per color. Falls back to the
             // fused single-object 3MF when the model uses no color.
-            "3mf" if openrscad_geom::has_display_attrs(&out.node) => {
+            OutputFormat::ThreeMf if openrscad_geom::has_display_attrs(&out.node) => {
                 let groups =
                     openrscad_geom::render_groups(&out.node).context("rendering color groups")?;
                 let colored: Vec<(&openrscad_geom::Mesh, [f32; 4])> = groups
@@ -458,18 +526,21 @@ fn run() -> Result<()> {
                     .collect();
                 std::fs::write(path, openrscad_geom::Mesh::to_3mf_colored(&colored))?
             }
-            "3mf" => std::fs::write(path, mesh.to_3mf())?,
-            "amf" => std::fs::write(path, mesh.to_amf())?,
+            OutputFormat::ThreeMf => std::fs::write(path, mesh.to_3mf())?,
+            OutputFormat::Amf => std::fs::write(path, mesh.to_amf())?,
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.
-            "png" => {
+            OutputFormat::Png => {
                 let opts = build_render_opts(&cli)?;
                 std::fs::write(path, render_frame_png(&out.node, &opts)?)?;
             }
-            "stl" if matches!(cli.format, StlFormat::Ascii) => {
+            OutputFormat::Stl if matches!(cli.format, StlFormat::Ascii) => {
                 std::fs::write(path, mesh.to_ascii_stl(name))?
             }
-            _ => std::fs::write(path, mesh.to_binary_stl())?,
+            OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
+            // Returned above; listed so a new format cannot silently fall
+            // through to STL.
+            OutputFormat::Dxf | OutputFormat::Svg => unreachable!("2D formats exported earlier"),
         }
         eprintln!("wrote {}", path.display());
     }
@@ -520,6 +591,48 @@ mod tests {
         assert_eq!(mode(&["--preview", "--check"]), RenderMode::Preview);
         // `--check` is echo-only, but an explicit `--render` still wins.
         assert_eq!(mode(&["--render", "--check"]), RenderMode::Exact);
+    }
+
+    /// An unrecognized suffix is rejected rather than silently written as STL.
+    /// Measured against OpenSCAD 2024.12.17: it exits non-zero and writes no
+    /// file for `foo` and for a path with no suffix at all.
+    #[test]
+    fn output_suffixes_are_classified_case_insensitively() {
+        use OutputFormat::*;
+        for (name, want) in [
+            ("m.stl", Stl),
+            ("m.STL", Stl),
+            ("m.Off", Off),
+            ("m.obj", Obj),
+            ("m.3MF", ThreeMf),
+            ("m.amf", Amf),
+            ("m.dxf", Dxf),
+            ("m.SVG", Svg),
+            ("m.png", Png),
+            ("a.b.stl", Stl),
+        ] {
+            assert_eq!(
+                OutputFormat::from_path(Path::new(name)).unwrap(),
+                want,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn unusable_output_suffixes_are_rejected() {
+        for name in ["m.foo", "m", "m.", "m.txt", "m.scad"] {
+            assert!(
+                OutputFormat::from_path(Path::new(name)).is_err(),
+                "{name} should be rejected, not silently written as STL"
+            );
+        }
+        // `.csg` is a real OpenSCAD format we do not implement; it gets its own
+        // message so it does not read as a typo.
+        let err = OutputFormat::from_path(Path::new("m.csg"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CSG"), "{err}");
     }
 
     #[test]

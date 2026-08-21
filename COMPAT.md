@@ -40,15 +40,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   linear_extrude(height=7, twist=200, scale=[0.4,1.6]) square([8,5]);
   ```
 
-- **Unsupported export suffixes silently produce binary STL.** `-o out.csg` writes
-  STL bytes named `.csg` and exits 0 rather than serializing a CSG tree, and any
-  unrecognized suffix does the same; OpenSCAD rejects an invalid suffix outright.
-
-  ```sh
-  openrscad -o out.csg model.scad   # binary STL, no warning
-  openrscad -o out.foo model.scad   # binary STL, no warning
-  ```
-
 ## Missing or partial compatibility
 
 - **Deprecated compatibility aliases remain undecided.** OpenSCAD 2021.01 still
@@ -75,7 +66,8 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 - **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
   mesh and vector formats, but it does not serialize the evaluated model as a
-  `.csg` operation tree.
+  `.csg` operation tree. `-o out.csg` now fails with a format-specific error
+  rather than silently writing STL bytes under that name, so the gap is loud.
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
@@ -119,6 +111,17 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 The current gates are `corpus/echo` **27/27**, geometry **92/92**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Unusable export suffixes are rejected.** An unrecognized or missing `-o`
+  suffix now exits non-zero and writes nothing, matching OpenSCAD, instead of
+  silently emitting binary STL under whatever name was asked for. Validation
+  happens before evaluation, so a typo costs nothing on a heavy model, and
+  recognized suffixes match case-insensitively (`out.STL` is an STL).
+
+  ```sh
+  openrscad -o out.foo model.scad   # error: invalid output suffix 'foo'
+  openrscad -o out.csg model.scad   # error: CSG tree export is not supported yet
+  ```
 
 - **Non-positive dimensions yield no geometry.** Zero or negative `cube`/`square`
   components, `sphere`/`circle` radii, `cylinder` height or radii, and

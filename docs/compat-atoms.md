@@ -106,35 +106,6 @@ edge length rather than the twist rule's budget apportionment, and the combined
 twist+scale case does not yet fit either. class S · gap `F-G3` · manifest
 `module.linear_extrude.scale_refinement`.
 
-### A-X01 — `-o out.csg` silently writes binary STL
-
-| | |
-|---|---|
-| repro | `openrscad -o out.csg model.scad` where `model.scad` is `cube(3);` |
-| OpenSCAD | writes the CSG tree: `cube(size = [3, 3, 3], center = false);` |
-| OpenRSCAD | writes 684 bytes of **binary STL** named `out.csg`, prints `wrote out.csg`, exits 0 |
-| class | S · gaps `F-I4`, `F-X1` · manifest `export.csg` |
-| closes when | `.csg` either serializes the operation tree or fails with an unsupported-format error; CLI fixture asserts the file is not STL |
-
-The manifest classifies `export.csg` as `missing`, which understates it: the
-format is not merely absent, it is silently substituted. A user asking for a CSG
-tree gets a mesh with the wrong extension.
-
-### A-X02 — unknown export suffixes fall back to binary STL
-
-| | |
-|---|---|
-| repro | `openrscad -o out.foo model.scad` |
-| OpenSCAD | `Invalid suffix foo. Either add a valid suffix or specify one using the --export-format option.` |
-| OpenRSCAD | writes binary STL to `out.foo`, exits 0 |
-| class | S · gap `F-X1` · manifest `export.suffix_validation` |
-| closes when | unrecognized suffixes are rejected, or an explicit format flag is required; CLI test asserts a non-zero exit |
-
-A-X01 is a consequence of A-X02, but they close differently: A-X02 is CLI
-argument handling, A-X01 additionally needs the tree serializer. Keep both.
-
----
-
 ## Class W / P — visible differences
 
 ### A-G08 — 3D `minkowski()` of a concave leaf is a convex approximation
@@ -247,6 +218,35 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-X01, A-X02 — unusable export suffixes silently wrote binary STL — **closed**
+
+| id | repro | OpenSCAD | before | now |
+|---|---|---|---|---|
+| A-X02 | `openrscad -o out.foo m.scad` | `Invalid suffix foo`, exit 1, no file | binary STL, exit 0 | error, exit 1, no file |
+| A-X01 | `openrscad -o out.csg m.scad` | writes a CSG tree, exit 0 | binary STL named `.csg`, exit 0 | error, exit 1, no file |
+
+was S · gap `F-X1` · manifest `export.suffix_validation` (now `implemented`) and
+`export.csg`. Guarded by unit tests in `crates/openrscad-cli/src/main.rs`.
+
+Suffix classification is now one function, checked against the 2024.12 binary
+across eleven suffixes: recognized ones match case-insensitively (`out.STL`),
+and anything else — including no suffix at all — is refused. Validation runs
+*before* evaluation, so a typo on a heavy model fails in milliseconds instead of
+after the render.
+
+**A-X02 is fully closed; A-X01 is downgraded, not closed.** We still cannot
+serialize a CSG operation tree, so `.csg` now fails with a format-specific error
+rather than a generic "invalid suffix" — it is a real OpenSCAD format, not a
+typo. That converts A-X01 from a *silent* wrong answer into a *loud* missing
+feature, which is the property that matters for trust; the feature itself
+remains open as `F-I4`.
+
+The manifest keeps `export.suffix_validation` at `implemented` rather than
+`verified`, matching every other `export.*` entry: `verified` there means a
+committed `.scad`-level oracle case, and a CLI argument behaviour has none. The
+atom is closed because it is fixed and guarded by a test — the two documents
+mean different things by their labels, deliberately.
 
 ### A-G01…A-G04 — invalid dimensions built solids instead of nothing — **closed**
 
@@ -417,12 +417,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 4 | A-G09, A-G10, A-X01, A-X02 |
+| S — silent | 2 | A-G09, A-G10 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
+| M — missing | 16 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 9 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-L08 |
+| closed | 10 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-L08, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

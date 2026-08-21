@@ -60,8 +60,8 @@ Each manifest entry has exactly one status:
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 188 surfaces: 117 `verified`, 50
-`implemented` but not yet oracle-proven, 19 `missing`, one warned divergence,
+The executable manifest currently classifies 188 surfaces: 117 `verified`, 51
+`implemented` but not yet oracle-proven, 18 `missing`, one warned divergence,
 and one permanent divergence. Of those, 183 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
@@ -80,7 +80,6 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 | id | gap | current effect | first fix |
 |---|---|---|---|
 | F-G3 | `linear_extrude` wall triangulation and non-uniform scale. | The twist refinement rules are closed and oracle-gated. What remains: the non-planar wall quad's diagonal is still wrong for off-axis (+1.3%) and holed (+0.6%) profiles, and non-uniform `scale` does not refine the profile or add slices (+0.8% combined with twist). | Identify the per-quad diagonal criterion; model the scale-driven refinement. Vertex positions already match, so both are triangulation/count problems, not placement ones. |
-| F-X1 | Unsupported export suffixes silently produce binary STL. | `-o out.csg` writes STL bytes named `.csg`, and any unrecognized suffix does the same; OpenSCAD rejects an invalid suffix. | Reject unknown suffixes; serialize the operation tree for `.csg` (see F-I4). |
 
 ### P1 — missing core surface or broad fidelity work
 
@@ -90,7 +89,7 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 | F-I1 | Text is not fully shaped. | System fonts are now discoverable, but layout is codepoint-by-codepoint: no kerning, ligatures, complex-script shaping, vertical text, or meaningful `language`/`script`; RTL only reverses codepoints. Use a shaping library and test Latin + RTL + vertical cases. |
 | F-I2 | DXF/SVG import is a useful subset, not format parity. | Layer/id selection, import transforms/DPI, SVG group/element transforms, `<use>`, style/visibility, DXF bulges/splines/ellipses, and caller fragment controls are missing. Split selectors, SVG structure, and DXF curves into separate commits. |
 | F-I3 | 3MF/AMF import flattens XML tags rather than a scene graph. | Units, per-object index bases, build-item transforms/components, and multi-object assembly can be wrong. Implement scene/object assembly before materials. |
-| F-I4 | OpenSCAD-style `.csg` tree export is absent. | Serialize the evaluated operation tree and add CLI/export round-trip fixtures. |
+| F-I4 | OpenSCAD-style `.csg` tree export is absent. | Serialize the evaluated operation tree and add CLI/export round-trip fixtures. Unknown-suffix handling is fixed (F-X1 closed), so `.csg` now fails loudly instead of silently writing STL — this is a missing feature, no longer a silent one. |
 | F-G7 | 3D Minkowski of a genuinely concave leaf remains a warned convex approximation. | Keep it loud and permanent, or implement bounded convex decomposition; never silently relabel it exact. |
 
 ### P1 — measurement gaps
