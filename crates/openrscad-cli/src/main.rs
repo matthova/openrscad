@@ -100,6 +100,47 @@ struct Cli {
     /// PNG: shift the model so its center is the view target.
     #[arg(long)]
     autocenter: bool,
+
+    /// Force `$preview = false` (F6 semantics). Geometry export already implies
+    /// this; use it to render a PNG the way an exact export would.
+    #[arg(long, conflicts_with = "preview")]
+    render: bool,
+
+    /// Force `$preview = true` (F5 semantics), even for a geometry export.
+    #[arg(long)]
+    preview: bool,
+}
+
+impl Cli {
+    /// The `$preview` value this invocation gives the script, mirroring
+    /// OpenSCAD 2024.12: false whenever an exact render happens (mesh or 2D
+    /// vector export, and our stats output, which reports exact volume/area),
+    /// true for echo-only runs and PNG preview rasters.
+    fn render_mode(&self) -> openrscad_eval::RenderMode {
+        use openrscad_eval::RenderMode;
+        if self.preview {
+            return RenderMode::Preview;
+        }
+        if self.render {
+            return RenderMode::Exact;
+        }
+        // `--check` never renders geometry, matching `--export-format=echo`.
+        if self.check {
+            return RenderMode::Preview;
+        }
+        // PNG (including `--animate`) is a preview raster upstream.
+        let png = self.animate.is_some()
+            || self.output.as_deref().is_some_and(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+            });
+        if png {
+            RenderMode::Preview
+        } else {
+            RenderMode::Exact
+        }
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -218,8 +259,14 @@ fn run_animation(
             "$t".to_string(),
             openrscad_eval::value_from_param(&openrscad_syntax::customizer::ParamValue::Number(t)),
         ));
-        let out = openrscad_eval::eval_program_with_params(program, resolver, base_dir, &ov)
-            .map_err(|e| anyhow::anyhow!("frame {i}: {}", e.message))?;
+        let out = openrscad_eval::eval_program_with_mode(
+            program,
+            resolver,
+            base_dir,
+            &ov,
+            cli.render_mode(),
+        )
+        .map_err(|e| anyhow::anyhow!("frame {i}: {}", e.message))?;
         let bytes = render_frame_png(&out.node, &opts)?;
         let fname = format!("{stem}{i:0pad$}.png");
         std::fs::write(dir.join(&fname), bytes)?;
@@ -309,8 +356,14 @@ fn run() -> Result<()> {
         return run_animation(&program, &resolver, &base_dir, &overrides, &cli, n);
     }
 
-    let out = openrscad_eval::eval_program_with_params(&program, &resolver, &base_dir, &overrides)
-        .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
+    let out = openrscad_eval::eval_program_with_mode(
+        &program,
+        &resolver,
+        &base_dir,
+        &overrides,
+        cli.render_mode(),
+    )
+    .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
 
     for line in &out.echoes {
         println!("{line}");
@@ -422,4 +475,55 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openrscad_eval::RenderMode;
+
+    fn mode(args: &[&str]) -> RenderMode {
+        let mut argv = vec!["openrscad"];
+        argv.extend_from_slice(args);
+        argv.push("model.scad");
+        Cli::parse_from(argv).render_mode()
+    }
+
+    /// `$preview` per output, measured against OpenSCAD 2024.12.17: false
+    /// whenever an exact render happens, true otherwise. Getting this backwards
+    /// exports a different model than the user asked for, silently.
+    #[test]
+    fn preview_mode_follows_the_output_format() {
+        // Exact renders.
+        assert_eq!(mode(&["-o", "out.stl"]), RenderMode::Exact);
+        assert_eq!(mode(&["-o", "out.off"]), RenderMode::Exact);
+        assert_eq!(mode(&["-o", "out.3mf"]), RenderMode::Exact);
+        assert_eq!(mode(&["-o", "out.dxf"]), RenderMode::Exact);
+        assert_eq!(mode(&["-o", "out.svg"]), RenderMode::Exact);
+        // No output still renders exactly to report volume/area.
+        assert_eq!(mode(&[]), RenderMode::Exact);
+
+        // Preview-side runs.
+        assert_eq!(mode(&["--check"]), RenderMode::Preview);
+        assert_eq!(mode(&["-o", "out.png"]), RenderMode::Preview);
+        assert_eq!(mode(&["-o", "OUT.PNG"]), RenderMode::Preview);
+        assert_eq!(
+            mode(&["--animate", "4", "-o", "out.png"]),
+            RenderMode::Preview
+        );
+    }
+
+    #[test]
+    fn render_and_preview_flags_override_the_format() {
+        assert_eq!(mode(&["--render", "-o", "out.png"]), RenderMode::Exact);
+        assert_eq!(mode(&["--preview", "-o", "out.stl"]), RenderMode::Preview);
+        assert_eq!(mode(&["--preview", "--check"]), RenderMode::Preview);
+        // `--check` is echo-only, but an explicit `--render` still wins.
+        assert_eq!(mode(&["--render", "--check"]), RenderMode::Exact);
+    }
+
+    #[test]
+    fn render_and_preview_are_mutually_exclusive() {
+        assert!(Cli::try_parse_from(["openrscad", "--render", "--preview", "m.scad"]).is_err());
+    }
 }

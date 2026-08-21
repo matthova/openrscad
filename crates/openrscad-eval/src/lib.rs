@@ -332,6 +332,35 @@ struct Interp<'a> {
     warned: HashSet<(String, usize)>,
 }
 
+/// Which kind of run this is — the value `$preview` reports to the script.
+///
+/// OpenSCAD sets `$preview` false *exactly* when it performs an exact (F6)
+/// render, and true otherwise. Measured against 2024.12.17: STL and other mesh
+/// exports and 2D vector (DXF/SVG) export report `false`; F5 preview, PNG export
+/// without `--render`, `--export-format=echo`, and `.csg` export report `true`.
+///
+/// Hosts must pass this explicitly rather than assume: a script that branches on
+/// `$preview` picks a *different model*, so seeding the wrong mode exports the
+/// wrong object with no diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderMode {
+    /// F5-style preview, echo-only, or raster preview: `$preview == true`.
+    Preview,
+    /// F6-style exact render or geometry export: `$preview == false`.
+    ///
+    /// The default, because the costly mistake is claiming preview during an
+    /// export that a user will 3D-print.
+    #[default]
+    Exact,
+}
+
+impl RenderMode {
+    /// The `$preview` value this mode seeds.
+    pub fn is_preview(self) -> bool {
+        matches!(self, RenderMode::Preview)
+    }
+}
+
 /// Evaluate a parsed program into a CSG tree plus console output (no file
 /// access; `include`/`use` become warnings).
 pub fn eval_program(prog: &Program) -> EResult<EvalOutput> {
@@ -374,19 +403,37 @@ pub fn eval_program_with_budget(
     base_dir: &str,
     budget: u64,
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, &[], budget)
+    eval_program_impl(prog, resolver, base_dir, &[], budget, RenderMode::default())
 }
 
 /// Like [`eval_program_with`], but with customizer / `-D`-style parameter
 /// overrides: each `(name, value)` replaces the main file's top-level
 /// assignment of `name` (the override wins, matching OpenSCAD's `-D`).
+///
+/// Evaluates in [`RenderMode::Exact`]. A host that is previewing, echoing, or
+/// rendering a raster preview must call [`eval_program_with_mode`] instead.
 pub fn eval_program_with_params(
     prog: &Program,
     resolver: &dyn FileResolver,
     base_dir: &str,
     overrides: &[(String, Value)],
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX)
+    eval_program_with_mode(prog, resolver, base_dir, overrides, RenderMode::default())
+}
+
+/// Like [`eval_program_with_params`], but with an explicit [`RenderMode`], which
+/// is what the script sees as `$preview`.
+///
+/// A `$preview` supplied in `overrides` (OpenSCAD's `-D '$preview=true'`) still
+/// wins over `mode`.
+pub fn eval_program_with_mode(
+    prog: &Program,
+    resolver: &dyn FileResolver,
+    base_dir: &str,
+    overrides: &[(String, Value)],
+    mode: RenderMode,
+) -> EResult<EvalOutput> {
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, mode)
 }
 
 fn eval_program_impl(
@@ -395,6 +442,7 @@ fn eval_program_impl(
     base_dir: &str,
     overrides: &[(String, Value)],
     fuel: u64,
+    mode: RenderMode,
 ) -> EResult<EvalOutput> {
     let mut base = Scope::default();
     base.vars
@@ -406,7 +454,7 @@ fn eval_program_impl(
     globals.insert("$fa".to_string(), Value::Number(12.0));
     globals.insert("$fs".to_string(), Value::Number(2.0));
     globals.insert("$t".to_string(), Value::Number(0.0));
-    globals.insert("$preview".to_string(), Value::Bool(true));
+    globals.insert("$preview".to_string(), Value::Bool(mode.is_preview()));
     // Viewport variables (the frontend overrides these with the live camera;
     // these defaults let scripts read them off-viewport, e.g. in the CLI).
     globals.insert(

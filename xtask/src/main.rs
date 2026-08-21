@@ -151,7 +151,15 @@ fn extract_tests(file: &str, raw: &str) -> Vec<Bosl2Block> {
 fn bosl2_block_passes(b: &Bosl2Block, dir_str: &str) -> bool {
     match openrscad_syntax::parse(&b.script) {
         Ok(prog) => {
-            let result = openrscad_eval::eval_program_with(&prog, &DiskResolver, dir_str);
+            // Function/assert blocks only; no render happens, so `$preview` is
+            // true as it would be under `--export-format=echo`.
+            let result = openrscad_eval::eval_program_with_mode(
+                &prog,
+                &DiskResolver,
+                dir_str,
+                &[],
+                openrscad_eval::RenderMode::Preview,
+            );
             if b.expect_success {
                 matches!(result, Ok(out) if out.asserts_run > 0)
             } else {
@@ -809,7 +817,16 @@ fn openrscad_echo(case: &Path) -> Vec<String> {
         .map(|d| d.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into());
     match openrscad_syntax::parse(&src) {
-        Ok(prog) => match openrscad_eval::eval_program_with(&prog, &DiskResolver, &dir) {
+        // The oracle runs `--export-format=echo`, which performs no render, so
+        // upstream reports `$preview == true`. Match that or the gate compares
+        // two different modes.
+        Ok(prog) => match openrscad_eval::eval_program_with_mode(
+            &prog,
+            &DiskResolver,
+            &dir,
+            &[],
+            openrscad_eval::RenderMode::Preview,
+        ) {
             Ok(out) => out.echoes,
             Err(e) => vec![format!("ERROR: {}", e.message)],
         },
@@ -1221,6 +1238,8 @@ fn openrscad_mesh(case: &Path) -> Result<Mesh, String> {
         .map(|d| d.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into());
     let prog = openrscad_syntax::parse(&src).map_err(|e| format!("parse: {}", e.message))?;
+    // The oracle exports binary STL, an exact render, so `$preview == false`
+    // (the default mode) on both sides.
     let out = openrscad_eval::eval_program_with(&prog, &DiskResolver, &dir)
         .map_err(|e| format!("eval: {}", e.message))?;
     openrscad_geom::render(&out.node).map_err(|e| format!("render: {e}"))

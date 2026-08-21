@@ -61,20 +61,6 @@ Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
 These are the release blockers. Each produces a wrong answer with no warning on
 stdout or stderr.
 
-### A-L01 — `$preview` is `true` during exact render and export
-
-| | |
-|---|---|
-| repro | `if ($preview) sphere(20); else cube(10);` |
-| OpenSCAD | takes the `else` branch during `-o` export → volume **1000**, 12 triangles |
-| OpenRSCAD | takes the `if` branch → volume **32902.9**, 896 triangles |
-| delta | wrong branch: a preview-only model is exported as the deliverable |
-| class | S · gap `F-L2` · manifest `special.preview` |
-| closes when | evaluation mode is an explicit input (preview vs exact), with a corpus case asserting the exported branch on CLI, wasm, npm, and desktop |
-
-`echo($preview)` alone is not a sufficient test: both engines print `true` in
-echo-only mode. The atom is specifically about the render/export path.
-
 ### A-G01…A-G04 — invalid dimensions build solids instead of nothing
 
 OpenSCAD treats a non-positive dimension as "no geometry" and writes no file.
@@ -145,9 +131,10 @@ OpenSCAD's volume moves with refinement while OpenRSCAD's is pinned at 1122.01 �
 **up to +16.4%**. This is the dominant error term in the twisted-extrude family,
 and pinning `slices` (the obvious workaround for A-G06) does not avoid it.
 
-class S · gap `F-G3` · manifest `module.linear_extrude.implicit_slices` (needs a
-separate entry). Closes when profile refinement is applied independently of the
-slice count, gated by the fixed-`slices` × varying-`$fn` matrix above.
+class S · gap `F-G3` · manifest `module.linear_extrude.implicit_slices` (shared
+with A-G06; this atom warrants its own entry). Closes when profile refinement is
+applied independently of the slice count, gated by the fixed-`slices` ×
+varying-`$fn` matrix above.
 
 ### A-X01 — `-o out.csg` silently writes binary STL
 
@@ -156,7 +143,7 @@ slice count, gated by the fixed-`slices` × varying-`$fn` matrix above.
 | repro | `openrscad -o out.csg model.scad` where `model.scad` is `cube(3);` |
 | OpenSCAD | writes the CSG tree: `cube(size = [3, 3, 3], center = false);` |
 | OpenRSCAD | writes 684 bytes of **binary STL** named `out.csg`, prints `wrote out.csg`, exits 0 |
-| class | S · gap `F-I4` · manifest `export.csg` |
+| class | S · gaps `F-I4`, `F-X1` · manifest `export.csg` |
 | closes when | `.csg` either serializes the operation tree or fails with an unsupported-format error; CLI fixture asserts the file is not STL |
 
 The manifest classifies `export.csg` as `missing`, which understates it: the
@@ -170,7 +157,7 @@ tree gets a mesh with the wrong extension.
 | repro | `openrscad -o out.foo model.scad` |
 | OpenSCAD | `Invalid suffix foo. Either add a valid suffix or specify one using the --export-format option.` |
 | OpenRSCAD | writes binary STL to `out.foo`, exits 0 |
-| class | S · gap `F-I4` (CLI parity) · manifest — no entry yet |
+| class | S · gap `F-X1` · manifest `export.suffix_validation` |
 | closes when | unrecognized suffixes are rejected, or an explicit format flag is required; CLI test asserts a non-zero exit |
 
 A-X01 is a consequence of A-X02, but they close differently: A-X02 is CLI
@@ -289,15 +276,54 @@ golden both exist.
 
 ---
 
+## Closed
+
+### A-L01 — `$preview` was `true` during exact render and export — **closed**
+
+| | |
+|---|---|
+| repro | `if ($preview) sphere(20); else cube(10);` |
+| OpenSCAD | takes the `else` branch during `-o` export → volume **1000**, 12 triangles |
+| OpenRSCAD (before) | took the `if` branch → volume **32902.9**, 896 triangles |
+| OpenRSCAD (now) | volume **1000**, 12 triangles |
+| was | S · gap `F-L2` · manifest `special.preview`, now `verified` |
+| guarded by | `corpus/geom/preview_branch.scad` (exact side, binary-STL oracle) and `corpus/echo/preview_mode.scad` (preview side, echo oracle) |
+
+Evaluation mode became an explicit `RenderMode` input instead of a hardcoded
+`true`. The measured upstream rule — `$preview` is false *exactly* when an exact
+render happens — now holds on every path:
+
+| invocation | OpenSCAD | OpenRSCAD |
+|---|---|---|
+| `-o out.stl` (and other mesh formats) | false | false |
+| `-o out.dxf` / `-o out.svg` | false | false |
+| no output (stats) | n/a | false |
+| `-o out.png` | true | true |
+| `--render -o out.png` | false | false |
+| `--export-format=echo` / `--check` | true | true |
+| `-D '$preview=true'` | true | true |
+
+Both gates were needed: pinning only the export side would let a regression flip
+echo-only runs to `false`, and pinning only echo would not have caught the
+original bug at all. The two corpus cases disagree with each other by design —
+that is what makes the mode observable.
+
+Hosts now choose explicitly rather than inherit a default: wasm and desktop
+derive the mode from the fast-preview flag they already thread, the LSP uses
+preview for analysis and live rendering but exact for its `openrscad.render`
+export command, and `xtask echo`/`xtask geom` match the mode of the oracle
+invocation each one compares against.
+
 ## Ledger
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 9 | A-L01, A-G01…A-G07, A-X01, A-X02 |
+| S — silent | 9 | A-G01…A-G07, A-X01, A-X02 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
+| closed | 1 | A-L01 |
 
 Two of the silent atoms (A-G07, A-X01/A-X02) were found while measuring for this
 document and are finer-grained than the corresponding `COMPAT.md` prose.

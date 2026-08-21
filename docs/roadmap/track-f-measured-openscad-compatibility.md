@@ -55,15 +55,16 @@ Each manifest entry has exactly one status:
 
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
-| `xtask echo` | 25/25 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 81/81 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask echo` | 26/26 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
+| `xtask geom` | 82/82 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 503/513 blocks | broad real-library function behavior | all BOSL2 modules or the ten expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 181 surfaces: 106 `verified`, 50
+The executable manifest currently classifies 182 surfaces: 107 `verified`, 50
 `implemented` but not yet oracle-proven, 23 `missing`, one warned divergence,
-and one permanent divergence. Of those, 176 belong to the 2021.01 core or its
-retained deprecated surface.
+and one permanent divergence. Of those, 177 belong to the 2021.01 core or its
+retained deprecated surface. Every confirmed difference is decomposed into a
+measured repro in the [compatibility atom register](../compat-atoms.md).
 
 The geometry oracle compares volume (±0.1%), bounding box and centroid
 (±0.01 mm), components, and manifoldness. It does **not** compare bytes, vertex
@@ -78,9 +79,9 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 
 | id | gap | current effect | first fix |
 |---|---|---|---|
-| F-L2 | `$preview` is seeded `true` for every native evaluation. | Exact renders and exports can take a script's preview-only branch. | Make evaluation mode explicit: true only for fast/F5-style preview, false for exact render/export. Test CLI, wasm, desktop, and npm paths. |
 | F-G2 | Invalid primitive dimensions are accepted. | Negative cube/square dimensions, cylinder height/radii, and extrusion height produce solids where OpenSCAD produces no geometry. | Add shared validation, matching warnings, and empty-node behavior with oracle cases. |
-| F-G3 | `linear_extrude` omits documented refinement behavior. | `segments` is ignored and omitted `slices` does not follow `$fn`; a twisted `$fn=40` repro differs by about 14% in volume. | Implement the documented slice/refinement rules and add twist × `$fn` × `segments` corpus cases. |
+| F-G3 | `linear_extrude` omits documented refinement behavior. | `segments` is ignored, omitted `slices` does not follow `$fn`, and the 2D profile is never re-tessellated under twist — the last is not avoided by pinning `slices` and dominates the error (up to +16.4% volume). | Implement the documented slice/refinement rules and add twist × `$fn` × `segments` corpus cases, including a fixed-`slices` × varying-`$fn` matrix. |
+| F-X1 | Unsupported export suffixes silently produce binary STL. | `-o out.csg` writes STL bytes named `.csg`, and any unrecognized suffix does the same; OpenSCAD rejects an invalid suffix. | Reject unknown suffixes; serialize the operation tree for `.csg` (see F-I4). |
 
 ### P1 — missing core surface or broad fidelity work
 
@@ -126,7 +127,9 @@ Land one behavior family per commit, each with a black-box oracle repro:
 1. ~~F-G1 builtin signature fixes and a table-driven binding test.~~ Initial
    confirmed cases are fixed; the manifest-wide audit remains.
 2. ~~F-L1 default-expression scope/laziness in tree-walk and VM paths.~~ Complete.
-3. F-L2 `$preview` propagation across every host/export path.
+3. ~~F-L2 `$preview` propagation across every host/export path.~~ Complete.
+   Evaluation mode is an explicit `RenderMode` chosen per host; both directions
+   are oracle-gated (`geom:preview_branch` exact, `echo:preview_mode` preview).
 4. ~~F-L3/F-L4 missing baseline constructs.~~ Complete.
 5. ~~F-L5 scalar/list/builtin edge semantics~~; F-G2 primitive validation remains.
 

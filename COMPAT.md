@@ -18,15 +18,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **Exact renders still evaluate `$preview` as `true`.** The evaluator seeds the
-  value independently of the selected render path, so exact exports can choose a
-  preview-only model branch.
-
-  ```scad
-  if ($preview) sphere(20); else cube(10);
-  // An exact STL export should contain the cube.
-  ```
-
 - **Invalid dimensions create solids instead of empty geometry.** Negative
   cube/square dimensions, cylinder height/radii, and extrusion height are not
   rejected consistently.
@@ -125,9 +116,24 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **25/25**, geometry **81/81**, and BOSL2
+The current gates are `corpus/echo` **26/26**, geometry **82/82**, and BOSL2
 **503/513** with ten explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`$preview` follows the render path.** Evaluation mode is now an explicit
+  input rather than a hardcoded `true`, so a script that branches on `$preview`
+  gets the branch matching the work actually being done. Measured against
+  OpenSCAD 2024.12.17, which reports `false` exactly when an exact render
+  happens: mesh export, 2D vector (DXF/SVG) export, and `--render`; and `true`
+  for F5 preview, PNG rasters, and echo-only runs. Both directions are gated —
+  `corpus/geom/preview_branch.scad` pins the exact side against the binary-STL
+  oracle and `corpus/echo/preview_mode.scad` pins the preview side against the
+  echo oracle. The CLI gains OpenSCAD's `--render`/`--preview` overrides, and
+  `-D '$preview=…'` still wins over both.
+
+  ```scad
+  if ($preview) sphere(20); else cube(10); // an STL export is now the cube
+  ```
 
 - **Initial Track F closures.** Named `multmatrix`, positional cylinder/text
   arguments, `intersection_for`, `$parent_modules`/`parent_module()`, raw

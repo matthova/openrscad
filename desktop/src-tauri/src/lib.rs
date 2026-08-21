@@ -255,11 +255,18 @@ fn eval_and_render(
             .collect(),
         disk: DiskResolver::new(),
     };
-    let out = openrscad_eval::eval_program_with_params(
+    // The fast preview is F5-style, so `$preview` is true there and false for
+    // the exact render that backs stats and export.
+    let out = openrscad_eval::eval_program_with_mode(
         &program,
         &resolver,
         dir,
         &overrides(names, values),
+        if preview {
+            openrscad_eval::RenderMode::Preview
+        } else {
+            openrscad_eval::RenderMode::Exact
+        },
     )
     .map_err(|e| EngineError {
         message: format!("evaluation error: {}", e.message),
