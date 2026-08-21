@@ -127,23 +127,6 @@ edge length rather than the twist rule's budget apportionment, and the combined
 twist+scale case does not yet fit either. class S · gap `F-G3` · manifest
 `module.linear_extrude.scale_refinement`.
 
-### A-L08 — `$fn`/`$fa`/`$fs` passed as call arguments do not reach children
-
-| | |
-|---|---|
-| repro | `linear_extrude(height=1, $fn=32) circle(5);` |
-| OpenSCAD | the circle sees `$fn=32` → 32-gon, area **78.036** |
-| OpenRSCAD | the circle falls back to `$fa`/`$fs` → 16-gon, area **76.537** (−1.9%) |
-| class | S · gap `F-L7` · manifest `syntax.arguments.special_variable_scope` |
-| closes when | a `$`-prefixed argument to a module call is pushed onto the dynamic frame for that call's children |
-
-`$fn=32; linear_extrude(height=1) circle(5);` (outer variable) and
-`circle(5,$fn=32)` (on the child itself) are both correct, so this is specific to
-the argument form. OpenSCAD scopes a `$` argument dynamically over the callee's
-children; we bind it only for the call itself. Found while measuring A-G07 —
-it is an evaluator scoping bug, not a geometry one, and it silently changes the
-resolution of every child of such a call.
-
 ### A-X01 — `-o out.csg` silently writes binary STL
 
 | | |
@@ -286,6 +269,41 @@ golden both exist.
 
 ## Closed
 
+### A-L08 — `$` arguments did not reach children — **closed**
+
+| | |
+|---|---|
+| repro | `linear_extrude(height=1, $fn=32) circle(5);` |
+| OpenSCAD | the circle sees `$fn=32` → 32-gon, area **78.036** |
+| OpenRSCAD (before) | fell back to `$fa`/`$fs` → 16-gon, area **76.537** (−1.9%) |
+| OpenRSCAD (now) | **78.036** |
+| was | S · gap `F-L7` · manifest `syntax.arguments.special_variable_scope`, now `verified` |
+| guarded by | `corpus/echo/special_args.scad`, `corpus/geom/special_args_fn.scad` |
+
+A `$` argument is dynamically scoped over the callee *and* everything under it.
+It was reaching user module bodies but not builtin modules' children, and
+function calls dropped it entirely — it is not a declared parameter, so the
+binding map discarded it before the body ran.
+
+The subtle part is that this must not cost an extra evaluation. Upstream
+evaluates every argument exactly once, in the caller's scope, so all of these
+had to keep holding:
+
+| repro | expected | why it constrains the fix |
+|---|---|---|
+| `m($fa=$fa/2)` with `$fa=12` | 6 inside, 12 after | publishing before the rest are evaluated would compound to 3 |
+| `m($fn=7, $fa=$fn)` with `$fn=0` | `7, 0` | the second argument must not see the first |
+| `m($fn=echo("x") 8)` | `"x"` once | a naive push-then-bind evaluates the expression twice |
+
+So the values are computed once up front in the caller's scope, then published
+into a dynamic frame that wraps the call; the binders read them back instead of
+re-evaluating. `translate()` and friends never look at named arguments at all,
+which is why filling the frame from the argument binder alone was not enough.
+
+This retired two BOSL2 expected failures — both `test_segs`, which exercises
+exactly this idiom — taking that gate from 503/513 to **505/513** and shrinking
+the expected-failure list from ten to eight.
+
 ### A-G05, A-G06, A-G07 — `linear_extrude` refinement under twist — **closed**
 
 Three atoms in one code path, all silent volume errors, all now exact against
@@ -378,12 +396,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 9 | A-G01…A-G04, A-G09, A-G10, A-L08, A-X01, A-X02 |
+| S — silent | 8 | A-G01…A-G04, A-G09, A-G10, A-X01, A-X02 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
 | M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 4 | A-L01, A-G05, A-G06, A-G07 |
+| closed | 5 | A-L01, A-G05, A-G06, A-G07, A-L08 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

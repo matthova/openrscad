@@ -1115,11 +1115,53 @@ impl Interp<'_> {
         }
     }
 
+    /// Evaluate the `$`-prefixed arguments of a call, in the *caller's* scope.
+    ///
+    /// Every argument is evaluated here before any of them is published, which
+    /// is what makes `m($fa=$fa/2)` halve the caller's value rather than
+    /// compound, and `m($fn=7, $fa=$fn)` read the caller's `$fn` for the second
+    /// argument. Both match OpenSCAD 2024.12.
+    fn special_args(&mut self, args: &[Arg]) -> EResult<FastMap<String, Value>> {
+        let mut map = FastMap::default();
+        for a in args {
+            if let Some(n) = &a.name {
+                if n.starts_with('$') {
+                    let v = self.eval_expr(&a.value)?;
+                    map.insert(n.clone(), v);
+                }
+            }
+        }
+        Ok(map)
+    }
+
     fn dispatch_module(
         &mut self,
         name: &str,
         args: &[Arg],
         children: &[Spanned<Stmt>],
+    ) -> EResult<Node> {
+        // A `$` argument is dynamically scoped over the callee *and* everything
+        // under it, so `linear_extrude($fn=32) circle(5)` has to reach the
+        // circle. Pre-evaluating here covers every builtin uniformly, including
+        // the ones that never look at named arguments (`translate`); the
+        // binders below then take these values instead of evaluating a second
+        // time, so each argument expression still runs exactly once.
+        let specials = self.special_args(args)?;
+        if specials.is_empty() {
+            return self.dispatch_module_inner(name, args, children, false);
+        }
+        self.specials.push(specials);
+        let r = self.dispatch_module_inner(name, args, children, true);
+        self.specials.pop();
+        r
+    }
+
+    fn dispatch_module_inner(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        children: &[Spanned<Stmt>],
+        specials_prebound: bool,
     ) -> EResult<Node> {
         match name {
             "cube" => self.b_cube(args),
@@ -1165,7 +1207,7 @@ impl Interp<'_> {
             "children" => self.b_children(args),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
-                    self.instantiate_module(name, &def, args, children)
+                    self.instantiate_module(name, &def, args, children, specials_prebound)
                 } else {
                     self.warn(format!("Ignoring unknown module '{name}'"));
                     Ok(Node::Empty)
@@ -1187,6 +1229,7 @@ impl Interp<'_> {
         def: &Rc<ModClosure>,
         args: &[Arg],
         children: &[Spanned<Stmt>],
+        specials_prebound: bool,
     ) -> EResult<Node> {
         // Guard against unbounded module recursion (shared budget with function
         // calls). Like OpenSCAD, hitting the limit aborts the enclosing top-level
@@ -1203,7 +1246,7 @@ impl Interp<'_> {
         self.module_stack.push(name.to_string());
         // Arguments are evaluated in the caller's scope; the body runs in the
         // module's captured (lexical) environment.
-        let bound = match self.bind_params(&def.params, args, &def.env) {
+        let bound = match self.bind_params(&def.params, args, &def.env, specials_prebound) {
             Ok(bound) => bound,
             Err(error) => {
                 self.module_stack.pop();
@@ -1888,6 +1931,15 @@ impl Interp<'_> {
         let mut map = FastMap::default();
         let mut pos = 0;
         for a in args {
+            // `$` arguments were evaluated into the dynamic frame by
+            // `dispatch_module`; reading them back keeps each expression to a
+            // single evaluation.
+            if let Some(n) = &a.name {
+                if n.starts_with('$') {
+                    map.insert(n.clone(), self.lookup_var(n));
+                    continue;
+                }
+            }
             let v = self.eval_expr(&a.value)?;
             match &a.name {
                 Some(n) => {
@@ -1909,6 +1961,7 @@ impl Interp<'_> {
         params: &[Param],
         args: &[Arg],
         definition_env: &[ScopeRef],
+        specials_prebound: bool,
     ) -> EResult<FastMap<String, Value>> {
         let mut map = FastMap::default();
 
@@ -1917,6 +1970,17 @@ impl Interp<'_> {
         // become locals (with an OpenSCAD warning omitted here), so retain them.
         let mut pos = 0;
         for a in args {
+            // `dispatch_module` already evaluated the `$` arguments of a module
+            // call; re-evaluating would run their side effects twice and let
+            // `$fa=$fa/2` compound.
+            if specials_prebound {
+                if let Some(n) = &a.name {
+                    if n.starts_with('$') {
+                        map.insert(n.clone(), self.lookup_var(n));
+                        continue;
+                    }
+                }
+            }
             let v = self.eval_expr(&a.value)?;
             match &a.name {
                 Some(n) => {
@@ -2116,6 +2180,23 @@ impl Interp<'_> {
     /// reused in a loop instead of recursing, so accumulator-style recursion
     /// runs to arbitrary depth without overflowing the (small, on wasm) stack.
     fn call_function(&mut self, f: &Rc<FnClosure>, args: &[Arg]) -> EResult<Value> {
+        // A `$` argument is dynamically scoped over the callee, exactly as for a
+        // module call — `f(2, $fn=10)` must let the body read `$fn`. It is not a
+        // declared parameter, so the binding map would otherwise drop it. The
+        // positional fast path below cannot apply here (a `$` argument is
+        // named), so this always takes the binding route.
+        if args
+            .iter()
+            .any(|a| a.name.as_deref().is_some_and(|n| n.starts_with('$')))
+        {
+            let specials = self.special_args(args)?;
+            self.specials.push(specials);
+            let r = self
+                .bind_params(&f.params, args, &f.env, true)
+                .and_then(|bound| self.run_bound(f, bound));
+            self.specials.pop();
+            return r;
+        }
         // Positional fast path for compiled functions: evaluate arguments
         // straight into the VM's local frame, skipping the per-call binding map.
         if args.iter().all(|a| a.name.is_none()) && args.len() <= f.params.len() {
@@ -2147,7 +2228,7 @@ impl Interp<'_> {
                 return self.run_chunk(f, chunk, locals);
             }
         }
-        let bound = self.bind_params(&f.params, args, &f.env)?;
+        let bound = self.bind_params(&f.params, args, &f.env, false)?;
         self.run_bound(f, bound)
     }
 
@@ -2316,7 +2397,7 @@ impl Interp<'_> {
                 // A self-call in tail position becomes a loop iteration.
                 if let Some(g) = self.lookup_func(name) {
                     if Rc::ptr_eq(&g, f) {
-                        let next = self.bind_params(&f.params, args, &f.env)?;
+                        let next = self.bind_params(&f.params, args, &f.env, false)?;
                         return Ok(TailResult::TailCall(next));
                     }
                 }

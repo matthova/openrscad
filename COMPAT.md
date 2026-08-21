@@ -50,16 +50,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   linear_extrude(height=7, twist=200, scale=[0.4,1.6]) square([8,5]);
   ```
 
-- **`$fn`/`$fa`/`$fs` passed as call arguments do not reach children.** A
-  `$`-prefixed argument binds for the call itself but is not pushed onto the
-  dynamic frame its children evaluate in, so the child resolves its own
-  fragments from the enclosing scope instead.
-
-  ```scad
-  linear_extrude(height=1, $fn=32) circle(5);   // 16-gon here, 32-gon upstream
-  $fn = 32; linear_extrude(height=1) circle(5); // both correct
-  ```
-
 - **Unsupported export suffixes silently produce binary STL.** `-o out.csg` writes
   STL bytes named `.csg` and exits 0 rather than serializing a CSG tree, and any
   unrecognized suffix does the same; OpenSCAD rejects an invalid suffix outright.
@@ -98,11 +88,10 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   `.csg` operation tree.
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
-  503/513 pinned blocks across 15 files. The expected failures are
+  505/513 pinned blocks across 15 files. The expected failures are
   `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
-  `test_hstack`, `test_typeof`, two `test_segs` blocks, `test_f_acos`, and
-  `test_struct_val`. This is broad library evidence, not the complete BOSL2
-  module suite.
+  `test_hstack`, `test_typeof`, `test_f_acos`, and `test_struct_val`. This is
+  broad library evidence, not the complete BOSL2 module suite.
 
 ## Warned divergences
 
@@ -137,9 +126,25 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **26/26**, geometry **90/90**, and BOSL2
-**503/513** with ten explicit expected failures. Individual closures below state
+The current gates are `corpus/echo` **27/27**, geometry **91/91**, and BOSL2
+**505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`$` arguments are dynamically scoped over the callee and its children.**
+  `linear_extrude($fn=32) circle(5)` now gives the circle 32 fragments instead
+  of resolving it from `$fa`/`$fs`, and the same holds for builtin modules, user
+  modules and their forwarded `children()`, and function calls (where a `$`
+  argument is not a declared parameter and was previously dropped). Each
+  argument expression still evaluates exactly once, in the caller's scope, so
+  `m($fa=$fa/2)` halves rather than compounds and `m($fn=7, $fa=$fn)` reads the
+  caller's `$fn`; nothing leaks past the call. This retired two BOSL2 expected
+  failures (both `test_segs`), taking that gate from 503/513 to 505/513. Gated by
+  `corpus/echo/special_args.scad` and `corpus/geom/special_args_fn.scad`.
+
+  ```scad
+  linear_extrude(height=1, $fn=32) circle(5);  // 32-gon, as upstream
+  function f(x) = x * $fn; echo(f(2, $fn=10)); // 20
+  ```
 
 - **`linear_extrude` refinement under twist.** `segments=` is honoured, the
   implicit slice count follows `$fn`/`$fa`/`$fs`, and the 2D profile is

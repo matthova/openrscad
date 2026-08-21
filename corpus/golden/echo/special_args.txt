@@ -1,0 +1,10 @@
+ECHO: "child", 6
+ECHO: "after", 12
+ECHO: "body", 7
+ECHO: "forwarded", 7
+ECHO: "still", 0
+ECHO: "two", 7, 0
+ECHO: "fn", 20, 0
+ECHO: "nested", 9
+ECHO: "arg-evaluated"
+ECHO: "ran"
