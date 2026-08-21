@@ -157,7 +157,14 @@ fn diagnose(source: &str, base_dir: &str, overlay: HashMap<String, String>) -> V
         overlay,
         libs: openscad_libs(),
     };
-    match openrscad_eval::eval_program_with_params(&program, &resolver, base_dir, &[]) {
+    // Editor analysis is F5-style: `$preview` is true, as in the OpenSCAD GUI.
+    match openrscad_eval::eval_program_with_mode(
+        &program,
+        &resolver,
+        base_dir,
+        &[],
+        openrscad_eval::RenderMode::Preview,
+    ) {
         Ok(out) => out
             .warnings
             .into_iter()
@@ -432,7 +439,15 @@ fn render_preview(source: &str, base_dir: &str, overlay: Overlay) -> PreviewMsg 
         overlay,
         libs: openscad_libs(),
     };
-    let out = match openrscad_eval::eval_program_with_params(&program, &resolver, base_dir, &[]) {
+    // Live preview is F5-style, so `$preview` is true here; the `openrscad.render`
+    // export command above evaluates exactly.
+    let out = match openrscad_eval::eval_program_with_mode(
+        &program,
+        &resolver,
+        base_dir,
+        &[],
+        openrscad_eval::RenderMode::Preview,
+    ) {
         Ok(o) => o,
         Err(e) => return PreviewMsg::Err(format!("evaluation error: {}", e.message)),
     };

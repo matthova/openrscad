@@ -256,6 +256,8 @@ pub fn export_2d(
         files: file_names.into_iter().zip(file_contents).collect(),
         bins: bins_from_b64(bin_names, bin_data),
     };
+    // DXF/SVG export is an exact render upstream, so `$preview` is false (the
+    // default mode).
     let Ok(eval) = openrscad_eval::eval_program_with_params(&program, &resolver, ".", &overrides)
     else {
         return String::new();
@@ -538,20 +540,26 @@ fn render_impl(
         bins: bins_from_b64(bin_names, bin_data),
     };
 
-    // Evaluate.
-    let eval = match openrscad_eval::eval_program_with_params(&program, &resolver, ".", &overrides)
-    {
-        Ok(o) => o,
-        Err(e) => {
-            let diag = openrscad_eval::eval_error_diagnostic(&e);
-            return RenderResult::from_error(
-                format!("evaluation error: {}", e.message),
-                String::new(),
-                String::new(),
-                openrscad_eval::diagnostics_json(Some(&diag), &[]),
-            );
-        }
+    // Evaluate. The fast-preview render is F5-style, so it is also what
+    // `$preview` reports; the exact render (which backs stats and export) is F6.
+    let mode = if preview {
+        openrscad_eval::RenderMode::Preview
+    } else {
+        openrscad_eval::RenderMode::Exact
     };
+    let eval =
+        match openrscad_eval::eval_program_with_mode(&program, &resolver, ".", &overrides, mode) {
+            Ok(o) => o,
+            Err(e) => {
+                let diag = openrscad_eval::eval_error_diagnostic(&e);
+                return RenderResult::from_error(
+                    format!("evaluation error: {}", e.message),
+                    String::new(),
+                    String::new(),
+                    openrscad_eval::diagnostics_json(Some(&diag), &[]),
+                );
+            }
+        };
     let echo = eval.echoes.join("\n");
     let mut warnings = eval
         .warnings
@@ -735,6 +743,57 @@ mod tests {
             preview.triangle_count(),
             exact.triangle_count(),
             "the exact union re-meshes the overlap; preview does not"
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn preview_variable_follows_the_render_path() {
+        // A `$preview` branch must resolve to the branch that matches the render
+        // being performed: the exact path (which also backs stats and export)
+        // is F6, the fast path is F5. Seeding true for the exact render would
+        // export the sphere — the model the user did not ask for.
+        let src = "echo($preview); if ($preview) sphere(20); else cube(10);";
+        let exact = render_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+        let preview =
+            render_preview_with_files(src, vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+        assert!(exact.ok() && preview.ok());
+        assert_eq!(exact.echo().trim(), "ECHO: false");
+        assert_eq!(preview.echo().trim(), "ECHO: true");
+        // The exact render is the cube; volume is the unambiguous witness.
+        assert!(
+            (exact.volume() - 1000.0).abs() < 1e-6,
+            "exact render took the preview branch: volume {}",
+            exact.volume()
+        );
+        assert!(
+            preview.volume() > 30000.0,
+            "preview render should be the sphere: volume {}",
+            preview.volume()
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn preview_variable_is_false_for_2d_vector_export() {
+        // DXF/SVG export is an exact render upstream, so it takes the F6 branch.
+        let src = "if ($preview) circle(20); else square(10);";
+        let svg = export_2d(
+            src,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            "svg",
+        );
+        assert!(!svg.is_empty());
+        // The square's corner; a circle of r=20 would reach ±20.
+        assert!(
+            !svg.contains("20,") && !svg.contains("-20"),
+            "2D export took the preview branch: {svg}"
         );
     }
 

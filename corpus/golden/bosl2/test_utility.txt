@@ -1,6 +1,7 @@
 1	test_num_true
 3	test_is_type
 4	test_is_def
+5	test_segs
 6	test_is_str
 7	test_is_int
 8	test_is_integer
@@ -19,6 +20,7 @@
 21	test_get_anchor
 22	test_get_radius
 23	test_scalar_vec3
+24	test_segs
 25	test_all_integer
 26	test_u_add
 27	test_u_sub

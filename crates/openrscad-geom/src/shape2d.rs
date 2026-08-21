@@ -883,17 +883,198 @@ pub fn flat_mesh(contours: &[Contour]) -> Mesh {
     mesh
 }
 
+/// Segments each edge of one closed contour is split into, matching OpenSCAD
+/// 2024.12.
+///
+/// The outline gets a budget of `C` segments — `segments=` if given, else `$fn`,
+/// else `360/$fa` — apportioned across edges in proportion to their length. An
+/// edge whose share is below one segment still gets one and leaves the pool,
+/// shrinking the budget for the rest. Whole segments are handed out first and
+/// the remainder goes to the largest fractional shares; a tie wider than the
+/// remaining budget is left unawarded, so an equilateral outline (every share
+/// exactly `x.5`) rounds *down* rather than picking arbitrary edges.
+///
+/// `$fs` then caps each edge independently at `ceil(len / $fs)`, but only when
+/// `$fa` drove the budget — `$fn` and `segments=` are exact requests.
+///
+/// Without twist there is no refinement at all unless `segments=` asks for it:
+/// a straight prism's walls are planar, so extra points would only add
+/// triangles. This is why `$fn=40` alone leaves `square(10)` a 4-gon.
+fn contour_segments(
+    contour: &[Point2],
+    segments: u32,
+    frags: FragmentSpec,
+    twisting: bool,
+) -> Vec<u32> {
+    let n = contour.len();
+    let lens: Vec<f64> = (0..n)
+        .map(|i| {
+            let (a, b) = (contour[i], contour[(i + 1) % n]);
+            (b[0] - a[0]).hypot(b[1] - a[1])
+        })
+        .collect();
+    let budget_total = if segments > 0 {
+        segments as f64
+    } else if !twisting {
+        return vec![1; n];
+    } else if frags.fn_ > 0.0 {
+        frags.fn_
+    } else if frags.fa > 0.0 {
+        360.0 / frags.fa
+    } else {
+        return vec![1; n];
+    };
+
+    let mut out = vec![0u32; n];
+    let mut pool: Vec<usize> = (0..n).filter(|&i| lens[i] > 0.0).collect();
+    for &i in &(0..n).filter(|&i| lens[i] <= 0.0).collect::<Vec<_>>() {
+        out[i] = 1;
+    }
+    let mut budget = budget_total;
+    // Edges too short to earn a whole segment take one and leave the pool.
+    loop {
+        let perim: f64 = pool.iter().map(|&i| lens[i]).sum();
+        if pool.is_empty() || perim <= 0.0 {
+            break;
+        }
+        let under: Vec<usize> = pool
+            .iter()
+            .copied()
+            .filter(|&i| budget * lens[i] / perim < 1.0)
+            .collect();
+        if under.is_empty() {
+            break;
+        }
+        for i in under {
+            out[i] = 1;
+            pool.retain(|&j| j != i);
+            budget -= 1.0;
+        }
+    }
+    if !pool.is_empty() {
+        let perim: f64 = pool.iter().map(|&i| lens[i]).sum();
+        let quota: Vec<f64> = pool.iter().map(|&i| budget * lens[i] / perim).collect();
+        for (k, &i) in pool.iter().enumerate() {
+            out[i] = (quota[k].floor() as u32).max(1);
+        }
+        let mut remaining =
+            budget.round() as i64 - pool.iter().map(|&i| out[i] as i64).sum::<i64>();
+        let mut avail: Vec<usize> = (0..pool.len()).collect();
+        while remaining > 0 && !avail.is_empty() {
+            let top = avail
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, |m, k| m.max(quota[k].fract()));
+            let winners: Vec<usize> = avail
+                .iter()
+                .copied()
+                .filter(|&k| (quota[k].fract() - top).abs() < 1e-9)
+                .collect();
+            // A tie too wide for what is left goes unawarded, and the outline
+            // ends up below its budget.
+            if winners.len() as i64 > remaining {
+                break;
+            }
+            for k in winners {
+                out[pool[k]] += 1;
+                avail.retain(|&j| j != k);
+                remaining -= 1;
+            }
+        }
+    }
+    if segments == 0 && frags.fn_ <= 0.0 && frags.fs > 0.0 {
+        for i in 0..n {
+            let cap = (lens[i] / frags.fs).ceil().max(1.0) as u32;
+            out[i] = out[i].min(cap).max(1);
+        }
+    }
+    out
+}
+
+/// Resample every contour so each edge carries its [`contour_segments`] count.
+fn refine_contours(
+    contours: &[Contour],
+    segments: u32,
+    frags: FragmentSpec,
+    twisting: bool,
+) -> Vec<Contour> {
+    contours
+        .iter()
+        .map(|c| {
+            if c.len() < 2 {
+                return c.clone();
+            }
+            let counts = contour_segments(c, segments, frags, twisting);
+            if counts.iter().all(|&k| k <= 1) {
+                return c.clone();
+            }
+            let mut out = Vec::with_capacity(counts.iter().map(|&k| k as usize).sum());
+            for i in 0..c.len() {
+                let (a, b) = (c[i], c[(i + 1) % c.len()]);
+                for step in 0..counts[i] {
+                    let t = step as f64 / counts[i] as f64;
+                    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// Layers a twisted extrusion is swept in when `slices=` is omitted, matching
+/// OpenSCAD 2024.12.
+///
+/// Two independent limits, whichever is tighter: no slice may twist more than
+/// `$fa` degrees, and no slice may move the outermost profile point further
+/// than `$fs` along its helical path. `$fn`, when set, replaces both with a
+/// plain "`$fn` slices per full revolution".
+fn implicit_slices(twist: f64, height: f64, rmax: f64, frags: FragmentSpec) -> u32 {
+    if twist == 0.0 {
+        return 1;
+    }
+    if frags.fn_ > 0.0 {
+        return ((frags.fn_ * twist.abs() / 360.0).ceil() as u32).max(1);
+    }
+    let arc = rmax * twist.abs().to_radians();
+    let helix = arc.hypot(height.abs());
+    let by_angle = if frags.fa > 0.0 {
+        (twist.abs() / frags.fa).ceil()
+    } else {
+        f64::INFINITY
+    };
+    let by_length = if frags.fs > 0.0 {
+        (helix / frags.fs).ceil()
+    } else {
+        f64::INFINITY
+    };
+    (by_angle.min(by_length) as u32).max(1)
+}
+
 /// `linear_extrude` of the contours to a mesh, cutting out holes (even-odd) in
 /// the caps and giving every contour (outer and hole) a wall loop.
+#[allow(clippy::too_many_arguments)]
 pub fn linear_extrude(
     contours: &[Contour],
     height: f64,
     center: bool,
     twist: f64,
     scale: Point2,
-    slices: u32,
+    slices: Option<u32>,
+    segments: u32,
+    frags: FragmentSpec,
 ) -> Mesh {
-    let (points, ranges, cap_tris) = prepare(contours);
+    // Twisting bends the walls, so the profile is resampled before the caps are
+    // triangulated — OpenSCAD's caps carry the refined points too.
+    let refined = refine_contours(contours, segments, frags, twist != 0.0);
+    let slices = slices.unwrap_or_else(|| {
+        let rmax = refined
+            .iter()
+            .flatten()
+            .map(|p| p[0].hypot(p[1]))
+            .fold(0.0f64, f64::max);
+        implicit_slices(twist, height, rmax, frags)
+    });
+    let (points, ranges, cap_tris) = prepare(&refined);
     let mut mesh = Mesh::new();
     if points.is_empty() {
         return mesh;
@@ -918,15 +1099,37 @@ pub fn linear_extrude(
     let ring = |layer: u32, i: usize| layer * n as u32 + i as u32;
 
     // Walls: each contour range forms a loop at every layer.
+    //
+    // A twisted quad is not planar, so its two diagonals enclose *different*
+    // volumes — on a 32-gon twisted by exactly one vertex step, one diagonal
+    // reproduces the prism exactly and the other cuts ~1.3% off it. Which one
+    // is correct depends on how the wall leans, i.e. on the twist direction
+    // and on whether this contour is an outer (CCW) or a hole (CW), since a
+    // hole's indices run the other way round. Split along `a-c` when those
+    // agree and `b-d` when they do not.
     for &(start, len) in &ranges {
+        let area2: f64 = (0..len)
+            .map(|k| {
+                let p = points[start + k];
+                let q = points[start + (k + 1) % len];
+                p[0] * q[1] - q[0] * p[1]
+            })
+            .sum();
+        let ccw = area2 >= 0.0;
+        let lean_ac = (twist >= 0.0) == ccw;
         for layer in 0..slices {
             for k in 0..len {
                 let i = start + k;
                 let j = start + (k + 1) % len;
                 let (a, b) = (ring(layer, i), ring(layer, j));
                 let (cc, d) = (ring(layer + 1, j), ring(layer + 1, i));
-                mesh.tris.push([a, b, cc]);
-                mesh.tris.push([a, cc, d]);
+                if lean_ac {
+                    mesh.tris.push([a, b, cc]);
+                    mesh.tris.push([a, cc, d]);
+                } else {
+                    mesh.tris.push([a, b, d]);
+                    mesh.tris.push([b, cc, d]);
+                }
             }
         }
     }
@@ -1163,5 +1366,143 @@ mod offset_tests {
             got < convex_area - 10.0,
             "exact {got} not below convex approx {convex_area}"
         );
+    }
+}
+
+#[cfg(test)]
+mod extrude_refinement_tests {
+    use super::*;
+
+    fn spec(fn_: f64, fa: f64, fs: f64) -> FragmentSpec {
+        FragmentSpec { fn_, fa, fs }
+    }
+
+    fn square(side: f64) -> Contour {
+        vec![[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]]
+    }
+
+    fn rect(w: f64, h: f64) -> Contour {
+        vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]]
+    }
+
+    /// Every expectation below was read off OpenSCAD 2024.12.17 by exporting the
+    /// mesh and counting the points on each profile edge.
+    #[test]
+    fn profile_budget_is_apportioned_by_edge_length() {
+        // $fa=12 gives a budget of 30. A square's four edges each want exactly
+        // 7.5, and the four-way tie for the last two segments goes unawarded —
+        // 28, not 30.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 0.01), true),
+            vec![7, 7, 7, 7]
+        );
+        // Unequal edges split the same budget unevenly and do reach 30.
+        assert_eq!(
+            contour_segments(&rect(10.0, 3.0), 0, spec(0.0, 12.0, 0.01), true),
+            vec![12, 3, 12, 3]
+        );
+        // A short edge still takes one segment, and that shrinks the pool the
+        // long edges draw from (14, not 15).
+        assert_eq!(
+            contour_segments(&rect(100.0, 2.0), 0, spec(0.0, 12.0, 0.01), true),
+            vec![14, 1, 14, 1]
+        );
+        // Halving $fa doubles the budget.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(0.0, 6.0, 0.01), true),
+            vec![15, 15, 15, 15]
+        );
+    }
+
+    #[test]
+    fn fs_caps_each_edge_and_fn_replaces_the_budget() {
+        // $fs=2 over a 10-long edge allows 5, below the $fa budget of 7.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 2.0), true),
+            vec![5, 5, 5, 5]
+        );
+        // The cap is a ceiling, so 10/4 = 2.5 rounds up to 3.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 4.0), true),
+            vec![3, 3, 3, 3]
+        );
+        // $fn replaces the budget and disables the $fs cap.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(8.0, 12.0, 4.0), true),
+            vec![2, 2, 2, 2]
+        );
+        // A budget below the edge count still leaves one segment per edge.
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(3.0, 12.0, 2.0), true),
+            vec![1, 1, 1, 1]
+        );
+    }
+
+    #[test]
+    fn segments_overrides_everything_and_applies_without_twist() {
+        assert_eq!(
+            contour_segments(&square(10.0), 8, spec(40.0, 12.0, 2.0), true),
+            vec![2, 2, 2, 2]
+        );
+        // No twist: `segments=` still refines, but `$fn` alone does not.
+        assert_eq!(
+            contour_segments(&square(10.0), 8, spec(0.0, 12.0, 2.0), false),
+            vec![2, 2, 2, 2]
+        );
+        assert_eq!(
+            contour_segments(&square(10.0), 0, spec(40.0, 12.0, 2.0), false),
+            vec![1, 1, 1, 1]
+        );
+    }
+
+    #[test]
+    fn slices_take_the_tighter_of_the_angle_and_helix_limits() {
+        // square(10)'s far corner
+        let r = 10.0f64.hypot(10.0);
+        // $fa=12 caps the twist per slice: ceil(90/12) = 8, tighter than the
+        // helix limit of 13.
+        assert_eq!(implicit_slices(90.0, 10.0, r, spec(0.0, 12.0, 2.0)), 8);
+        // At $fa=6 the angle limit relaxes to 15 and the helix limit binds.
+        assert_eq!(implicit_slices(90.0, 10.0, r, spec(0.0, 6.0, 2.0)), 13);
+        assert_eq!(implicit_slices(360.0, 10.0, r, spec(0.0, 6.0, 2.0)), 45);
+        assert_eq!(implicit_slices(720.0, 10.0, r, spec(0.0, 6.0, 2.0)), 89);
+        // $fn is a flat count per full revolution, rounded up.
+        assert_eq!(implicit_slices(90.0, 10.0, r, spec(40.0, 12.0, 2.0)), 10);
+        assert_eq!(implicit_slices(30.0, 10.0, r, spec(8.0, 12.0, 2.0)), 1);
+        // Sign of the twist does not change the count.
+        assert_eq!(implicit_slices(-90.0, 10.0, r, spec(0.0, 12.0, 2.0)), 8);
+        // No twist, no slicing.
+        assert_eq!(implicit_slices(0.0, 10.0, r, spec(0.0, 12.0, 2.0)), 1);
+    }
+
+    #[test]
+    fn twisted_walls_pick_the_diagonal_that_matches_the_lean() {
+        // A 32-gon twisted by exactly one vertex step per slice is still a
+        // prism; the wrong diagonal shaves ~1.3% off its volume.
+        let n = 32;
+        let poly: Contour = (0..n)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / n as f64;
+                [5.0 * a.cos(), 5.0 * a.sin()]
+            })
+            .collect();
+        let prism = 0.5 * n as f64 * 25.0 * (std::f64::consts::TAU / n as f64).sin() * 10.0;
+        for twist in [90.0, -90.0] {
+            let m = linear_extrude(
+                std::slice::from_ref(&poly),
+                10.0,
+                false,
+                twist,
+                [1.0, 1.0],
+                Some(8),
+                0,
+                spec(32.0, 12.0, 2.0),
+            );
+            let v = m.volume().abs();
+            assert!(
+                (v - prism).abs() < 1e-6,
+                "twist {twist}: volume {v} should be the prism {prism}"
+            );
+        }
     }
 }

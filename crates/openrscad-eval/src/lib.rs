@@ -332,6 +332,42 @@ struct Interp<'a> {
     warned: HashSet<(String, usize)>,
 }
 
+/// A dimension OpenSCAD will actually build geometry from: finite and strictly
+/// positive. Zero, negative, NaN, and infinity all yield an empty result
+/// upstream, and each is easy to miss on its own, so the test lives here.
+fn valid_dim(x: f64) -> bool {
+    x.is_finite() && x > 0.0
+}
+
+/// Which kind of run this is — the value `$preview` reports to the script.
+///
+/// OpenSCAD sets `$preview` false *exactly* when it performs an exact (F6)
+/// render, and true otherwise. Measured against 2024.12.17: STL and other mesh
+/// exports and 2D vector (DXF/SVG) export report `false`; F5 preview, PNG export
+/// without `--render`, `--export-format=echo`, and `.csg` export report `true`.
+///
+/// Hosts must pass this explicitly rather than assume: a script that branches on
+/// `$preview` picks a *different model*, so seeding the wrong mode exports the
+/// wrong object with no diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderMode {
+    /// F5-style preview, echo-only, or raster preview: `$preview == true`.
+    Preview,
+    /// F6-style exact render or geometry export: `$preview == false`.
+    ///
+    /// The default, because the costly mistake is claiming preview during an
+    /// export that a user will 3D-print.
+    #[default]
+    Exact,
+}
+
+impl RenderMode {
+    /// The `$preview` value this mode seeds.
+    pub fn is_preview(self) -> bool {
+        matches!(self, RenderMode::Preview)
+    }
+}
+
 /// Evaluate a parsed program into a CSG tree plus console output (no file
 /// access; `include`/`use` become warnings).
 pub fn eval_program(prog: &Program) -> EResult<EvalOutput> {
@@ -374,19 +410,37 @@ pub fn eval_program_with_budget(
     base_dir: &str,
     budget: u64,
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, &[], budget)
+    eval_program_impl(prog, resolver, base_dir, &[], budget, RenderMode::default())
 }
 
 /// Like [`eval_program_with`], but with customizer / `-D`-style parameter
 /// overrides: each `(name, value)` replaces the main file's top-level
 /// assignment of `name` (the override wins, matching OpenSCAD's `-D`).
+///
+/// Evaluates in [`RenderMode::Exact`]. A host that is previewing, echoing, or
+/// rendering a raster preview must call [`eval_program_with_mode`] instead.
 pub fn eval_program_with_params(
     prog: &Program,
     resolver: &dyn FileResolver,
     base_dir: &str,
     overrides: &[(String, Value)],
 ) -> EResult<EvalOutput> {
-    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX)
+    eval_program_with_mode(prog, resolver, base_dir, overrides, RenderMode::default())
+}
+
+/// Like [`eval_program_with_params`], but with an explicit [`RenderMode`], which
+/// is what the script sees as `$preview`.
+///
+/// A `$preview` supplied in `overrides` (OpenSCAD's `-D '$preview=true'`) still
+/// wins over `mode`.
+pub fn eval_program_with_mode(
+    prog: &Program,
+    resolver: &dyn FileResolver,
+    base_dir: &str,
+    overrides: &[(String, Value)],
+    mode: RenderMode,
+) -> EResult<EvalOutput> {
+    eval_program_impl(prog, resolver, base_dir, overrides, u64::MAX, mode)
 }
 
 fn eval_program_impl(
@@ -395,6 +449,7 @@ fn eval_program_impl(
     base_dir: &str,
     overrides: &[(String, Value)],
     fuel: u64,
+    mode: RenderMode,
 ) -> EResult<EvalOutput> {
     let mut base = Scope::default();
     base.vars
@@ -406,7 +461,7 @@ fn eval_program_impl(
     globals.insert("$fa".to_string(), Value::Number(12.0));
     globals.insert("$fs".to_string(), Value::Number(2.0));
     globals.insert("$t".to_string(), Value::Number(0.0));
-    globals.insert("$preview".to_string(), Value::Bool(true));
+    globals.insert("$preview".to_string(), Value::Bool(mode.is_preview()));
     // Viewport variables (the frontend overrides these with the live camera;
     // these defaults let scripts read them off-viewport, e.g. in the CLI).
     globals.insert(
@@ -1067,11 +1122,53 @@ impl Interp<'_> {
         }
     }
 
+    /// Evaluate the `$`-prefixed arguments of a call, in the *caller's* scope.
+    ///
+    /// Every argument is evaluated here before any of them is published, which
+    /// is what makes `m($fa=$fa/2)` halve the caller's value rather than
+    /// compound, and `m($fn=7, $fa=$fn)` read the caller's `$fn` for the second
+    /// argument. Both match OpenSCAD 2024.12.
+    fn special_args(&mut self, args: &[Arg]) -> EResult<FastMap<String, Value>> {
+        let mut map = FastMap::default();
+        for a in args {
+            if let Some(n) = &a.name {
+                if n.starts_with('$') {
+                    let v = self.eval_expr(&a.value)?;
+                    map.insert(n.clone(), v);
+                }
+            }
+        }
+        Ok(map)
+    }
+
     fn dispatch_module(
         &mut self,
         name: &str,
         args: &[Arg],
         children: &[Spanned<Stmt>],
+    ) -> EResult<Node> {
+        // A `$` argument is dynamically scoped over the callee *and* everything
+        // under it, so `linear_extrude($fn=32) circle(5)` has to reach the
+        // circle. Pre-evaluating here covers every builtin uniformly, including
+        // the ones that never look at named arguments (`translate`); the
+        // binders below then take these values instead of evaluating a second
+        // time, so each argument expression still runs exactly once.
+        let specials = self.special_args(args)?;
+        if specials.is_empty() {
+            return self.dispatch_module_inner(name, args, children, false);
+        }
+        self.specials.push(specials);
+        let r = self.dispatch_module_inner(name, args, children, true);
+        self.specials.pop();
+        r
+    }
+
+    fn dispatch_module_inner(
+        &mut self,
+        name: &str,
+        args: &[Arg],
+        children: &[Spanned<Stmt>],
+        specials_prebound: bool,
     ) -> EResult<Node> {
         match name {
             "cube" => self.b_cube(args),
@@ -1117,7 +1214,7 @@ impl Interp<'_> {
             "children" => self.b_children(args),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
-                    self.instantiate_module(name, &def, args, children)
+                    self.instantiate_module(name, &def, args, children, specials_prebound)
                 } else {
                     self.warn(format!("Ignoring unknown module '{name}'"));
                     Ok(Node::Empty)
@@ -1139,6 +1236,7 @@ impl Interp<'_> {
         def: &Rc<ModClosure>,
         args: &[Arg],
         children: &[Spanned<Stmt>],
+        specials_prebound: bool,
     ) -> EResult<Node> {
         // Guard against unbounded module recursion (shared budget with function
         // calls). Like OpenSCAD, hitting the limit aborts the enclosing top-level
@@ -1155,7 +1253,7 @@ impl Interp<'_> {
         self.module_stack.push(name.to_string());
         // Arguments are evaluated in the caller's scope; the body runs in the
         // module's captured (lexical) environment.
-        let bound = match self.bind_params(&def.params, args, &def.env) {
+        let bound = match self.bind_params(&def.params, args, &def.env, specials_prebound) {
             Ok(bound) => bound,
             Err(error) => {
                 self.module_stack.pop();
@@ -1281,6 +1379,13 @@ impl Interp<'_> {
             _ => [1.0, 1.0, 1.0],
         };
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        // A dimension that is not finite and positive yields no geometry at
+        // all, as upstream. It is not merely zero-volume: a degenerate box emits
+        // triangles that the CSG kernel rejects as non-manifold, taking the
+        // whole enclosing boolean down with it.
+        if !size.iter().copied().all(valid_dim) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Cube { size, center })
     }
 
@@ -1291,6 +1396,9 @@ impl Interp<'_> {
         } else {
             m.get("r").and_then(Value::as_number).unwrap_or(1.0)
         };
+        if !valid_dim(r) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Sphere {
             r,
             frags: self.frag_spec(&m),
@@ -1324,6 +1432,13 @@ impl Interp<'_> {
             .unwrap_or(1.0);
 
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        // Height must be finite and positive, and neither radius negative or
+        // non-finite. One radius may be zero — that is a cone — but both zero
+        // is empty.
+        let radius_ok = |r: f64| r.is_finite() && r >= 0.0;
+        if !valid_dim(h) || !radius_ok(r1) || !radius_ok(r2) || !(valid_dim(r1) || valid_dim(r2)) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Cylinder {
             h,
             r1,
@@ -1417,6 +1532,9 @@ impl Interp<'_> {
             _ => [1.0, 1.0],
         };
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
+        if !size.iter().copied().all(valid_dim) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Square { size, center })
     }
 
@@ -1427,6 +1545,9 @@ impl Interp<'_> {
         } else {
             m.get("r").and_then(Value::as_number).unwrap_or(1.0)
         };
+        if !valid_dim(r) {
+            return Ok(Node::Empty);
+        }
         Ok(Node::Circle {
             r,
             frags: self.frag_spec(&m),
@@ -1533,7 +1654,14 @@ impl Interp<'_> {
         // so it falls back to the default of 100 (OpenSCAD warns "variable h not
         // specified as parameter" and does the same). Accepting `h` here would
         // silently disagree with OpenSCAD, e.g. BOSL2-style `linear_extrude(h=x)`.
-        let height = m.get("height").and_then(Value::as_number).unwrap_or(100.0);
+        // A non-finite height (inf/NaN) is treated as *unset* and falls back to
+        // the default 100, unlike the primitives where it means empty. Only a
+        // finite, non-positive height extrudes nothing.
+        let height = m
+            .get("height")
+            .and_then(Value::as_number)
+            .filter(|h| h.is_finite())
+            .unwrap_or(100.0);
         let center = m.get("center").map(Value::truthy).unwrap_or(false);
         let twist = m.get("twist").and_then(Value::as_number).unwrap_or(0.0);
         let scale = match m.get("scale") {
@@ -1544,19 +1672,26 @@ impl Interp<'_> {
             }
             _ => [1.0, 1.0],
         };
+        // An omitted `slices` stays `None`: OpenSCAD derives it from the twist,
+        // the profile's outermost radius, and `$fn`/`$fa`/`$fs`, and the profile
+        // is only known once the child has been rendered to contours.
         let slices = m
             .get("slices")
             .and_then(Value::as_number)
-            .map(|s| s as u32)
-            .unwrap_or_else(|| {
-                if twist == 0.0 {
-                    1
-                } else {
-                    (twist.abs() / 15.0).ceil().max(1.0) as u32
-                }
-            })
-            .max(1);
+            .map(|s| (s as u32).max(1));
+        let segments = m
+            .get("segments")
+            .and_then(Value::as_number)
+            .map(|s| s.max(0.0) as u32)
+            .unwrap_or(0);
+        let frags = self.frag_spec(&m);
+        // A non-positive height extrudes nothing, as upstream — the children are
+        // still evaluated so their `echo`/`assert` side effects run.
+        let empty_height = height <= 0.0;
         let child = Box::new(Node::group(self.eval_children(children)?));
+        if empty_height {
+            return Ok(Node::Empty);
+        }
         // `v`: extrude the profile along a direction vector instead of straight
         // up Z. OpenSCAD places the top profile at `height * normalize(v)`,
         // forming an oblique prism — equivalent to a straight extrude of the
@@ -1584,6 +1719,8 @@ impl Interp<'_> {
                         twist,
                         scale,
                         slices,
+                        segments,
+                        frags,
                         child,
                     };
                     // Shear: a point at height z is displaced in xy by
@@ -1607,6 +1744,8 @@ impl Interp<'_> {
             twist,
             scale,
             slices,
+            segments,
+            frags,
             child,
         })
     }
@@ -1835,6 +1974,15 @@ impl Interp<'_> {
         let mut map = FastMap::default();
         let mut pos = 0;
         for a in args {
+            // `$` arguments were evaluated into the dynamic frame by
+            // `dispatch_module`; reading them back keeps each expression to a
+            // single evaluation.
+            if let Some(n) = &a.name {
+                if n.starts_with('$') {
+                    map.insert(n.clone(), self.lookup_var(n));
+                    continue;
+                }
+            }
             let v = self.eval_expr(&a.value)?;
             match &a.name {
                 Some(n) => {
@@ -1856,6 +2004,7 @@ impl Interp<'_> {
         params: &[Param],
         args: &[Arg],
         definition_env: &[ScopeRef],
+        specials_prebound: bool,
     ) -> EResult<FastMap<String, Value>> {
         let mut map = FastMap::default();
 
@@ -1864,6 +2013,17 @@ impl Interp<'_> {
         // become locals (with an OpenSCAD warning omitted here), so retain them.
         let mut pos = 0;
         for a in args {
+            // `dispatch_module` already evaluated the `$` arguments of a module
+            // call; re-evaluating would run their side effects twice and let
+            // `$fa=$fa/2` compound.
+            if specials_prebound {
+                if let Some(n) = &a.name {
+                    if n.starts_with('$') {
+                        map.insert(n.clone(), self.lookup_var(n));
+                        continue;
+                    }
+                }
+            }
             let v = self.eval_expr(&a.value)?;
             match &a.name {
                 Some(n) => {
@@ -2063,6 +2223,23 @@ impl Interp<'_> {
     /// reused in a loop instead of recursing, so accumulator-style recursion
     /// runs to arbitrary depth without overflowing the (small, on wasm) stack.
     fn call_function(&mut self, f: &Rc<FnClosure>, args: &[Arg]) -> EResult<Value> {
+        // A `$` argument is dynamically scoped over the callee, exactly as for a
+        // module call — `f(2, $fn=10)` must let the body read `$fn`. It is not a
+        // declared parameter, so the binding map would otherwise drop it. The
+        // positional fast path below cannot apply here (a `$` argument is
+        // named), so this always takes the binding route.
+        if args
+            .iter()
+            .any(|a| a.name.as_deref().is_some_and(|n| n.starts_with('$')))
+        {
+            let specials = self.special_args(args)?;
+            self.specials.push(specials);
+            let r = self
+                .bind_params(&f.params, args, &f.env, true)
+                .and_then(|bound| self.run_bound(f, bound));
+            self.specials.pop();
+            return r;
+        }
         // Positional fast path for compiled functions: evaluate arguments
         // straight into the VM's local frame, skipping the per-call binding map.
         if args.iter().all(|a| a.name.is_none()) && args.len() <= f.params.len() {
@@ -2094,7 +2271,7 @@ impl Interp<'_> {
                 return self.run_chunk(f, chunk, locals);
             }
         }
-        let bound = self.bind_params(&f.params, args, &f.env)?;
+        let bound = self.bind_params(&f.params, args, &f.env, false)?;
         self.run_bound(f, bound)
     }
 
@@ -2263,7 +2440,7 @@ impl Interp<'_> {
                 // A self-call in tail position becomes a loop iteration.
                 if let Some(g) = self.lookup_func(name) {
                     if Rc::ptr_eq(&g, f) {
-                        let next = self.bind_params(&f.params, args, &f.env)?;
+                        let next = self.bind_params(&f.params, args, &f.env, false)?;
                         return Ok(TailResult::TailCall(next));
                     }
                 }
@@ -3315,6 +3492,8 @@ mod tests {
                 twist,
                 scale,
                 slices,
+                segments,
+                frags,
                 child,
             } => LinearExtrude {
                 height,
@@ -3322,6 +3501,8 @@ mod tests {
                 twist,
                 scale,
                 slices,
+                segments,
+                frags,
                 child: b(*child),
             },
             RotateExtrude {

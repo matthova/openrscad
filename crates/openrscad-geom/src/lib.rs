@@ -1121,10 +1121,16 @@ fn render_uncached(node: &Node, ctx: &mut Ctx) -> Result<Mesh, GeomError> {
             twist,
             scale,
             slices,
+            segments,
+            frags,
             child,
         } => extrude_csg(
             child,
-            &|cs| shape2d::linear_extrude(cs, *height, *center, *twist, *scale, *slices),
+            &|cs| {
+                shape2d::linear_extrude(
+                    cs, *height, *center, *twist, *scale, *slices, *segments, *frags,
+                )
+            },
             ctx,
         ),
         Node::RotateExtrude {
@@ -1330,6 +1336,8 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
             twist,
             scale,
             slices,
+            segments,
+            frags: f,
             child,
         } => {
             bits(height, &mut h);
@@ -1339,6 +1347,8 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
                 bits(x, &mut h);
             }
             slices.hash(&mut h);
+            segments.hash(&mut h);
+            frags(f, &mut h);
             hash_all(child, out).hash(&mut h);
         }
         Node::RotateExtrude {
@@ -1812,7 +1822,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Square {
                 size: [4.0, 6.0],
                 center: false,
@@ -1831,7 +1843,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Projection {
                 cut: true,
                 child: Box::new(Node::Translate {
@@ -1863,7 +1877,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(child),
         };
         // mitred grow: 10x10 -> 14x14 = 196
@@ -2068,7 +2084,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Polygon { points, paths }),
         };
         let m = render(&node).unwrap();
@@ -2168,7 +2186,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Polygon {
                 points: vec![
                     [0.0, 0.0],
@@ -2209,7 +2229,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Difference(vec![
                 Node::Square {
                     size: [20.0, 20.0],
@@ -2393,7 +2415,9 @@ mod tests {
             center: false,
             twist: 0.0,
             scale: [1.0, 1.0],
-            slices: 1,
+            slices: Some(1),
+            segments: 0,
+            frags: FragmentSpec::default(),
             child: Box::new(Node::Polygon {
                 points,
                 paths: None,
