@@ -1,14 +1,18 @@
 // Curated example projects for the playground, showcasing the language and
 // engine: CSG, 2D + vector export, text, extrusion, animation, and BOSL2.
-import type { File } from "./project";
+import type { File, Project } from "./project";
 
 export interface Example {
+  /** Stable, URL-safe id used to route to this example (`#example/<slug>`).
+   *  Independent of `label`, so renaming the label never breaks shared links. */
+  slug: string;
   label: string;
   files: File[];
 }
 
 export const EXAMPLES: Example[] = [
   {
+    slug: "rounded-box",
     label: "Rounded box",
     files: [
       {
@@ -44,6 +48,7 @@ if (lid)
     ],
   },
   {
+    slug: "twisted-vase",
     label: "Twisted vase",
     files: [
       {
@@ -63,6 +68,7 @@ linear_extrude(height = height, twist = twist, scale = taper)
     ],
   },
   {
+    slug: "text-keychain",
     label: "Text keychain",
     files: [
       {
@@ -83,6 +89,7 @@ linear_extrude(thickness)
     ],
   },
   {
+    slug: "2d-gasket",
     label: "2D gasket (DXF/SVG)",
     files: [
       {
@@ -106,6 +113,7 @@ difference() {
     ],
   },
   {
+    slug: "animated-turbine",
     label: "Animated turbine ($t)",
     files: [
       {
@@ -128,6 +136,7 @@ cylinder(h = 6, r = 4, center = true, $fn = 24);
     ],
   },
   {
+    slug: "surface-heightmap",
     label: "Surface (heightmap)",
     files: [
       {
@@ -168,6 +177,7 @@ surface("wave.dat", center = true);
     ],
   },
   {
+    slug: "import-stl",
     label: "Import STL",
     files: [
       {
@@ -191,6 +201,7 @@ color("#f5c518") import("tetra.stl");
     ],
   },
   {
+    slug: "multi-color-rocket",
     label: "Multi-color rocket (3MF)",
     files: [
       {
@@ -240,6 +251,7 @@ color("RoyalBlue")
     ],
   },
   {
+    slug: "bosl2-rounded-cuboid",
     label: "BOSL2 rounded cuboid",
     files: [
       {
@@ -257,6 +269,7 @@ cuboid([s, s, s], rounding = rounding, $fn = 32);
     ],
   },
   {
+    slug: "bosl2-gear-train",
     label: "BOSL2 gear train ($t)",
     files: [
       {
@@ -310,6 +323,7 @@ color("#ccc") fwd(d_rack) right(circ_pitch * $t)
     ],
   },
   {
+    slug: "parthenon",
     label: "Parthenon (polychrome)",
     files: [
       {
@@ -1071,3 +1085,37 @@ difference() {
     ],
   },
 ];
+
+// URL-fragment scheme for deep-linking to a curated example: `#example/<slug>`.
+// Distinct from share.ts's `#code/<compressed>` (which carries a whole project),
+// this simply names one of the built-in EXAMPLES — a short, human-readable link.
+export const EXAMPLE_PREFIX = "#example/";
+
+/** Look up a curated example by its stable slug (case-insensitive). */
+export function findExampleBySlug(slug: string): Example | undefined {
+  const s = slug.toLowerCase();
+  return EXAMPLES.find((ex) => ex.slug === s);
+}
+
+/** The `#example/<slug>` link for an example (fragment only). */
+export function exampleHash(ex: Example): string {
+  return `${EXAMPLE_PREFIX}${ex.slug}`;
+}
+
+/** If `hash` is an `#example/<slug>` route naming a known example, return it as
+ *  a ready-to-load Project; otherwise null. Mirrors decodeSharedProject's shape
+ *  so App can treat a routed example like a freshly-chosen project. */
+export function decodeExampleRoute(
+  hash: string = window.location.hash,
+): Project | null {
+  if (!hash.startsWith(EXAMPLE_PREFIX)) return null;
+  const ex = findExampleBySlug(
+    decodeURIComponent(hash.slice(EXAMPLE_PREFIX.length)),
+  );
+  if (!ex) return null;
+  return {
+    files: ex.files.map((f) => ({ ...f })),
+    overrides: {},
+    active: 0,
+  };
+}

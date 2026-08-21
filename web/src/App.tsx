@@ -96,7 +96,7 @@ import {
 } from "./prefs";
 import { usePref } from "./usePref";
 import { buildObjectRows, type ObjectRow } from "./objectTree";
-import { EXAMPLES } from "./examples";
+import { EXAMPLES, decodeExampleRoute, exampleHash } from "./examples";
 import { decodeSharedProject, shareUrl } from "./share";
 import { resolveClosure } from "./library";
 import { bytesToBase64 } from "./bytes";
@@ -391,13 +391,22 @@ export function App() {
   // that project. Refs mirror state so imperative render/edit paths never see a
   // stale closure.
   const sharedRef = useRef(TAURI ? null : decodeSharedProject());
-  const saved = useRef(sharedRef.current ?? loadProject()).current;
+  // An `#example/<slug>` route (browser only) opens that curated example. A full
+  // `#code/…` share link wins over it; both win over the autosaved project.
+  const routedRef = useRef(
+    TAURI || sharedRef.current ? null : decodeExampleRoute(),
+  );
+  const saved = useRef(
+    sharedRef.current ?? routedRef.current ?? loadProject(),
+  ).current;
   // Death-spiral recovery: if the previous session left a render in flight (it
   // froze/crashed on too-heavy geometry), don't auto-render the restored project
   // on load — that just re-triggers the freeze. A share link is fresh, chosen
   // content, so it always renders. Read once at startup, before any render arms
   // the sentinel again.
-  const wasStuck = useRef(!sharedRef.current && wasRenderPending()).current;
+  const wasStuck = useRef(
+    !sharedRef.current && !routedRef.current && wasRenderPending(),
+  ).current;
   const filesRef = useRef<File[]>(
     saved?.files ?? DEFAULT_FILES.map((f) => ({ ...f })),
   );
@@ -933,9 +942,10 @@ export function App() {
       renderNow(); // initial render
     }
 
-    // A project opened from a share link isn't in localStorage yet — persist it
-    // now so a plain reload (or losing the hash) keeps the shared work.
-    if (sharedRef.current) persist();
+    // A project opened from a share link or an `#example/…` route isn't in
+    // localStorage yet — persist it now so a plain reload (or losing the hash)
+    // keeps the opened work.
+    if (sharedRef.current || routedRef.current) persist();
 
     // Desktop wiring: external-edit reload, native menu, and open-with.
     const unlisteners: (() => void)[] = [];
@@ -1541,11 +1551,13 @@ export function App() {
     )
       return;
     sharedRef.current = null;
+    // Reflect the example in the address bar (`#example/<slug>`) so the URL is
+    // now a shareable deep link to it, and drops any prior `#code/…` payload.
     try {
       window.history.replaceState(
         null,
         "",
-        window.location.pathname + window.location.search,
+        window.location.pathname + window.location.search + exampleHash(ex),
       );
     } catch {
       /* ignore */
