@@ -52,13 +52,36 @@ impl FileResolver for NullResolver {
 }
 
 const MAX_RANGE_ITERS: usize = 10_000_000;
-/// Max function/module call nesting before erroring — a graceful error instead
-/// of a native stack overflow. Each release frame is ~1.6 KiB, so 6000 fits the
-/// CLI's 256 MiB worker thread with wide margin; callers must run eval on an
-/// ample stack (the CLI does). In the browser, V8's own wasm call-frame limit
-/// trips first and is caught by the engine wrapper (the tab never crashes);
-/// deep *tail* recursion is turned into a loop by TCE and is unbounded. Sits
-/// just above OpenSCAD's own limit (it accepts ~5000-deep recursion).
+/// Max function/module call nesting before the recursion is aborted. Hitting
+/// this raises a *contained* error, matching OpenSCAD ("Recursion detected
+/// calling function/module '…'"): the error propagates up through any enclosing
+/// nodes (aborting them) and is caught at the top-level statement boundary, so
+/// the offending top-level statement drops out while the rest of the model still
+/// renders (see [`Interp::recursion_error`] and [`Interp::eval_stmts_core`]).
+/// Deep *tail* recursion is turned into a loop by TCE and is unbounded, so this
+/// only bounds genuine (non-tail) nesting.
+///
+/// The value is platform-split because the limit exists to trip *before* a
+/// hard, unrecoverable native stack overflow, and the two runtimes have very
+/// different budgets:
+/// - Native (CLI/desktop/LSP) runs eval on a 256 MiB thread; at ~1.6 KiB/frame
+///   6000 fits with wide margin and sits just above OpenSCAD's own ~5000 limit.
+/// - Wasm has no such lever: V8 caps *native* wasm call frames, and blowing that
+///   traps the instance (fatal `RangeError`/OOB — the graceful path never runs).
+///   The cap is V8's own and is *not* raised by growing the linker stack
+///   (`-z stack-size`), which was measured to have no effect. Empirically, a
+///   real browser Web Worker overflows at ~571 of our *minimal* eval frames;
+///   frames that do real work per call (array indexing, helper calls — e.g. the
+///   Ultimate Parametric Battery Organizer's `cum_x_in_row`) are heavier, so the
+///   effective budget is lower still. The guard therefore trips at 400, well
+///   below the measured ceiling, to survive heavier frames and smaller-stack
+///   browsers. Legitimate recursion deeper than this already could not run in
+///   the browser; now it degrades to `undef` instead of killing the whole
+///   render. (Measured by driving the real Web Worker via Playwright, since the
+///   ceiling differs from Node's and only shows up in a browser worker.)
+#[cfg(target_arch = "wasm32")]
+const MAX_CALL_DEPTH: usize = 400;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_CALL_DEPTH: usize = 6_000;
 
 /// An evaluation error, optionally carrying the byte span (into the *main*
@@ -68,6 +91,13 @@ const MAX_CALL_DEPTH: usize = 6_000;
 pub struct EvalError {
     pub message: String,
     pub span: Option<std::ops::Range<usize>>,
+    /// True for a "Recursion detected" abort (the recursion depth limit was
+    /// hit). OpenSCAD contains these at the top-level statement boundary: the
+    /// offending statement contributes no geometry and its siblings still
+    /// render (the error propagates up through any enclosing nodes first, so a
+    /// recursion error inside a `union()`/`difference()` drops that whole node,
+    /// matching the oracle). See the program-root loop in [`Interp::eval_stmts_core`].
+    pub recursion: bool,
 }
 
 impl EvalError {
@@ -75,6 +105,7 @@ impl EvalError {
         EvalError {
             message: message.into(),
             span: None,
+            recursion: false,
         }
     }
 
@@ -424,7 +455,10 @@ fn eval_program_impl(
         warned: HashSet::new(),
     };
 
-    let nodes = interp.eval_stmts(prog)?;
+    // The program root isolates recursion errors per top-level statement (see
+    // `eval_stmts_core`), so an unbounded recursion in one statement drops just
+    // that statement instead of aborting the whole render — matching OpenSCAD.
+    let nodes = interp.eval_stmts_core(prog, true)?;
     let node = interp.root.take().unwrap_or_else(|| Node::group(nodes));
     // The final top-level `$vp*` values (a script may have assigned them).
     let g = &interp.specials[0];
@@ -541,6 +575,42 @@ impl Interp<'_> {
         });
     }
 
+    /// Record the once-per-callee "Recursion detected" warning. Emitted once per
+    /// callee name so an infinite recursion can't flood the diagnostics panel.
+    fn report_recursion(&mut self, kind: &str, name: &str) {
+        // Reuse the dedup set with a synthetic key that can't collide with a
+        // real (name, span) dead-assignment lint.
+        if !self
+            .warned
+            .insert((format!("\u{0}recursion:{kind}:{name}"), 0))
+        {
+            return;
+        }
+        self.warn(format!(
+            "Recursion detected calling {kind} '{name}': depth limit ({MAX_CALL_DEPTH}) exceeded; \
+             this call was aborted (matches OpenSCAD)"
+        ));
+    }
+
+    /// Build the error raised when a function/module call hits the recursion
+    /// depth limit. Like OpenSCAD ("Recursion detected calling …"), this is
+    /// *contained*, not fatal: the error propagates up through any enclosing
+    /// nodes (aborting them) and is caught at the top-level statement boundary,
+    /// so the offending statement drops out while the rest of the model still
+    /// renders (see [`Interp::eval_stmts_core`]). The user still sees the
+    /// deduped warning recorded here.
+    fn recursion_error(&mut self, kind: &str, name: Option<&str>) -> EvalError {
+        let name = name.unwrap_or("<anonymous>");
+        self.report_recursion(kind, name);
+        EvalError {
+            message: format!(
+                "Recursion detected calling {kind} '{name}': depth limit ({MAX_CALL_DEPTH}) exceeded"
+            ),
+            span: self.cur_span.clone(),
+            recursion: true,
+        }
+    }
+
     /// Record a dead-assignment lint at most once per (name, span). A `None`
     /// span means the assignment lives in an `include`d/`use`d library (sentinel
     /// span) — not the user's editable source — so it is skipped. See
@@ -559,6 +629,21 @@ impl Interp<'_> {
     }
 
     fn eval_stmts(&mut self, stmts: &[Spanned<Stmt>]) -> EResult<Vec<Node>> {
+        self.eval_stmts_core(stmts, false)
+    }
+
+    /// Evaluate a statement list into geometry.
+    ///
+    /// `isolate` is set only for the *program root*: there, a "Recursion
+    /// detected" abort *stops* the top-level traversal — geometry from
+    /// statements evaluated before it is kept and rendered, while the offending
+    /// statement and every statement after it are dropped. This matches
+    /// OpenSCAD, which renders the partial model built up to the first such
+    /// error. Nested blocks/modules/`union()`/`difference()` pass
+    /// `isolate = false` so the error propagates up and aborts the whole
+    /// enclosing subtree first (also matching the oracle). Non-recursion errors
+    /// always propagate, even at the root.
+    fn eval_stmts_core(&mut self, stmts: &[Spanned<Stmt>], isolate: bool) -> EResult<Vec<Node>> {
         // Splice `include`d files in first (only when present, to avoid cloning).
         let expanded;
         let effective: &[Spanned<Stmt>] =
@@ -587,7 +672,16 @@ impl Interp<'_> {
                     self.cur_span = sp.clone();
                     let r = self.eval_geom(&s.node);
                     self.cur_span = saved;
-                    out.extend(r.map_err(|e| e.or_span(sp))?);
+                    match r.map_err(|e| e.or_span(sp)) {
+                        Ok(nodes) => out.extend(nodes),
+                        // OpenSCAD stops the top-level traversal at the first
+                        // "Recursion detected" abort: geometry from statements
+                        // *before* it is kept, but the offending statement and
+                        // everything *after* it are dropped. The warning was
+                        // already recorded at the abort site.
+                        Err(e) if isolate && e.recursion => break,
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }
@@ -1047,10 +1141,11 @@ impl Interp<'_> {
         children: &[Spanned<Stmt>],
     ) -> EResult<Node> {
         // Guard against unbounded module recursion (shared budget with function
-        // calls) so a runaway library errors gracefully instead of overflowing
-        // the stack and aborting the process.
+        // calls). Like OpenSCAD, hitting the limit aborts the enclosing top-level
+        // statement (not the whole render): the error propagates up and is caught
+        // at the program root (see `recursion_error` / `eval_stmts_core`).
         if self.depth >= MAX_CALL_DEPTH {
-            return err("maximum module recursion depth exceeded");
+            return Err(self.recursion_error("module", Some(name)));
         }
         self.depth += 1;
         // OpenSCAD exposes the callee through parent_module() while evaluating
@@ -2012,7 +2107,7 @@ impl Interp<'_> {
         locals: Vec<Value>,
     ) -> EResult<Value> {
         if self.depth >= MAX_CALL_DEPTH {
-            return err("maximum call depth exceeded");
+            return Err(self.recursion_error("function", f.name.as_deref()));
         }
         self.depth += 1;
         let saved = std::mem::replace(&mut self.scopes, f.env.clone());
@@ -2104,7 +2199,7 @@ impl Interp<'_> {
 
         // Tree-walk fallback with self-tail-call elimination.
         if self.depth >= MAX_CALL_DEPTH {
-            return err("maximum call depth exceeded");
+            return Err(self.recursion_error("function", f.name.as_deref()));
         }
         self.depth += 1;
         let mut iters = 0usize;
@@ -3504,6 +3599,52 @@ mod tests {
             out.node,
             Node::Cube {
                 size: [55.0, 55.0, 55.0],
+                center: false
+            }
+        );
+    }
+
+    #[test]
+    fn deep_recursion_is_non_fatal() {
+        // Exceeding the recursion depth limit must not crash the render. It
+        // matches OpenSCAD's "Recursion detected calling function '…'" model:
+        // the offending call raises a *contained* error that aborts its
+        // enclosing CSG node, and at the program root it stops the top-level
+        // traversal at the first such abort — geometry from statements *before*
+        // it is kept and rendered, while the offending statement and everything
+        // *after* it are dropped. This mirrors the real-world battery-organizer
+        // model, whose `cum_x_in_row` recurses forever on a single-group row
+        // (`[0:-1]` yields `[-1, 0]`, so `k` starts at -1 and never reaches the
+        // `k == 0` base case), yet the rest of the model still renders.
+        let src = "\
+            function cum(list, k) = (k == 0) ? 0 : cum(list, k - 1) + list[k - 1];\
+            cube(3);\
+            cube(cum([5], -1));\
+            cube(7);";
+        // Native guard is 6000 frames (~1.6 KiB each) — larger than the 2 MiB
+        // default test stack, so run on an ample stack like the CLI does.
+        let out = std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(move || eval(src))
+            .unwrap()
+            .join()
+            .unwrap();
+        // The render succeeded (no fatal error) ...
+        // ... a warning was surfaced ...
+        assert!(
+            out.warnings.iter().any(|w| w
+                .message
+                .contains("Recursion detected calling function 'cum'")),
+            "expected a recursion warning, got: {:?}",
+            out.warnings
+        );
+        // ... geometry *before* the recursing statement is kept, while the
+        // recursing statement and everything after it (the `cube(7)`) are
+        // dropped, matching OpenSCAD's stop-at-first-abort behavior.
+        assert_eq!(
+            out.node,
+            Node::Cube {
+                size: [3.0, 3.0, 3.0],
                 center: false
             }
         );
