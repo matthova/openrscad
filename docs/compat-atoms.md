@@ -157,18 +157,9 @@ match OpenSCAD's.
 Loud failures. No silent wrong answers here, but each is a script that runs
 upstream and does not run here.
 
-| id | repro | OpenSCAD | OpenRSCAD | manifest |
-|---|---|---|---|---|
-| A-L03 | `assign(x=5) echo(x);` | `DEPRECATED: …assign() will be removed…` then `ECHO: 5` | `WARNING: Ignoring unknown module 'assign'`, no echo | `syntax.assign_legacy` |
-| A-L04 | `module m(){ child(0); } m() cube(1);` | `DEPRECATED: child()…`, renders the cube | `WARNING: Ignoring unknown module 'child'`, empty | `module.child_legacy` |
-| A-L05 | `echo(dxf_dim(file="x.dxf", name="d"));` | opens the file (warns if absent), `ECHO: undef` | `ECHO: undef` + unknown-function warning | `function.dxf_dim` |
-| A-L06 | `echo(dxf_cross(file="x.dxf", layer="l"));` | as above | as above | `function.dxf_cross` |
-| A-I01 | `import_stl("m.stl");` | `DEPRECATED: …`, imports | `WARNING: Ignoring unknown module 'import_stl'` | `import.alias_stl` |
-| A-I02 | `import_dxf("m.dxf");` | `DEPRECATED: …`, imports | `WARNING: Ignoring unknown module 'import_dxf'` | `import.alias_dxf` |
-
-All six are gap `F-L6` and share one decision: implement the retained deprecated
-2021.01 aliases, or declare them out of scope. A-L05/A-L06 are the mildest — the
-returned value already matches; only the diagnostic and the file access differ.
+*(The six retained deprecated 2021.01 forms that used to sit here — `assign`,
+`child`, `dxf_dim`, `dxf_cross`, `import_stl`, `import_dxf` — are closed; see
+below.)*
 
 ### Import and text atoms
 
@@ -177,20 +168,17 @@ fixture before it becomes a proper atom with numbers.
 
 | id | surface | gap | manifest |
 |---|---|---|---|
-| A-I03 | `import(…, layer=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.layer` |
-| A-I04 | `import(…, origin=, scale=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.origin_scale` |
 | A-I05 | DXF bulges, splines, ellipses, caller fragment controls | `F-I2` | `import.dxf.curves` |
-| A-I06 | SVG `layer`/`id` selectors — accepted, ignored | `F-I2` | `import.svg.layer_id` |
 | A-I07 | SVG transforms, units, DPI | `F-I2` | `import.svg.transforms_dpi` |
 | A-I08 | SVG nesting, `<use>`, style, visibility | `F-I2` | `import.svg.structure_style` |
 | A-I09 | AMF/3MF units, object index spaces, components, build transforms | `F-I3` | `import.amf_3mf.scene_graph` |
 | A-T01 | `text()` kerning, ligatures, complex-script shaping | `F-I1` | `module.text.shaping` |
 | A-T02 | `text(direction=, language=, script=)` — RTL only reverses codepoints | `F-I1` | `module.text.direction_language_script` |
 
-An accepted-and-ignored parameter (A-I03, A-I04, A-I06) is arguably class S, not
-M: the import succeeds and returns the wrong contents. They are listed here
-because that is how the manifest currently classifies them; re-classifying is a
-decision for the `F-I2` batch, not a documentation change.
+A-I05 and A-I07…A-I09 are format-parser breadth. The accepted-and-ignored
+*parameters* that used to sit alongside them — A-I03, A-I04, A-I06 — are closed;
+they were arguably class S rather than M, since the import succeeded and
+returned the wrong contents.
 
 ---
 
@@ -231,6 +219,104 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-X01 — `.csg` tree export was absent — **closed**
+
+| | |
+|---|---|
+| repro | `openrscad -o out.csg model.scad` |
+| OpenSCAD | writes the resolved operation tree |
+| before | binary STL named `.csg` (silent), then a format-specific error |
+| now | writes the tree; re-rendering it reproduces the geometry |
+| was | M · gap `F-I4` · manifest `export.csg`, now `implemented` |
+| guarded by | `crates/openrscad-cli/tests/csg_roundtrip.rs` |
+
+`.csg` is the flattened program: modules resolved, expressions evaluated, and
+every transform lowered to a `multmatrix` — the format has no
+`translate`/`rotate`/`scale`. It needs no geometry, so it is written straight
+from the tree before the render pass, and `$preview` stays true for it exactly
+as upstream reports.
+
+**The contract is a round trip, not byte-identical text**, and that is a
+deliberate call. OpenSCAD omits parameters left at their defaults; the IR does
+not record whether a value was written or defaulted, so reproducing that
+omission is not possible from what we keep. Writing every parameter explicitly
+is equally valid input, and the meaningful question — does re-rendering give the
+same solid — is testable. Verified two ways: 19 constructs re-rendered through
+OpenSCAD itself matched the original, and the in-repo test re-renders with our
+own engine and additionally asserts a second export is a fixed point, which
+catches a writer and reader that disagree about something the first pass
+happened to survive.
+
+Two details worth recording:
+
+- **A round trip is lossy by construction.** The format writes six significant
+  digits, so a rotation matrix returns slightly rounded — a 6.0 volume comes
+  back 5.999994. Upstream's own round trip loses exactly the same precision, so
+  the test tolerance reflects the text format rather than pretending otherwise.
+- **An omitted `slices=` must stay omitted.** Writing the resolved count would
+  freeze the tessellation that this render happened to choose; the reader has to
+  derive it again from the profile.
+
+### A-I03, A-I04, A-I06 — import selectors were accepted and ignored — **closed**
+
+| id | repro | OpenSCAD | before | now |
+|---|---|---:|---:|---|
+| A-I03 | `import("layers.dxf", layer="A")` | 16 | 20 (whole file) | 16 |
+| A-I04 | `…, origin=[1,1], scale=2` | 64 | 20 (untransformed) | 64 |
+| A-I06 | `import("layers.svg", layer="LayerA")` | 1.991 | 3.609 (whole file) | 1.991 |
+
+was M (arguably S — the import succeeded and returned the wrong contents) ·
+gap `F-I2` · manifest `import.dxf.layer`, `import.dxf.origin_scale`,
+`import.svg.layer_id`, all now `verified`. Guarded by
+`corpus/geom/import_{dxf,svg}_selectors.scad` with committed fixtures, `tris`
+pinned.
+
+Placement is `(point - origin) * scale`, confirmed by bounding box and not just
+area: `origin=[1,1], scale=2` moves a 0…4 square to −2…6. Both are 2D-only, as
+upstream — a mesh import ignores them.
+
+SVG selection pulls the matching subtree out of the source text before the
+element walk, rather than teaching that walk to track nesting. The walk is flat,
+and making it hierarchical is the separate A-I08; extracting the subtree first
+gets `layer=`/`id=` exactly right without waiting on it.
+
+### A-L03…A-L06, A-I01, A-I02 — the deprecated 2021.01 forms — **closed**
+
+All six of gap `F-L6`, implemented rather than declared out of scope: they are
+part of the 2021.01 baseline OpenSCAD still accepts.
+
+| id | surface | now |
+|---|---|---|
+| A-L03 | `assign(bindings) body` | scoped bindings + deprecation notice |
+| A-L04 | `child(index)` | singular child selection + notice |
+| A-L05 | `dxf_dim(file, layer, origin, scale, name)` | reads a DIMENSION measurement |
+| A-L06 | `dxf_cross(file, layer, origin, scale)` | reads a line intersection |
+| A-I01 | `import_stl(...)` | alias for `import()` + notice |
+| A-I02 | `import_dxf(...)` | alias for `import()` + notice |
+
+Guarded by `corpus/echo/deprecated_forms.scad`, `corpus/echo/dxf_query.scad`
+(with committed DXF fixtures), `corpus/geom/deprecated_assign_child.scad`, and
+`corpus/geom/import_alias_{stl,dxf}.scad`. 23 oracle-compared cases for the DXF
+readers alone.
+
+Four details the oracle settled that the names actively mislead about:
+
+- **`assign()` is not `let()`.** Every right-hand side evaluates in the
+  *enclosing* scope and the bindings take effect together: with `x = 100`,
+  `assign(x = 1, y = x + 1)` yields `y == 101`, where `let` gives 2.
+- **Bare `child()` is not bare `children()`.** It means the first child alone;
+  `children()` means all of them.
+- **`dxf_dim`'s positional order is `(file, layer, origin, scale, name)`** —
+  `name` comes *last*. Passing it third silently binds it to `origin`, which is
+  how upstream behaves and what the oracle showed when the third positional
+  produced "origin could not be converted".
+- **`dxf_dim` matches on the dimension *text* (group 1), not the block name, and
+  ignores the stored measurement (group 42)**, recomputing from the definition
+  points: a fixture whose 42 says 99 still reports the geometric 5. Linear
+  dimensions project onto the group-50 rotation (a 6×8 offset reads 6 at 0°, 8
+  at 90°, 9.899 at 45°), aligned ones use the plain distance, and radius and
+  diameter both report the centre-to-chord distance.
 
 ### A-G09 — non-planar wall quads used the wrong diagonal — **closed**
 
@@ -518,9 +604,9 @@ invocation each one compares against.
 | S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 16 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
+| M — missing | 6 | A-I05, A-I07…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 12 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-G09, A-G10, A-L08, A-X02 |
+| closed | 22 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I04, A-I06, A-X01, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

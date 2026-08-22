@@ -98,9 +98,20 @@ fn arc_points(center: Point2, r: f64, a0: f64, a1: f64, closed: bool) -> Vec<Poi
 /// emits and reads: `LWPOLYLINE`, `POLYLINE`/`VERTEX`, `LINE`, `CIRCLE`, `ARC`.
 /// Loose `LINE`/open-polyline segments are chained into loops the way OpenSCAD
 /// stitches DXF line soup.
-pub fn import_dxf(bytes: &[u8]) -> Vec<Contour> {
+/// Import a DXF's 2D outlines.
+///
+/// `layer` keeps only entities on that layer (group 8); `None` takes every
+/// entity, as an omitted `layer=` does upstream.
+pub fn import_dxf(bytes: &[u8], layer: Option<&str>) -> Vec<Contour> {
     let text = String::from_utf8_lossy(bytes);
-    let entities = parse_entities(&text);
+    let mut entities = parse_entities(&text);
+    if let Some(want) = layer {
+        entities.retain(|(_, props)| {
+            props
+                .iter()
+                .any(|(code, value)| *code == 8 && value.trim() == want)
+        });
+    }
     let mut contours: Vec<Contour> = Vec::new();
     let mut segs: Vec<(Point2, Point2)> = Vec::new();
 
@@ -679,8 +690,80 @@ fn parse_path(d: &str) -> (Vec<Contour>, Vec<Vec<Point2>>) {
 
 /// Parse an SVG document into contours, applying OpenSCAD's coordinate mapping
 /// (72-DPI lengths, Y flipped about the physical height).
-pub fn import_svg(bytes: &[u8]) -> Vec<Contour> {
-    let text = String::from_utf8_lossy(bytes);
+/// The text span of the element whose `id` (or Inkscape layer label) matches,
+/// including its children.
+///
+/// Selection is done on the source text rather than in the element walk below,
+/// which is flat: pulling the subtree out first keeps `layer=`/`id=` working
+/// without the walk having to track nesting (still open as A-I08).
+fn svg_subtree(text: &str, layer: Option<&str>, id: Option<&str>) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find('<') {
+        let start = i + rel;
+        let Some(rel_end) = text[start..].find('>') else {
+            break;
+        };
+        let end = start + rel_end;
+        let tag = &text[start + 1..end];
+        let name: String = tag
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        let matches = layer
+            .map(|w| attr(tag, "inkscape:label").as_deref() == Some(w))
+            .unwrap_or(false)
+            || id
+                .map(|w| attr(tag, "id").as_deref() == Some(w))
+                .unwrap_or(false);
+        if matches && !name.is_empty() {
+            // Self-closing, or a leaf shape: the tag itself is the subtree.
+            if tag.trim_end().ends_with('/') {
+                return Some(text[start..=end].to_string());
+            }
+            // Otherwise scan to the matching close, allowing for nesting.
+            let close = format!("</{name}");
+            let open = format!("<{name}");
+            let (mut depth, mut j) = (1usize, end + 1);
+            while j < bytes.len() {
+                if text[j..].starts_with(&close) {
+                    depth -= 1;
+                    if depth == 0 {
+                        let stop = text[j..].find('>').map(|k| j + k).unwrap_or(j);
+                        return Some(text[start..=stop].to_string());
+                    }
+                } else if text[j..].starts_with(&open) {
+                    depth += 1;
+                }
+                j += 1;
+            }
+            return Some(text[start..].to_string());
+        }
+        i = end + 1;
+    }
+    None
+}
+
+/// Import an SVG's 2D outlines.
+///
+/// `layer` selects an Inkscape layer group by its label and `id` selects any
+/// element by its `id`; either keeps that subtree alone. A selector that
+/// matches nothing yields no geometry, as upstream.
+pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Contour> {
+    let whole = String::from_utf8_lossy(bytes);
+    // The header carries viewBox/width/height, so keep it and swap the body.
+    let selected = if layer.is_some() || id.is_some() {
+        match svg_subtree(&whole, layer, id) {
+            Some(sub) => {
+                let header = find_tag(&whole, "svg").unwrap_or_default();
+                std::borrow::Cow::Owned(format!("{header}{sub}</svg>"))
+            }
+            None => return Vec::new(),
+        }
+    } else {
+        whole
+    };
+    let text = selected;
     // Locate the <svg ...> opening tag for viewBox/width/height.
     let svg_tag = find_tag(&text, "svg").unwrap_or_default();
     let vb: Vec<f64> = attr(&svg_tag, "viewBox")
@@ -915,7 +998,7 @@ mod tests {
         let outer = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
         let hole = vec![[4.0, 4.0], [4.0, 6.0], [6.0, 6.0], [6.0, 4.0]];
         let dxf = export_dxf(&[outer, hole]);
-        let back = import_dxf(dxf.as_bytes());
+        let back = import_dxf(dxf.as_bytes(), None);
         assert_eq!(back.len(), 2, "expected two contours");
         assert!(
             (net_area(&back).abs() - 196.0).abs() < 1e-6,
@@ -934,7 +1017,7 @@ mod tests {
 0\nLINE\n10\n5\n20\n5\n11\n0\n21\n5\n\
 0\nLINE\n10\n0\n20\n5\n11\n0\n21\n0\n\
 0\nENDSEC\n0\nEOF\n";
-        let cs = import_dxf(dxf.as_bytes());
+        let cs = import_dxf(dxf.as_bytes(), None);
         assert_eq!(cs.len(), 1);
         assert!((net_area(&cs).abs() - 25.0).abs() < 1e-6);
     }
@@ -944,7 +1027,7 @@ mod tests {
         // No viewBox: coords 1:1, Y flipped about height*25.4/72.
         let svg =
             r#"<svg width="100" height="100"><rect x="10" y="20" width="40" height="30"/></svg>"#;
-        let cs = import_svg(svg.as_bytes());
+        let cs = import_svg(svg.as_bytes(), None, None);
         assert_eq!(cs.len(), 1);
         let xs: Vec<f64> = cs[0].iter().map(|p| p[0]).collect();
         let ys: Vec<f64> = cs[0].iter().map(|p| p[1]).collect();
@@ -972,7 +1055,7 @@ mod tests {
     fn svg_path_relative_and_close() {
         // A unit square via relative lineto, closed with Z.
         let svg = r#"<svg viewBox="0 0 10 10" width="10mm" height="10mm"><path d="M1,1 l4,0 l0,4 l-4,0 z"/></svg>"#;
-        let cs = import_svg(svg.as_bytes());
+        let cs = import_svg(svg.as_bytes(), None, None);
         assert_eq!(cs.len(), 1);
         assert!(
             (net_area(&cs).abs() - 16.0).abs() < 1e-6,
@@ -985,7 +1068,7 @@ mod tests {
     fn svg_roundtrip_preserves_area() {
         let sq = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
         let svg = export_svg(&[sq]);
-        let back = import_svg(svg.as_bytes());
+        let back = import_svg(svg.as_bytes(), None, None);
         assert!(
             (net_area(&back).abs() - 200.0).abs() < 1e-6,
             "area {}",

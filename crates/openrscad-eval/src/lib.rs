@@ -7,10 +7,13 @@
 //! both close over their definition / call-site environments.
 
 mod color;
+mod csg;
+mod dxf;
 mod text;
 mod value;
 mod vm;
 
+pub use csg::export_csg;
 pub use text::{font_completions, register_font_data, register_system_fonts, FontCompletion};
 pub use value::{format_number, Value};
 
@@ -1207,11 +1210,24 @@ impl Interp<'_> {
             "hull" => Ok(Node::Hull(self.eval_children(children)?)),
             "minkowski" => Ok(Node::Minkowski(self.eval_children(children)?)),
             "import" => self.b_import(args),
+            // Deprecated 2021.01 import spellings. OpenSCAD keeps them as plain
+            // aliases — the format still comes from the file's suffix, not from
+            // the module name — plus a deprecation notice.
+            "import_stl" | "import_dxf" => {
+                self.warn(format!(
+                    "DEPRECATED: The {name}() module will be removed in future releases. \
+                     Use import() instead."
+                ));
+                self.b_import(args)
+            }
             "surface" => self.b_surface(args),
             "group" => Ok(Node::group(self.eval_children(children)?)),
             "echo" => self.b_echo(args, children),
             "assert" => self.b_assert(args, children),
             "children" => self.b_children(args),
+            // Deprecated 2021.01 spellings that OpenSCAD still accepts.
+            "assign" => self.b_assign(args, children),
+            "child" => self.b_child(args),
             _ => {
                 if let Some(def) = self.lookup_module(name) {
                     self.instantiate_module(name, &def, args, children, specials_prebound)
@@ -1294,6 +1310,54 @@ impl Interp<'_> {
 
     /// `children()` / `children(i)` / `children([indices|range])`. Children are
     /// evaluated in the caller's lexical scope (where they were written).
+    /// `assign(bindings) body` — the deprecated 2021.01 spelling of a scoped
+    /// binding, retained because OpenSCAD still accepts it.
+    ///
+    /// It is *not* `let`: every right-hand side is evaluated in the enclosing
+    /// scope and the bindings take effect together, so with `x = 100`,
+    /// `assign(x = 1, y = x + 1)` yields `y == 101` where `let` would give 2.
+    /// Bindings do not escape the body.
+    fn b_assign(&mut self, args: &[Arg], children: &[Spanned<Stmt>]) -> EResult<Node> {
+        self.warn(
+            "DEPRECATED: The assign() module will be removed in future releases. \
+             Use a regular assignment instead.",
+        );
+        // Evaluate first, in the caller's scope, then bind — that ordering is
+        // what separates `assign` from `let`.
+        let mut bound = Vec::with_capacity(args.len());
+        for a in args {
+            if let Some(name) = &a.name {
+                let value = self.eval_expr(&a.value)?;
+                bound.push((name.clone(), value));
+            }
+        }
+        self.push_scope();
+        for (name, value) in bound {
+            self.set_var(&name, value);
+        }
+        let r = self.eval_stmts(children);
+        self.pop_scope();
+        Ok(Node::group(r?))
+    }
+
+    /// `child(index)` — the deprecated singular form of `children()`.
+    ///
+    /// Bare `child()` is *not* bare `children()`: it means the first child
+    /// alone, where `children()` means all of them.
+    fn b_child(&mut self, args: &[Arg]) -> EResult<Node> {
+        self.warn(
+            "DEPRECATED: child() will be removed in future releases. Use children() instead.",
+        );
+        if args.is_empty() {
+            let first = [Arg {
+                name: None,
+                value: Expr::Number(0.0),
+            }];
+            return self.b_children(&first);
+        }
+        self.b_children(args)
+    }
+
     fn b_children(&mut self, args: &[Arg]) -> EResult<Node> {
         // Pop our own frame while evaluating the children: a `children()` call
         // *inside* those children must resolve to the grandparent's children
@@ -1448,15 +1512,98 @@ impl Interp<'_> {
         })
     }
 
+    /// `dxf_dim(file, layer, origin, scale, name)` and
+    /// `dxf_cross(file, layer, origin, scale)` — the deprecated 2021.01 readers
+    /// that pull a measurement or an intersection point out of a DXF.
+    ///
+    /// The positional order is upstream's, which is not the order the names
+    /// suggest: `name` comes *last* on `dxf_dim`, after `origin` and `scale`.
+    fn b_dxf_query(&mut self, name: &str, args: &[Arg]) -> EResult<Value> {
+        let positional: &[&str] = if name == "dxf_dim" {
+            &["file", "layer", "origin", "scale", "name"]
+        } else {
+            &["file", "layer", "origin", "scale"]
+        };
+        let m = self.bind_named(positional, args)?;
+        let file = match m.get("file") {
+            Some(Value::Str(s)) => s.clone(),
+            _ => return Ok(Value::Undef),
+        };
+        let layer = match m.get("layer") {
+            Some(Value::Str(s)) => s.clone(),
+            _ => String::new(),
+        };
+        let scale = m.get("scale").and_then(Value::as_number).unwrap_or(1.0);
+        let Some(bytes) = self.resolver.load_bytes(&file, &self.cur_dir) else {
+            self.warn(format!("Can't open DXF file '{file}'!"));
+            return Ok(Value::Undef);
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        if name == "dxf_dim" {
+            let dim_name = match m.get("name") {
+                Some(Value::Str(s)) => s.clone(),
+                _ => String::new(),
+            };
+            return Ok(match dxf::dim(&text, &layer, &dim_name) {
+                // `origin` shifts a point, so it has no bearing on a length.
+                Some(v) => Value::Number(v * scale),
+                None => {
+                    self.warn(format!(
+                        "Can't find dimension '{dim_name}' in '{file}', layer '{layer}'!"
+                    ));
+                    Value::Undef
+                }
+            });
+        }
+        let origin = match m.get("origin") {
+            Some(Value::Vector(v)) => {
+                let g = |i: usize| v.get(i).and_then(Value::as_number).unwrap_or(0.0);
+                [g(0), g(1)]
+            }
+            _ => [0.0, 0.0],
+        };
+        Ok(match dxf::cross(&text, &layer) {
+            Some(p) => value::vector(vec![
+                Value::Number((p[0] - origin[0]) * scale),
+                Value::Number((p[1] - origin[1]) * scale),
+            ]),
+            None => {
+                self.warn(format!("Can't find cross in '{file}', layer '{layer}'!"));
+                Value::Undef
+            }
+        })
+    }
+
     fn b_import(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["file"], args)?;
+        let m = self.bind_named(&["file", "convexity"], args)?;
         let path = match m.get("file") {
             Some(Value::Str(s)) => s.clone(),
             _ => return Ok(Node::Empty),
         };
         let format = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        let text_arg = |key: &str| match m.get(key) {
+            Some(Value::Str(s)) => Some(s.clone()),
+            _ => None,
+        };
+        // `origin` and `scale` place the imported outline as
+        // `(point - origin) * scale`; both are 2D-only upstream.
+        let origin = match m.get("origin") {
+            Some(Value::Vector(v)) => {
+                let g = |i: usize| v.get(i).and_then(Value::as_number).unwrap_or(0.0);
+                [g(0), g(1)]
+            }
+            _ => [0.0, 0.0],
+        };
+        let scale = m.get("scale").and_then(Value::as_number).unwrap_or(1.0);
         match self.resolver.load_bytes(&path, &self.cur_dir) {
-            Some(data) => Ok(Node::Import { data, format }),
+            Some(data) => Ok(Node::Import {
+                data,
+                format,
+                layer: text_arg("layer"),
+                id: text_arg("id"),
+                origin,
+                scale,
+            }),
             None => {
                 self.warn(format!("Can't open import file '{path}'"));
                 Ok(Node::Empty)
@@ -2552,6 +2699,12 @@ impl Interp<'_> {
         // A variable holding a function value?
         if let Value::Function(f) = self.lookup_var(name) {
             return self.call_function(&f, args);
+        }
+        // The deprecated DXF queries are the only builtin *functions* that read
+        // named arguments, so they are handled before the positional lowering
+        // below discards the names.
+        if matches!(name, "dxf_dim" | "dxf_cross") {
+            return self.b_dxf_query(name, args);
         }
         // Builtins.
         let vals: Vec<Value> = args

@@ -30,10 +30,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Missing or partial compatibility
 
-- **Deprecated compatibility aliases remain undecided.** OpenSCAD 2021.01 still
-  accepts legacy `assign`, `child`, `import_dxf`, `import_stl`, `dxf_dim`, and
-  `dxf_cross` forms; OpenRSCAD does not currently implement them.
-
 - **Text font discovery is broad, but shaping is partial.** Native hosts scan
   installed fonts; Chromium can load permission-granted local fonts; the bundled
   Liberation family remains the deterministic fallback. Layout is still
@@ -47,15 +43,11 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   ```
 
 - **Import parsers accept the headline formats, not every documented construct.**
-  DXF/SVG selectors and options (`layer`, `id`, transforms/DPI), SVG nesting,
-  transforms, use/style/visibility, DXF bulges/splines/ellipses, and caller curve
-  resolution remain incomplete. 3MF/AMF import does not yet assemble units,
-  independent object index spaces, components, or build-item transforms.
-
-- **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
-  mesh and vector formats, but it does not serialize the evaluated model as a
-  `.csg` operation tree. `-o out.csg` now fails with a format-specific error
-  rather than silently writing STL bytes under that name, so the gap is loud.
+  Selectors and placement (`layer`, `id`, `origin`, `scale`) now work; what
+  remains is SVG nesting/`<use>`/style/visibility and general element
+  transforms, DXF bulges/splines/ellipses, and caller curve resolution. 3MF/AMF
+  import does not yet assemble units, independent object index spaces,
+  components, or build-item transforms.
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
@@ -96,9 +88,48 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **97/97**, and BOSL2
+The current gates are `corpus/echo` **29/29**, geometry **102/102**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`.csg` tree export works.** `-o out.csg` serializes the evaluated model the
+  way OpenSCAD does: every module call resolved, every expression evaluated, and
+  every transform lowered to a `multmatrix`. It needs no render, so it is
+  produced straight from the tree and keeps `$preview` true, as upstream does.
+  The contract is a *round trip* rather than byte-identical text — OpenSCAD
+  omits parameters left at their defaults and the IR does not record which were
+  written, so we write them all, which is equally valid input. Re-rendering our
+  output reproduces the geometry in both engines across 19 constructs; the
+  in-repo test also asserts a second export is a fixed point.
+
+  ```sh
+  openrscad -o model.csg model.scad && openscad -o from-csg.stl model.csg
+  ```
+
+- **Import selectors and placement are honoured.** `layer=` keeps a single DXF
+  layer or Inkscape SVG layer, `id=` selects any SVG element by id, and
+  `origin`/`scale` place a 2D import as `(point - origin) * scale` — all four
+  were previously accepted and silently ignored, so a selective import returned
+  the whole drawing. `origin`/`scale` remain 2D-only, as upstream.
+
+  ```scad
+  import("part.dxf", layer="outline", origin=[1,1], scale=2);
+  import("art.svg", id="badge");
+  ```
+
+- **The retained deprecated 2021.01 forms are implemented.** `assign`, `child`,
+  `import_stl`, `import_dxf`, `dxf_dim`, and `dxf_cross` all work, each with the
+  deprecation notice OpenSCAD prints. Two behaviours are easy to get wrong and
+  are pinned by oracle cases: `assign()` is *not* `let()` — every right-hand
+  side evaluates in the enclosing scope and the bindings land together, so with
+  `x = 100`, `assign(x = 1, y = x + 1)` gives `y == 101` — and bare `child()` is
+  the *first* child alone where bare `children()` is all of them.
+
+  ```scad
+  x = 100; assign(x = 1, y = x + 1) echo(x, y);   // 1, 101
+  module m() { child(); } m() { cube(2); cube(9); }  // just the cube(2)
+  echo(dxf_dim(file="part.dxf", name="width"), dxf_cross(file="part.dxf", layer="marks"));
+  ```
 
 - **Non-planar extrude walls are split along the shorter diagonal.** A twisted
   or non-uniformly scaled wall quad is not planar, so its two diagonals enclose

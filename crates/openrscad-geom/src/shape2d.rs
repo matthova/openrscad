@@ -213,11 +213,34 @@ pub fn render2d(node: &Node) -> Vec<Contour> {
         Node::Square { size, center } => vec![square_contour(*size, *center)],
         Node::Circle { r, frags } => vec![circle_contour(*r, *frags)],
         Node::Polygon { points, paths } => polygon_contours(points, paths),
-        Node::Import { data, format } => match format.as_str() {
-            "dxf" => crate::vector2d::import_dxf(data),
-            "svg" => crate::vector2d::import_svg(data),
-            _ => Vec::new(),
-        },
+        Node::Import {
+            data,
+            format,
+            layer,
+            id,
+            origin,
+            scale,
+        } => {
+            let contours = match format.as_str() {
+                "dxf" => crate::vector2d::import_dxf(data, layer.as_deref()),
+                "svg" => crate::vector2d::import_svg(data, layer.as_deref(), id.as_deref()),
+                _ => Vec::new(),
+            };
+            // `origin` and `scale` place the imported outline; both are 2D-only
+            // upstream, so the 3D formats above never see them.
+            if *origin == [0.0, 0.0] && *scale == 1.0 {
+                contours
+            } else {
+                contours
+                    .into_iter()
+                    .map(|c| {
+                        c.into_iter()
+                            .map(|p| [(p[0] - origin[0]) * scale, (p[1] - origin[1]) * scale])
+                            .collect()
+                    })
+                    .collect()
+            }
+        }
         Node::Offset {
             r,
             delta,

@@ -1102,7 +1102,7 @@ fn render_uncached(node: &Node, ctx: &mut Ctx) -> Result<Mesh, GeomError> {
             frags,
         } => Ok(cylinder(*h, *r1, *r2, *center, *frags)),
         Node::Polyhedron { points, faces } => Ok(polyhedron(points, faces)),
-        Node::Import { data, format } => Ok(match format.as_str() {
+        Node::Import { data, format, .. } => Ok(match format.as_str() {
             "off" => Mesh::from_off(&String::from_utf8_lossy(data)),
             "obj" => Mesh::from_obj(&String::from_utf8_lossy(data)),
             "3mf" => Mesh::from_3mf(data),
@@ -1400,9 +1400,22 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
             auto.hash(&mut h);
             hash_all(child, out).hash(&mut h);
         }
-        Node::Import { data, format } => {
+        Node::Import {
+            data,
+            format,
+            layer,
+            id,
+            origin,
+            scale,
+        } => {
             data.hash(&mut h);
             format.hash(&mut h);
+            layer.hash(&mut h);
+            id.hash(&mut h);
+            for x in origin {
+                bits(x, &mut h);
+            }
+            bits(scale, &mut h);
         }
         Node::Projection { cut, child } => {
             cut.hash(&mut h);
