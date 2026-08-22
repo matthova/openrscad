@@ -1595,6 +1595,8 @@ impl Interp<'_> {
             _ => [0.0, 0.0],
         };
         let scale = m.get("scale").and_then(Value::as_number).unwrap_or(1.0);
+        // Only consulted for an SVG with no physical width/height.
+        let dpi = m.get("dpi").and_then(Value::as_number).unwrap_or(72.0);
         match self.resolver.load_bytes(&path, &self.cur_dir) {
             Some(data) => Ok(Node::Import {
                 data,
@@ -1603,6 +1605,8 @@ impl Interp<'_> {
                 id: text_arg("id"),
                 origin,
                 scale,
+                dpi,
+                frags: self.frag_spec(&m),
             }),
             None => {
                 self.warn(format!("Can't open import file '{path}'"));
@@ -1729,12 +1733,18 @@ impl Interp<'_> {
         let valign = sopt("valign", "baseline");
         let spacing = m.get("spacing").and_then(Value::as_number).unwrap_or(1.0);
         let direction = sopt("direction", "ltr");
+        // Upstream's defaults, as its own `.csg` output spells them.
+        let script = sopt("script", "Latn");
+        let language = sopt("language", "en");
         // Curve resolution follows `$fn` (like other curved primitives).
         let fn_ = self.lookup_var("$fn").as_number().unwrap_or(0.0);
+        // Bézier flattening. The default of four segments per curve is what
+        // matches upstream's own default: eight put a plain 'o' 1.2% over
+        // OpenSCAD's area, four lands within 0.02%.
         let segments = if fn_ >= 3.0 {
             ((fn_ / 4.0).ceil() as usize).max(2)
         } else {
-            8
+            4
         };
 
         let (points, paths, family_known) = text::render_text(
@@ -1746,6 +1756,8 @@ impl Interp<'_> {
                 valign: &valign,
                 spacing,
                 direction: &direction,
+                script: &script,
+                language: &language,
                 segments,
             },
         );

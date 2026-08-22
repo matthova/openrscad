@@ -154,31 +154,11 @@ match OpenSCAD's.
 
 ## Class M — missing surface
 
-Loud failures. No silent wrong answers here, but each is a script that runs
-upstream and does not run here.
-
-*(The six retained deprecated 2021.01 forms that used to sit here — `assign`,
-`child`, `dxf_dim`, `dxf_cross`, `import_stl`, `import_dxf` — are closed; see
-below.)*
-
-### Import and text atoms
-
-These are known-incomplete rather than individually measured; each needs a
-fixture before it becomes a proper atom with numbers.
-
-| id | surface | gap | manifest |
-|---|---|---|---|
-| A-I05 | DXF bulges, splines, ellipses, caller fragment controls | `F-I2` | `import.dxf.curves` |
-| A-I07 | SVG transforms, units, DPI | `F-I2` | `import.svg.transforms_dpi` |
-| A-I08 | SVG nesting, `<use>`, style, visibility | `F-I2` | `import.svg.structure_style` |
-| A-I09 | AMF/3MF units, object index spaces, components, build transforms | `F-I3` | `import.amf_3mf.scene_graph` |
-| A-T01 | `text()` kerning, ligatures, complex-script shaping | `F-I1` | `module.text.shaping` |
-| A-T02 | `text(direction=, language=, script=)` — RTL only reverses codepoints | `F-I1` | `module.text.direction_language_script` |
-
-A-I05 and A-I07…A-I09 are format-parser breadth. The accepted-and-ignored
-*parameters* that used to sit alongside them — A-I03, A-I04, A-I06 — are closed;
-they were arguably class S rather than M, since the import succeeded and
-returned the wrong contents.
+*Empty.* Every atom that used to sit here is closed: the six retained deprecated
+2021.01 forms (`assign`, `child`, `dxf_dim`, `dxf_cross`, `import_stl`,
+`import_dxf`), the import selectors and placement, SVG transforms/structure, DXF
+curves, AMF/3MF scene assembly, `.csg` export, and text shaping. See the closed
+section below for each.
 
 ---
 
@@ -219,6 +199,44 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-I05, A-I07, A-I08, A-I09, A-T01, A-T02 — format and text parity — **closed**
+
+The last of the missing surface, in four pieces. Each is written up in
+`COMPAT.md`; what follows is what *measuring* changed about the plan, because in
+three of the six the atom's own description turned out to be wrong.
+
+**A-I07/A-I08 — SVG transforms and structure.** The importer scanned tags flat,
+so a `<g transform=…>` went unnoticed and `<use>` could not be resolved at all.
+It now walks the document with a transform stack. Three rules had to be measured:
+`<defs>` draws nothing and an explicit `id=` does *not* override that (though it
+does override `display:none`); **`visibility:hidden` does not hide** — upstream
+renders it regardless; and with no viewBox coordinates are 1:1 whatever `dpi=`
+says. One bug class showed up twice: a self-closing element has no close tag, so
+a state entered on it — hidden, or the selection — is never left.
+
+**A-I05 — DXF curves.** `ELLIPSE` was genuinely missing and imported curves were
+always cut at the *default* resolution, ignoring the caller's `$fn`. But
+**bulges and splines are not supported upstream either**: a two-vertex closed
+polyline bulged into a full circle imports as nothing in OpenSCAD 2024.12, and a
+`SPLINE` yields no geometry. I had both working before checking, and removed
+them — implementing them would have been a divergence, not a fix.
+
+**A-I09 — AMF/3MF scene assembly.** Both readers flattened every vertex in the
+file into one index space, so a package of a 2mm and a 3mm cube imported as two
+2mm cubes. Fixed. Of the rest of the atom's list, AMF `unit` and
+`<constellation>` are *ignored upstream* and we already matched. 3MF
+multi-object assembly is now a deliberate divergence in the other direction: see
+the entry in `COMPAT.md`.
+
+**A-T01/A-T02 — text shaping.** Runs are shaped with `rustybuzz` rather than
+summed glyph by glyph. Arabic went from rendering nothing to exact. The shaper's
+*fallbacks* are not upstream's, so the vertical layout had to be derived: each
+glyph is centred in a slot of the OS/2 typographic span, which came out of
+solving the per-glyph offsets (−1502, −1665, −1298 units for 'a', 'H', 'g' —
+ink-centring, not any single metric). Two neighbours fell out of the same work:
+`valign` aligns the ink box rather than the ascender, and the default Bézier
+flattening was four segments too fine.
 
 ### A-X01 — `.csg` tree export was absent — **closed**
 
@@ -604,14 +622,24 @@ invocation each one compares against.
 | S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 6 | A-I05, A-I07…A-I09, A-T01, A-T02 |
+| M — missing | 0 | — |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 22 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I04, A-I06, A-X01, A-X02 |
+| closed | 28 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I09, A-T01, A-T02, A-X01, A-X02 |
 
-Six of the open atoms were found by measuring rather than by reading docs:
+**Class M is empty**: every missing surface is closed. One silent atom remains
+(A-G11), one warned divergence, and one permanent one; the 50 `unproven` entries
+are measurement work, not defects.
+
+Six of the atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the
 twist family. Fixing one atom exactly is what exposed the next three — each was
 hidden behind an error an order of magnitude larger.
+
+Measuring also *removed* work three times. The register listed DXF bulges and
+splines, AMF units, and AMF constellations as gaps; the oracle shows OpenSCAD
+supports none of them, so implementing any would have been a new divergence
+rather than a fix. An atom is only worth closing once you have checked which
+side of it upstream is on.
 
 ## Maintaining this document
 

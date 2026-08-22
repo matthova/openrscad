@@ -163,6 +163,13 @@ pub enum Node {
         /// 3D formats, as upstream.
         origin: Vec2,
         scale: f64,
+        /// SVG user units per inch, used only when the document gives no
+        /// physical `width`/`height` to derive a size from. OpenSCAD defaults
+        /// to 72.
+        dpi: f64,
+        /// `$fn`/`$fa`/`$fs` at the call site, which tessellate imported curves
+        /// (DXF arcs, bulges, ellipses and splines).
+        frags: FragmentSpec,
     },
     /// `projection(cut)` — flatten a 3D child to 2D. `cut=true` sections at z=0.
     Projection {

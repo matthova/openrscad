@@ -30,25 +30,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Missing or partial compatibility
 
-- **Text font discovery is broad, but shaping is partial.** Native hosts scan
-  installed fonts; Chromium can load permission-granted local fonts; the bundled
-  Liberation family remains the deterministic fallback. Layout is still
-  codepoint-by-codepoint: kerning, ligatures, complex-script shaping, vertical
-  directions, and meaningful `language`/`script` selection are absent, and RTL
-  merely reverses codepoints. An unavailable family warns and falls back.
-
-  ```scad
-  text("office", font="Liberation Serif"); // no ligature/kerning shaping yet
-  text("مرحبا", direction="rtl", language="ar", script="arabic");
-  ```
-
-- **Import parsers accept the headline formats, not every documented construct.**
-  Selectors and placement (`layer`, `id`, `origin`, `scale`) now work; what
-  remains is SVG nesting/`<use>`/style/visibility and general element
-  transforms, DXF bulges/splines/ellipses, and caller curve resolution. 3MF/AMF
-  import does not yet assemble units, independent object index spaces,
-  components, or build-item transforms.
-
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
   `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
@@ -76,6 +57,23 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   minkowski() { linear_extrude(6) polygon([[0,0],[24,0],[24,6],[6,6],[6,24],[0,24]]); sphere(2); }
   ```
 
+## Deliberate divergences
+
+- **A multi-object 3MF imports every object; OpenSCAD imports one.** Upstream
+  2024.12 returns only the highest-`id` object in `<resources>` and ignores
+  `<build>` entirely — it will even import an object the build never references,
+  and drops the rest. Measured, not inferred: a package of 2mm, 3mm and 4mm
+  cubes imports as the 4mm cube alone, whichever order they are declared in.
+  OpenRSCAD assembles the build instead, honouring per-item transforms and
+  repeat instancing, because silently discarding a user's geometry is the worse
+  failure — and our own colour-group 3MF export writes one object per colour, so
+  matching upstream would make that export unreadable by us too. Single-object
+  packages, which is nearly everything in the wild, are identical either way.
+
+  ```scad
+  import("two-objects.3mf");   // both objects here; the larger-id one upstream
+  ```
+
 ## Permanent divergences
 
 - **`rands()` is not bit-compatible.** OpenRSCAD uses an xorshift PRNG; values
@@ -88,7 +86,7 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **29/29**, geometry **102/102**, and BOSL2
+The current gates are `corpus/echo` **29/29**, geometry **111/111**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
 
@@ -105,6 +103,34 @@ their oracle or regression evidence where relevant:
   ```sh
   openrscad -o model.csg model.scad && openscad -o from-csg.stl model.csg
   ```
+
+- **`text()` is shaped, not summed.** Runs go through `rustybuzz`, the Rust
+  port of the same HarfBuzz shaper OpenSCAD uses, so kerning pairs, ligatures
+  and joining scripts come out right instead of being approximated glyph by
+  glyph: `"AV"` was 1mm too wide, `"ffl"` missed its ligature, and Arabic
+  rendered *nothing at all*. `direction=` selects `ltr`/`rtl`/`ttb`/`btt`, with
+  `script=`/`language=` passed through.
+
+  Three details were measured rather than assumed, each now oracle-gated: a
+  vertical run centres every glyph in a slot the height of the OS/2 typographic
+  ascent-to-descent span *and* centres it on the column, rather than running a
+  baseline; `valign` aligns the **ink** box, not the font's ascender, so `"aaa"`
+  and `"Hqp"` sit differently under `valign="top"`; and glyph curves flatten to
+  four segments by default, where eight put a plain `o` 1.2% over upstream's
+  area and four lands within 0.02%.
+
+  ```scad
+  text("AV");                                    // kerned
+  text("مرحبا", direction="rtl", script="arabic");  // joined, was empty
+  text("abc", direction="ttb");                  // stacked and centred
+  ```
+
+- **AMF and 3MF objects keep their own index spaces.** Triangle indices are
+  numbered per `<object>`; reading a whole file into one list made a second
+  object's faces address the first object's points, so a package of a 2mm and a
+  3mm cube imported as two 2mm cubes. 3MF `<build>` items are now assembled with
+  their transforms. AMF `unit` and `<constellation>` are ignored, which is what
+  upstream does — an AMF in inches imports at the same size there.
 
 - **Import selectors and placement are honoured.** `layer=` keeps a single DXF
   layer or Inkscape SVG layer, `id=` selects any SVG element by id, and

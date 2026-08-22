@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+  <rect id="plain" x="0" y="0" width="4" height="4"/>
+  <g transform="translate(20,0)"><rect id="tr" x="0" y="0" width="4" height="4"/></g>
+  <g transform="scale(2)"><rect id="sc" x="20" y="0" width="4" height="4"/></g>
+  <g transform="rotate(90)"><rect id="rot" x="40" y="0" width="4" height="2"/></g>
+  <g transform="matrix(1,0,0,1,60,0)"><rect id="mx" x="0" y="0" width="4" height="4"/></g>
+  <g transform="translate(0,20)"><g transform="translate(5,0)"><rect id="nest" x="0" y="0" width="4" height="4"/></g></g>
+  <rect id="own" x="0" y="40" width="4" height="4" transform="translate(10,0)"/>
+</svg>

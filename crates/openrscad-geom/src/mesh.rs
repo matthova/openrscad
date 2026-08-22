@@ -354,47 +354,131 @@ impl Mesh {
             return Mesh::new();
         };
         let xml = String::from_utf8_lossy(&model);
-        let mut verts: Vec<[f64; 3]> = Vec::new();
-        let mut tris: Vec<[u32; 3]> = Vec::new();
-        for tag in xml_tags(&xml, "vertex") {
-            verts.push([
-                xml_attr_f64(tag, "x").unwrap_or(0.0),
-                xml_attr_f64(tag, "y").unwrap_or(0.0),
-                xml_attr_f64(tag, "z").unwrap_or(0.0),
-            ]);
+        // Each `<object>` numbers its triangles from its own vertex list, so the
+        // objects are read separately and their indices shifted. Reading every
+        // `<vertex>` in the file into one list instead makes a multi-object
+        // package import as garbage: the second object's faces address the
+        // first object's points.
+        let mut objects: Vec<(String, Mesh)> = Vec::new();
+        for scope in split_elements(&xml, "object") {
+            // `split_elements` yields the content, so the id comes from the
+            // opening tag captured just before it.
+            let id = xml_attr_str(&xml, scope, "id").unwrap_or_default();
+            let mut m = Mesh::new();
+            for tag in xml_tags(scope, "vertex") {
+                m.verts.push([
+                    xml_attr_f64(tag, "x").unwrap_or(0.0),
+                    xml_attr_f64(tag, "y").unwrap_or(0.0),
+                    xml_attr_f64(tag, "z").unwrap_or(0.0),
+                ]);
+            }
+            for tag in xml_tags(scope, "triangle") {
+                if let (Some(a), Some(b), Some(c)) = (
+                    xml_attr_f64(tag, "v1"),
+                    xml_attr_f64(tag, "v2"),
+                    xml_attr_f64(tag, "v3"),
+                ) {
+                    m.tris.push([a as u32, b as u32, c as u32]);
+                }
+            }
+            objects.push((id, m));
         }
-        for tag in xml_tags(&xml, "triangle") {
-            if let (Some(a), Some(b), Some(c)) = (
-                xml_attr_f64(tag, "v1"),
-                xml_attr_f64(tag, "v2"),
-                xml_attr_f64(tag, "v3"),
-            ) {
-                tris.push([a as u32, b as u32, c as u32]);
+        if objects.is_empty() {
+            return Mesh::new();
+        }
+
+        // Assemble the `<build>`: each item names an object and may place it
+        // with a 3x4 row-major matrix. An object may be instanced more than
+        // once, and one never named is not part of the build.
+        let mut out = Mesh::new();
+        let mut placed = 0usize;
+        for item in xml_tags(&xml, "item") {
+            let Some(want) = attr_of(item, "objectid") else {
+                continue;
+            };
+            let Some((_, mesh)) = objects.iter().find(|(id, _)| *id == want) else {
+                continue;
+            };
+            let m = attr_of(item, "transform")
+                .map(|t| {
+                    let n: Vec<f64> = t
+                        .split_whitespace()
+                        .filter_map(|v| v.parse().ok())
+                        .collect();
+                    n
+                })
+                .unwrap_or_default();
+            let base = out.verts.len() as u32;
+            for v in &mesh.verts {
+                // 3MF writes the matrix column-major as 4 rows of 3, the last
+                // row being the translation.
+                out.verts.push(if m.len() >= 12 {
+                    [
+                        m[0] * v[0] + m[3] * v[1] + m[6] * v[2] + m[9],
+                        m[1] * v[0] + m[4] * v[1] + m[7] * v[2] + m[10],
+                        m[2] * v[0] + m[5] * v[1] + m[8] * v[2] + m[11],
+                    ]
+                } else {
+                    *v
+                });
+            }
+            for t in &mesh.tris {
+                out.tris.push([base + t[0], base + t[1], base + t[2]]);
+            }
+            placed += 1;
+        }
+        // A package with no usable build still has its meshes; take them all
+        // rather than dropping the file on the floor.
+        if placed == 0 {
+            for (_, mesh) in &objects {
+                let base = out.verts.len() as u32;
+                out.verts.extend_from_slice(&mesh.verts);
+                for t in &mesh.tris {
+                    out.tris.push([base + t[0], base + t[1], base + t[2]]);
+                }
             }
         }
-        Mesh { verts, tris }
+        out
     }
 
     /// Parse an AMF document (plain XML) into an indexed mesh.
     pub fn from_amf(bytes: &[u8]) -> Mesh {
         let xml = String::from_utf8_lossy(bytes);
         let mut verts: Vec<[f64; 3]> = Vec::new();
-        // Each <vertex> holds a <coordinates> with <x>/<y>/<z> child elements.
-        for v in split_elements(&xml, "vertex") {
-            verts.push([
-                xml_child_f64(v, "x").unwrap_or(0.0),
-                xml_child_f64(v, "y").unwrap_or(0.0),
-                xml_child_f64(v, "z").unwrap_or(0.0),
-            ]);
-        }
         let mut tris: Vec<[u32; 3]> = Vec::new();
-        for t in split_elements(&xml, "triangle") {
-            if let (Some(a), Some(b), Some(c)) = (
-                xml_child_f64(t, "v1"),
-                xml_child_f64(t, "v2"),
-                xml_child_f64(t, "v3"),
-            ) {
-                tris.push([a as u32, b as u32, c as u32]);
+        // Triangle indices are numbered per `<object>`, so each object's
+        // vertices are appended and its indices shifted by where they landed.
+        // Flattening the whole file into one index space instead makes a
+        // multi-object drawing import as garbage: the second object's faces
+        // address the first object's points.
+        //
+        // The `unit` attribute and `<constellation>` instances are ignored, as
+        // upstream ignores them: an AMF in inches imports at the same size, and
+        // a constellation placing an object twice still yields one copy.
+        let objects = split_elements(&xml, "object");
+        let scopes: Vec<&str> = if objects.is_empty() {
+            vec![&xml]
+        } else {
+            objects
+        };
+        for scope in scopes {
+            let base = verts.len() as u32;
+            // Each <vertex> holds a <coordinates> with <x>/<y>/<z> children.
+            for v in split_elements(scope, "vertex") {
+                verts.push([
+                    xml_child_f64(v, "x").unwrap_or(0.0),
+                    xml_child_f64(v, "y").unwrap_or(0.0),
+                    xml_child_f64(v, "z").unwrap_or(0.0),
+                ]);
+            }
+            for t in split_elements(scope, "triangle") {
+                if let (Some(a), Some(b), Some(c)) = (
+                    xml_child_f64(t, "v1"),
+                    xml_child_f64(t, "v2"),
+                    xml_child_f64(t, "v3"),
+                ) {
+                    tris.push([base + a as u32, base + b as u32, base + c as u32]);
+                }
             }
         }
         Mesh { verts, tris }
@@ -860,6 +944,36 @@ fn xml_tags<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
 }
 
 /// Parse a numeric XML attribute (`attr="..."` / `attr='...'`) from a tag region.
+/// The value of `attr` on the opening tag immediately preceding `content`
+/// within `xml`. `split_elements` hands back element bodies, so the attributes
+/// live just before the slice it returned.
+fn xml_attr_str(xml: &str, content: &str, attr: &str) -> Option<String> {
+    let offset = content.as_ptr() as usize - xml.as_ptr() as usize;
+    let head = &xml[..offset];
+    let open = head.rfind('<')?;
+    attr_of(&head[open..], attr)
+}
+
+/// Read a quoted attribute out of a tag.
+fn attr_of(tag: &str, attr: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(rel) = tag[from..].find(attr) {
+        let i = from + rel;
+        let before_ok = i == 0 || tag.as_bytes()[i - 1].is_ascii_whitespace();
+        let rest = tag[i + attr.len()..].trim_start();
+        if before_ok && rest.starts_with('=') {
+            let rest = rest[1..].trim_start();
+            let q = rest.chars().next()?;
+            if q == '"' || q == '\'' {
+                let end = rest[1..].find(q)?;
+                return Some(rest[1..1 + end].to_string());
+            }
+        }
+        from = i + attr.len();
+    }
+    None
+}
+
 fn xml_attr_f64(tag: &str, attr: &str) -> Option<f64> {
     let mut from = 0;
     while let Some(rel) = tag[from..].find(attr) {
@@ -1004,5 +1118,75 @@ mod io_tests {
             "vol {}",
             back.volume()
         );
+    }
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+
+    /// A cube of side `s` at the origin, as AMF object `id`.
+    fn amf_object(id: u32, s: f64) -> String {
+        let vs = [
+            (0.0, 0.0, 0.0),
+            (s, 0.0, 0.0),
+            (s, s, 0.0),
+            (0.0, s, 0.0),
+            (0.0, 0.0, s),
+            (s, 0.0, s),
+            (s, s, s),
+            (0.0, s, s),
+        ];
+        let tri = [
+            (0, 2, 1),
+            (0, 3, 2),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (1, 2, 6),
+            (1, 6, 5),
+            (2, 3, 7),
+            (2, 7, 6),
+            (3, 0, 4),
+            (3, 4, 7),
+        ];
+        let v: String = vs
+            .iter()
+            .map(|(x, y, z)| {
+                format!(
+                    "<vertex><coordinates><x>{x}</x><y>{y}</y><z>{z}</z></coordinates></vertex>"
+                )
+            })
+            .collect();
+        let t: String = tri
+            .iter()
+            .map(|(a, b, c)| format!("<triangle><v1>{a}</v1><v2>{b}</v2><v3>{c}</v3></triangle>"))
+            .collect();
+        format!("<object id=\"{id}\"><mesh><vertices>{v}</vertices><volume>{t}</volume></mesh></object>")
+    }
+
+    /// Triangle indices in AMF are numbered per `<object>`. Reading the whole
+    /// file into one index space makes the second object's faces address the
+    /// first object's points — two 2mm cubes instead of a 2mm and a 3mm one.
+    #[test]
+    fn amf_objects_have_their_own_index_space() {
+        let xml = format!(
+            "<amf unit=\"millimeter\">{}{}</amf>",
+            amf_object(1, 2.0),
+            amf_object(2, 3.0)
+        );
+        let m = Mesh::from_amf(xml.as_bytes());
+        assert_eq!(m.verts.len(), 16);
+        assert_eq!(m.tris.len(), 24);
+        // 2^3 + 3^3, and the oracle agrees: flattening gives 16.
+        assert!((m.volume() - 35.0).abs() < 1e-9, "{}", m.volume());
+    }
+
+    #[test]
+    fn a_single_object_amf_is_unchanged() {
+        let xml = format!("<amf>{}</amf>", amf_object(1, 2.0));
+        let m = Mesh::from_amf(xml.as_bytes());
+        assert!((m.volume() - 8.0).abs() < 1e-9);
     }
 }
