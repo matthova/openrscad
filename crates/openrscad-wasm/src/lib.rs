@@ -1098,7 +1098,7 @@ v = [1, 2, 3];
             vec![],
             "svg",
         );
-        let contours = openrscad_geom::import_svg(svg.as_bytes(), None, None);
+        let contours = openrscad_geom::import_svg(svg.as_bytes(), None, None, 72.0);
         check_footprint(&contours);
     }
 

@@ -1407,6 +1407,7 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
             id,
             origin,
             scale,
+            dpi,
         } => {
             data.hash(&mut h);
             format.hash(&mut h);
@@ -1416,6 +1417,7 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
                 bits(x, &mut h);
             }
             bits(scale, &mut h);
+            bits(dpi, &mut h);
         }
         Node::Projection { cut, child } => {
             cut.hash(&mut h);

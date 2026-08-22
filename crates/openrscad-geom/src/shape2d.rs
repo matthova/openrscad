@@ -220,10 +220,11 @@ pub fn render2d(node: &Node) -> Vec<Contour> {
             id,
             origin,
             scale,
+            dpi,
         } => {
             let contours = match format.as_str() {
                 "dxf" => crate::vector2d::import_dxf(data, layer.as_deref()),
-                "svg" => crate::vector2d::import_svg(data, layer.as_deref(), id.as_deref()),
+                "svg" => crate::vector2d::import_svg(data, layer.as_deref(), id.as_deref(), *dpi),
                 _ => Vec::new(),
             };
             // `origin` and `scale` place the imported outline; both are 2D-only

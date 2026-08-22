@@ -690,6 +690,269 @@ fn parse_path(d: &str) -> (Vec<Contour>, Vec<Vec<Point2>>) {
 
 /// Parse an SVG document into contours, applying OpenSCAD's coordinate mapping
 /// (72-DPI lengths, Y flipped about the physical height).
+/// An SVG 2x3 affine transform, `[a b c d e f]` in the spec's ordering:
+/// `x' = a·x + c·y + e`, `y' = b·x + d·y + f`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Affine([f64; 6]);
+
+impl Affine {
+    const IDENTITY: Affine = Affine([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+
+    fn apply(&self, p: Point2) -> Point2 {
+        let [a, b, c, d, e, f] = self.0;
+        [a * p[0] + c * p[1] + e, b * p[0] + d * p[1] + f]
+    }
+
+    /// `self` then `rhs` — i.e. the child's transform composed under the
+    /// parent's, which is how a nested `<g>` accumulates.
+    fn then(&self, rhs: &Affine) -> Affine {
+        let [a1, b1, c1, d1, e1, f1] = self.0;
+        let [a2, b2, c2, d2, e2, f2] = rhs.0;
+        Affine([
+            a1 * a2 + c1 * b2,
+            b1 * a2 + d1 * b2,
+            a1 * c2 + c1 * d2,
+            b1 * c2 + d1 * d2,
+            a1 * e2 + c1 * f2 + e1,
+            b1 * e2 + d1 * f2 + f1,
+        ])
+    }
+
+    /// Parse a `transform=` attribute: a whitespace/comma separated list of
+    /// `translate`, `scale`, `rotate`, `matrix`, `skewX` and `skewY`, applied
+    /// left to right.
+    fn parse(spec: &str) -> Affine {
+        let mut out = Affine::IDENTITY;
+        let mut rest = spec;
+        while let Some(open) = rest.find('(') {
+            let name = rest[..open].trim_matches(|c: char| !c.is_ascii_alphabetic());
+            let Some(close) = rest[open..].find(')') else {
+                break;
+            };
+            let args = scan_numbers(&rest[open + 1..open + close]);
+            let g = |i: usize| args.get(i).copied();
+            let step = match name {
+                "translate" => {
+                    Affine([1.0, 0.0, 0.0, 1.0, g(0).unwrap_or(0.0), g(1).unwrap_or(0.0)])
+                }
+                // A single argument scales both axes.
+                "scale" => {
+                    let sx = g(0).unwrap_or(1.0);
+                    Affine([sx, 0.0, 0.0, g(1).unwrap_or(sx), 0.0, 0.0])
+                }
+                "rotate" => {
+                    let (s, c) = g(0).unwrap_or(0.0).to_radians().sin_cos();
+                    let rot = Affine([c, s, -s, c, 0.0, 0.0]);
+                    // The 3-argument form rotates about a point.
+                    match (g(1), g(2)) {
+                        (Some(cx), Some(cy)) => Affine([1.0, 0.0, 0.0, 1.0, cx, cy])
+                            .then(&rot)
+                            .then(&Affine([1.0, 0.0, 0.0, 1.0, -cx, -cy])),
+                        _ => rot,
+                    }
+                }
+                "matrix" => Affine([
+                    g(0).unwrap_or(1.0),
+                    g(1).unwrap_or(0.0),
+                    g(2).unwrap_or(0.0),
+                    g(3).unwrap_or(1.0),
+                    g(4).unwrap_or(0.0),
+                    g(5).unwrap_or(0.0),
+                ]),
+                "skewX" => Affine([
+                    1.0,
+                    0.0,
+                    g(0).unwrap_or(0.0).to_radians().tan(),
+                    1.0,
+                    0.0,
+                    0.0,
+                ]),
+                "skewY" => Affine([
+                    1.0,
+                    g(0).unwrap_or(0.0).to_radians().tan(),
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                ]),
+                _ => Affine::IDENTITY,
+            };
+            out = out.then(&step);
+            rest = &rest[open + close + 1..];
+        }
+        out
+    }
+}
+
+/// Whether an element is hidden, as an attribute or inside `style=`.
+///
+/// Only `display:none` counts. Upstream renders a `visibility:hidden` element
+/// regardless — measured, not assumed — so honouring it here would drop
+/// geometry OpenSCAD keeps.
+fn hidden(tag: &str) -> bool {
+    let style = attr(tag, "style").unwrap_or_default().replace(' ', "");
+    let display = attr(tag, "display").unwrap_or_default();
+    display.trim() == "none" || style.contains("display:none")
+}
+
+/// A drawable element paired with the transform accumulated from its ancestors.
+type Placed = (&'static str, String, Affine);
+
+/// Walk the document, tracking the transform stack and skipping hidden
+/// subtrees, and yield every drawable element with its accumulated transform.
+///
+/// This replaces a flat tag scan: without the hierarchy a `<g transform=…>` and
+/// a `display:none` group both go unnoticed, and `<use>` cannot be resolved at
+/// all.
+fn walk_shapes(text: &str, select: Option<(Option<&str>, Option<&str>)>) -> Vec<Placed> {
+    const SHAPES: [&str; 7] = [
+        "rect", "circle", "ellipse", "line", "polyline", "polygon", "path",
+    ];
+    let mut out: Vec<Placed> = Vec::new();
+    // (transform in effect, depth at which it was pushed)
+    let mut stack: Vec<(Affine, usize)> = vec![(Affine::IDENTITY, 0)];
+    // Depth of the shallowest hidden container, if we are inside one. Only a
+    // container can set this: a self-closing element has no close tag to clear
+    // it at, so it hides only itself.
+    let mut hidden_at: Option<usize> = None;
+    // `<defs>` is tracked apart from hiding because an explicit `id=` overrides
+    // `display:none` but *not* membership of `<defs>` — upstream renders the
+    // former and not the latter.
+    let mut defs_at: Option<usize> = None;
+    // Depth of the selected element, once found. Selection has to happen during
+    // the walk, not by slicing the subtree out first: a shape picked by `id=`
+    // still inherits every `transform=` from its ancestors, and cutting it out
+    // of the text would drop them.
+    let mut selected_at: Option<usize> = None;
+    let mut depth = 0usize;
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let Some(rel_end) = text[i..].find('>') else {
+            break;
+        };
+        let end = i + rel_end;
+        let inner = &text[i + 1..end];
+        let closing = inner.starts_with('/');
+        let self_closing = inner.trim_end().ends_with('/');
+        let name: String = inner
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        let lname = name.to_ascii_lowercase();
+
+        if closing {
+            depth = depth.saturating_sub(1);
+            if stack.last().map(|(_, d)| *d) == Some(depth) && stack.len() > 1 {
+                stack.pop();
+            }
+            if hidden_at == Some(depth) {
+                hidden_at = None;
+            }
+            if defs_at == Some(depth) {
+                defs_at = None;
+            }
+            if selected_at == Some(depth) {
+                // Past the selected subtree: nothing further can match.
+                break;
+            }
+            i = end + 1;
+            continue;
+        }
+
+        let ctm = stack.last().map(|(t, _)| *t).unwrap_or(Affine::IDENTITY);
+        let here = ctm.then(&Affine::parse(
+            &attr(inner, "transform").unwrap_or_default(),
+        ));
+
+        // `<defs>` holds templates for `<use>` and draws nothing itself.
+        let self_hidden = hidden(inner);
+        if !self_closing {
+            if hidden_at.is_none() && self_hidden {
+                hidden_at = Some(depth);
+            }
+            if defs_at.is_none() && lname == "defs" {
+                defs_at = Some(depth);
+            }
+        }
+        // A self-closing match has no close tag to end the selection at, so
+        // note it here and stop once this element has been emitted.
+        let mut last_of_selection = false;
+        if let Some((want_layer, want_id)) = select {
+            if selected_at.is_none() {
+                let hit = want_layer
+                    .is_some_and(|w| attr(inner, "inkscape:label").as_deref() == Some(w))
+                    || want_id.is_some_and(|w| attr(inner, "id").as_deref() == Some(w));
+                if hit {
+                    selected_at = Some(depth);
+                    last_of_selection = self_closing;
+                    // Asking for an element by name overrides `display:none`,
+                    // its own and its ancestors' — upstream renders a hidden
+                    // rect when you select it explicitly. It does not override
+                    // `<defs>`, which stays unrenderable.
+                    hidden_at = None;
+                }
+            }
+        }
+        let in_selection = select.is_none() || selected_at.is_some();
+        // A self-closing element hides only itself, so its own flag is checked
+        // here rather than entering the hidden state above.
+        let own_ok = !(self_closing && self_hidden) || selected_at == Some(depth);
+        let visible = hidden_at.is_none() && defs_at.is_none() && in_selection && own_ok;
+
+        if visible {
+            if let Some(shape) = SHAPES.iter().find(|s| **s == lname) {
+                out.push((shape, inner.to_string(), here));
+            } else if lname == "use" {
+                // `<use href="#id">` instantiates another element, offset by
+                // this element's own x/y.
+                let href = attr(inner, "href")
+                    .or_else(|| attr(inner, "xlink:href"))
+                    .unwrap_or_default();
+                let target = href.trim_start_matches('#');
+                let offset = Affine([
+                    1.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    attr_f64(inner, "x").unwrap_or(0.0),
+                    attr_f64(inner, "y").unwrap_or(0.0),
+                ]);
+                if !target.is_empty() {
+                    if let Some(sub) = svg_subtree(text, None, Some(target)) {
+                        // Guard against a `<use>` that names itself.
+                        if !sub.contains("<use") || sub.len() < text.len() {
+                            let placed = here.then(&offset);
+                            for (n, b, t) in walk_shapes(&sub, None) {
+                                out.push((n, b, placed.then(&t)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if last_of_selection {
+            break;
+        }
+        if !self_closing && !SHAPES.iter().any(|s| *s == lname) && lname != "use" {
+            // A container: its transform stays in effect until the close tag.
+            stack.push((here, depth));
+            depth += 1;
+        } else if !self_closing && SHAPES.iter().any(|s| *s == lname) {
+            // A shape written with a separate close tag still nests.
+            depth += 1;
+        }
+        i = end + 1;
+    }
+    out
+}
+
 /// The text span of the element whose `id` (or Inkscape layer label) matches,
 /// including its children.
 ///
@@ -749,21 +1012,9 @@ fn svg_subtree(text: &str, layer: Option<&str>, id: Option<&str>) -> Option<Stri
 /// `layer` selects an Inkscape layer group by its label and `id` selects any
 /// element by its `id`; either keeps that subtree alone. A selector that
 /// matches nothing yields no geometry, as upstream.
-pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Contour> {
-    let whole = String::from_utf8_lossy(bytes);
-    // The header carries viewBox/width/height, so keep it and swap the body.
-    let selected = if layer.is_some() || id.is_some() {
-        match svg_subtree(&whole, layer, id) {
-            Some(sub) => {
-                let header = find_tag(&whole, "svg").unwrap_or_default();
-                std::borrow::Cow::Owned(format!("{header}{sub}</svg>"))
-            }
-            None => return Vec::new(),
-        }
-    } else {
-        whole
-    };
-    let text = selected;
+pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>, dpi: f64) -> Vec<Contour> {
+    let text = String::from_utf8_lossy(bytes);
+    let select = (layer.is_some() || id.is_some()).then_some((layer, id));
     // Locate the <svg ...> opening tag for viewBox/width/height.
     let svg_tag = find_tag(&text, "svg").unwrap_or_default();
     let vb: Vec<f64> = attr(&svg_tag, "viewBox")
@@ -777,8 +1028,12 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
     let has_vb = vb.len() == 4;
     let width_mm = attr(&svg_tag, "width").and_then(|s| svg_len(&s));
     let height_mm = attr(&svg_tag, "height").and_then(|s| svg_len(&s));
+    // A physical width pins the scale. Failing that, viewBox units are inches
+    // at `dpi` — but only when there *is* a viewBox: with no viewBox at all
+    // upstream takes the coordinates 1:1, whatever `dpi` says.
+    let per_unit = if dpi > 0.0 { 25.4 / dpi } else { 25.4 / 72.0 };
     let scale = if has_vb {
-        width_mm.map(|w| w / vb_w).unwrap_or(1.0)
+        width_mm.map(|w| w / vb_w).unwrap_or(per_unit)
     } else {
         1.0
     };
@@ -786,8 +1041,15 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
     // Collect raw (SVG-coordinate) closed contours and open polylines.
     let mut raw_closed: Vec<Contour> = Vec::new();
     let mut raw_open: Vec<Vec<Point2>> = Vec::new();
-    for tag in iter_tags(&text) {
-        let (name, body) = tag;
+    for (name, body, ctm) in walk_shapes(&text, select) {
+        // Every shape is emitted in its own user space, so the accumulated
+        // transform is applied here, before the viewBox mapping and Y flip.
+        let put_closed = |dst: &mut Vec<Contour>, pts: Vec<Point2>| {
+            dst.push(pts.into_iter().map(|p| ctm.apply(p)).collect());
+        };
+        let put_open = |dst: &mut Vec<Vec<Point2>>, pts: Vec<Point2>| {
+            dst.push(pts.into_iter().map(|p| ctm.apply(p)).collect());
+        };
         match name {
             "rect" => {
                 let x = attr_f64(&body, "x").unwrap_or(0.0);
@@ -795,7 +1057,10 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
                 let w = attr_f64(&body, "width").unwrap_or(0.0);
                 let h = attr_f64(&body, "height").unwrap_or(0.0);
                 if w > 0.0 && h > 0.0 {
-                    raw_closed.push(vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]]);
+                    put_closed(
+                        &mut raw_closed,
+                        vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+                    );
                 }
             }
             "circle" => {
@@ -803,7 +1068,7 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
                 let cy = attr_f64(&body, "cy").unwrap_or(0.0);
                 let r = attr_f64(&body, "r").unwrap_or(0.0);
                 if r > 0.0 {
-                    raw_closed.push(ellipse_pts(cx, cy, r, r));
+                    put_closed(&mut raw_closed, ellipse_pts(cx, cy, r, r));
                 }
             }
             "ellipse" => {
@@ -812,7 +1077,7 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
                 let rx = attr_f64(&body, "rx").unwrap_or(0.0);
                 let ry = attr_f64(&body, "ry").unwrap_or(0.0);
                 if rx > 0.0 && ry > 0.0 {
-                    raw_closed.push(ellipse_pts(cx, cy, rx, ry));
+                    put_closed(&mut raw_closed, ellipse_pts(cx, cy, rx, ry));
                 }
             }
             "line" => {
@@ -824,20 +1089,24 @@ pub fn import_svg(bytes: &[u8], layer: Option<&str>, id: Option<&str>) -> Vec<Co
                     attr_f64(&body, "x2").unwrap_or(0.0),
                     attr_f64(&body, "y2").unwrap_or(0.0),
                 ];
-                raw_open.push(vec![p0, p1]);
+                put_open(&mut raw_open, vec![p0, p1]);
             }
-            "polyline" => raw_open.push(points_attr(&body)),
+            "polyline" => put_open(&mut raw_open, points_attr(&body)),
             "polygon" => {
                 let pts = points_attr(&body);
                 if pts.len() >= 3 {
-                    raw_closed.push(pts);
+                    put_closed(&mut raw_closed, pts);
                 }
             }
             "path" => {
                 if let Some(d) = attr(&body, "d") {
                     let (c, o) = parse_path(&d);
-                    raw_closed.extend(c);
-                    raw_open.extend(o);
+                    for pts in c {
+                        put_closed(&mut raw_closed, pts);
+                    }
+                    for pts in o {
+                        put_open(&mut raw_open, pts);
+                    }
                 }
             }
             _ => {}
@@ -895,41 +1164,6 @@ fn find_tag(text: &str, name: &str) -> Option<String> {
     let start = text.find(&needle)?;
     let end = text[start..].find('>')? + start;
     Some(text[start..=end].to_string())
-}
-
-/// Iterate over all element opening tags, yielding (lowercased-name, tag-text).
-fn iter_tags(text: &str) -> Vec<(&'static str, String)> {
-    const NAMES: [&str; 7] = [
-        "rect", "circle", "ellipse", "line", "polyline", "polygon", "path",
-    ];
-    let mut out = Vec::new();
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            // Match on bytes, not a `&str` slice: `text[i+1..]` can start with a
-            // multibyte char, and slicing it at `nm.len()` would panic on a
-            // non-char-boundary (found by fuzzing). Tag names are ASCII.
-            let rest = &bytes[i + 1..];
-            for &nm in &NAMES {
-                let nb = nm.as_bytes();
-                if rest.len() > nb.len()
-                    && rest[..nb.len()].eq_ignore_ascii_case(nb)
-                    && matches!(rest[nb.len()], b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/')
-                {
-                    if let Some(rel_end) = rest.iter().position(|&b| b == b'>') {
-                        // `i+1` sits just after '<' and `i+1+rel_end` just before
-                        // '>', both ASCII → valid `&str` boundaries.
-                        out.push((nm, text[i + 1..i + 1 + rel_end].to_string()));
-                        i += 1 + rel_end;
-                    }
-                    break;
-                }
-            }
-        }
-        i += 1;
-    }
-    out
 }
 
 /// Serialize contours as an SVG `<path>` (Y negated, so it re-imports upright),
@@ -1027,7 +1261,7 @@ mod tests {
         // No viewBox: coords 1:1, Y flipped about height*25.4/72.
         let svg =
             r#"<svg width="100" height="100"><rect x="10" y="20" width="40" height="30"/></svg>"#;
-        let cs = import_svg(svg.as_bytes(), None, None);
+        let cs = import_svg(svg.as_bytes(), None, None, 72.0);
         assert_eq!(cs.len(), 1);
         let xs: Vec<f64> = cs[0].iter().map(|p| p[0]).collect();
         let ys: Vec<f64> = cs[0].iter().map(|p| p[1]).collect();
@@ -1055,7 +1289,7 @@ mod tests {
     fn svg_path_relative_and_close() {
         // A unit square via relative lineto, closed with Z.
         let svg = r#"<svg viewBox="0 0 10 10" width="10mm" height="10mm"><path d="M1,1 l4,0 l0,4 l-4,0 z"/></svg>"#;
-        let cs = import_svg(svg.as_bytes(), None, None);
+        let cs = import_svg(svg.as_bytes(), None, None, 72.0);
         assert_eq!(cs.len(), 1);
         assert!(
             (net_area(&cs).abs() - 16.0).abs() < 1e-6,
@@ -1068,7 +1302,7 @@ mod tests {
     fn svg_roundtrip_preserves_area() {
         let sq = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
         let svg = export_svg(&[sq]);
-        let back = import_svg(svg.as_bytes(), None, None);
+        let back = import_svg(svg.as_bytes(), None, None, 72.0);
         assert!(
             (net_area(&back).abs() - 200.0).abs() < 1e-6,
             "area {}",
