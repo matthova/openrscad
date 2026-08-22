@@ -17,8 +17,8 @@
 //! It starts with *only* the bundled faces, keeping plain `cargo test` and the
 //! geometry oracle deterministic — system fonts appear only once a host opts in.
 
+use rustybuzz::{Direction, Face, UnicodeBuffer};
 use std::sync::{OnceLock, RwLock};
-use ttf_parser::Face;
 
 use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 
@@ -176,7 +176,9 @@ fn with_face<T>(font: &str, f: impl FnOnce(&Face, bool) -> T) -> T {
         .expect("bundled Liberation Sans is always available");
 
     db.with_face_data(id, |data, index| {
-        let face = Face::parse(data, index).expect("registered font parses");
+        // A `rustybuzz::Face` derefs to the `ttf_parser::Face` the outliner
+        // wants, so one face serves both shaping and glyph outlines.
+        let face = Face::from_slice(data, index).expect("registered font parses");
         f(&face, known)
     })
     .expect("resolved font id is valid")
@@ -244,6 +246,10 @@ pub struct TextParams<'a> {
     pub valign: &'a str,
     pub spacing: f64,
     pub direction: &'a str,
+    /// ISO 15924 tag (`"Latn"`) or script name (`"arabic"`); empty infers.
+    pub script: &'a str,
+    /// BCP 47 language tag; empty infers.
+    pub language: &'a str,
     /// Segments per Bézier curve (from `$fn`, clamped).
     pub segments: usize,
 }
@@ -261,6 +267,8 @@ pub fn render_text(font: &str, params: &TextParams) -> (Vec<[f64; 2]>, Vec<Vec<u
             valign: params.valign,
             spacing: params.spacing,
             direction: params.direction,
+            script: params.script,
+            language: params.language,
             segments: params.segments,
         });
         (points, paths, known)
@@ -277,6 +285,10 @@ struct TextOpts<'a> {
     valign: &'a str,
     spacing: f64,
     direction: &'a str,
+    /// ISO 15924 tag or a script name; empty lets the shaper infer.
+    script: &'a str,
+    /// BCP 47 language tag; empty lets the shaper infer.
+    language: &'a str,
     /// Segments per Bézier curve (from `$fn`, clamped).
     segments: usize,
 }
@@ -366,63 +378,152 @@ fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
     // size as OpenSCAD's.
     let scale = opts.size / upem * (100.0 / 72.0);
 
-    let chars: Vec<char> = opts.text.chars().collect();
-    let advance = |c: char| -> f64 {
-        face.glyph_index(c)
-            .and_then(|g| face.glyph_hor_advance(g))
-            .map(|a| a as f64 * scale * opts.spacing)
-            .unwrap_or(0.0)
-    };
-    let widths: Vec<f64> = chars.iter().map(|&c| advance(c)).collect();
-    let total: f64 = widths.iter().sum();
+    // Shape the whole run at once. Doing this glyph by glyph is what loses
+    // kerning ("AV" comes out 1mm too wide), ligatures ("ffl"), and every
+    // complex script, where the visible glyphs are not the codepoints.
+    let mut buffer = UnicodeBuffer::new();
+    buffer.push_str(opts.text);
+    if let Some(dir) = match opts.direction {
+        "ltr" => Some(Direction::LeftToRight),
+        "rtl" => Some(Direction::RightToLeft),
+        "ttb" => Some(Direction::TopToBottom),
+        "btt" => Some(Direction::BottomToTop),
+        // Empty or unrecognised: let the shaper infer from the text itself.
+        _ => None,
+    } {
+        buffer.set_direction(dir);
+    }
+    if !opts.script.is_empty() {
+        if let Some(script) = rustybuzz::Script::from_iso15924_tag(
+            ttf_parser::Tag::from_bytes_lossy(script_tag(opts.script).as_bytes()),
+        ) {
+            buffer.set_script(script);
+        }
+    }
+    if !opts.language.is_empty() {
+        if let Ok(lang) = opts.language.parse::<rustybuzz::Language>() {
+            buffer.set_language(lang);
+        }
+    }
+    // Fills in whatever was left unset from the text's own properties.
+    buffer.guess_segment_properties();
+    let vertical = matches!(
+        buffer.direction(),
+        Direction::TopToBottom | Direction::BottomToTop
+    );
+
+    let shaped = rustybuzz::shape(face, &[], buffer);
+    let infos = shaped.glyph_infos();
+    let positions = shaped.glyph_positions();
+
+    // `spacing` stretches the advances, as upstream.
+    let adv = |v: i32| v as f64 * scale * opts.spacing;
+    let run_w: f64 = positions.iter().map(|p| adv(p.x_advance)).sum();
 
     let x0 = match opts.halign {
-        "center" => -total / 2.0,
-        "right" => -total,
+        "center" => -run_w / 2.0,
+        "right" => -run_w,
         _ => 0.0,
     };
-    let asc = face.ascender() as f64 * scale;
-    let desc = face.descender() as f64 * scale; // negative
-    let y0 = match opts.valign {
-        "top" => -asc,
-        "bottom" => -desc,
-        "center" => -(asc + desc) / 2.0,
-        _ => 0.0, // baseline
-    };
+    // `valign` is applied after layout, against the *ink* box rather than the
+    // font's ascender/descender: upstream puts the ink top of "aaa" at y=0 for
+    // `valign="top"`, not the notional line top, so a string of x-height
+    // letters sits differently from one with ascenders. `halign` does use the
+    // advance width, which is why it is handled here and `valign` is not.
+    // A vertical run starts at the origin and grows downwards.
+    let (x0, y0) = if vertical { (0.0, 0.0) } else { (x0, 0.0) };
 
-    // Right-to-left just reverses the placement order.
-    let rtl = opts.direction == "rtl";
-    let order: Vec<usize> = if rtl {
-        (0..chars.len()).rev().collect()
-    } else {
-        (0..chars.len()).collect()
+    // A font with no vertical metrics leaves the shaper to invent them, and its
+    // guess is not upstream's. Measured against 2024.12 on Liberation Sans: the
+    // line advance is the OS/2 typographic ascent-to-descent span, each glyph is
+    // *centred* in that slot rather than sat on a baseline, and it is centred
+    // horizontally on the column too.
+    let v_advance = {
+        let (ta, td) = (face.typographic_ascender(), face.typographic_descender());
+        let span = match (ta, td) {
+            (Some(a), Some(d)) if a - d > 0 => (a - d) as f64,
+            _ => (face.ascender() - face.descender()) as f64,
+        };
+        span * scale * opts.spacing
     };
 
     let mut points: Vec<[f64; 2]> = Vec::new();
     let mut paths: Vec<Vec<u32>> = Vec::new();
-    let mut pen_x = x0;
+    let (mut pen_x, mut pen_y) = (x0, y0);
 
-    for &i in &order {
-        let c = chars[i];
-        if let Some(gid) = face.glyph_index(c) {
-            let mut o = Outliner::new(opts.segments);
-            if face.outline_glyph(gid, &mut o).is_some() {
-                o.flush();
-                for contour in &o.contours {
-                    if contour.len() < 3 {
-                        continue;
-                    }
-                    let start = points.len() as u32;
-                    for p in contour {
-                        points.push([p[0] * scale + pen_x, p[1] * scale + y0]);
-                    }
-                    paths.push((start..points.len() as u32).collect());
+    for (info, pos) in infos.iter().zip(positions.iter()) {
+        let gid = ttf_parser::GlyphId(info.glyph_id as u16);
+        let mut o = Outliner::new(opts.segments);
+        if face.outline_glyph(gid, &mut o).is_some() {
+            o.flush();
+            let (ox, oy) = if vertical {
+                let h_adv = face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale;
+                let mid = face
+                    .glyph_bounding_box(gid)
+                    .map(|b| (b.y_max as f64 + b.y_min as f64) / 2.0 * scale)
+                    .unwrap_or(0.0);
+                (-h_adv / 2.0, -v_advance / 2.0 - mid)
+            } else {
+                (adv(pos.x_offset), adv(pos.y_offset))
+            };
+            for contour in &o.contours {
+                if contour.len() < 3 {
+                    continue;
                 }
+                let start = points.len() as u32;
+                for p in contour {
+                    points.push([p[0] * scale + pen_x + ox, p[1] * scale + pen_y + oy]);
+                }
+                paths.push((start..points.len() as u32).collect());
             }
         }
-        pen_x += widths[i];
+        if vertical {
+            pen_y -= v_advance;
+        } else {
+            pen_x += adv(pos.x_advance);
+            pen_y += adv(pos.y_advance);
+        }
+    }
+
+    if opts.valign != "baseline" && !points.is_empty() {
+        let (lo, hi) = points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+            (lo.min(p[1]), hi.max(p[1]))
+        });
+        let shift = match opts.valign {
+            "top" => -hi,
+            "bottom" => -lo,
+            "center" => -(lo + hi) / 2.0,
+            _ => 0.0,
+        };
+        if shift != 0.0 {
+            for p in &mut points {
+                p[1] += shift;
+            }
+        }
     }
     (points, paths)
+}
+
+/// Map OpenSCAD's `script=` spellings onto ISO 15924 tags.
+///
+/// OpenSCAD accepts both the tag itself (`"Latn"`) and a lowercase script name
+/// (`"arabic"`), so both are handled; anything unrecognised is passed straight
+/// through for the shaper to reject.
+fn script_tag(script: &str) -> String {
+    match script.to_ascii_lowercase().as_str() {
+        "latin" => "Latn".into(),
+        "arabic" => "Arab".into(),
+        "hebrew" => "Hebr".into(),
+        "greek" => "Grek".into(),
+        "cyrillic" => "Cyrl".into(),
+        "han" | "chinese" => "Hani".into(),
+        "hiragana" => "Hira".into(),
+        "katakana" => "Kana".into(),
+        "hangul" | "korean" => "Hang".into(),
+        "devanagari" => "Deva".into(),
+        "thai" => "Thai".into(),
+        _ => script.to_string(),
+    }
 }
 
 #[cfg(test)]

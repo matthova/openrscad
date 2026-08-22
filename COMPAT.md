@@ -30,18 +30,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Missing or partial compatibility
 
-- **Text font discovery is broad, but shaping is partial.** Native hosts scan
-  installed fonts; Chromium can load permission-granted local fonts; the bundled
-  Liberation family remains the deterministic fallback. Layout is still
-  codepoint-by-codepoint: kerning, ligatures, complex-script shaping, vertical
-  directions, and meaningful `language`/`script` selection are absent, and RTL
-  merely reverses codepoints. An unavailable family warns and falls back.
-
-  ```scad
-  text("office", font="Liberation Serif"); // no ligature/kerning shaping yet
-  text("مرحبا", direction="rtl", language="ar", script="arabic");
-  ```
-
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
   `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
@@ -98,7 +86,7 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **29/29**, geometry **108/108**, and BOSL2
+The current gates are `corpus/echo` **29/29**, geometry **111/111**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
 
@@ -114,6 +102,27 @@ their oracle or regression evidence where relevant:
 
   ```sh
   openrscad -o model.csg model.scad && openscad -o from-csg.stl model.csg
+  ```
+
+- **`text()` is shaped, not summed.** Runs go through `rustybuzz`, the Rust
+  port of the same HarfBuzz shaper OpenSCAD uses, so kerning pairs, ligatures
+  and joining scripts come out right instead of being approximated glyph by
+  glyph: `"AV"` was 1mm too wide, `"ffl"` missed its ligature, and Arabic
+  rendered *nothing at all*. `direction=` selects `ltr`/`rtl`/`ttb`/`btt`, with
+  `script=`/`language=` passed through.
+
+  Three details were measured rather than assumed, each now oracle-gated: a
+  vertical run centres every glyph in a slot the height of the OS/2 typographic
+  ascent-to-descent span *and* centres it on the column, rather than running a
+  baseline; `valign` aligns the **ink** box, not the font's ascender, so `"aaa"`
+  and `"Hqp"` sit differently under `valign="top"`; and glyph curves flatten to
+  four segments by default, where eight put a plain `o` 1.2% over upstream's
+  area and four lands within 0.02%.
+
+  ```scad
+  text("AV");                                    // kerned
+  text("مرحبا", direction="rtl", script="arabic");  // joined, was empty
+  text("abc", direction="ttb");                  // stacked and centred
   ```
 
 - **AMF and 3MF objects keep their own index spaces.** Triangle indices are

@@ -56,12 +56,12 @@ Each manifest entry has exactly one status:
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
 | `xtask echo` | 29/29 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 108/108 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask geom` | 111/111 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 189 surfaces: 131 `verified`, 53
-`implemented` but not yet oracle-proven, 3 `missing`, one warned divergence,
+The executable manifest currently classifies 189 surfaces: 134 `verified`, 52
+`implemented` but not yet oracle-proven, 1 `missing`, one warned divergence,
 and one permanent divergence. Of those, 184 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
@@ -85,7 +85,6 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 
 | id | gap | scope |
 |---|---|---|
-| F-I1 | Text is not fully shaped. | System fonts are now discoverable, but layout is codepoint-by-codepoint: no kerning, ligatures, complex-script shaping, vertical text, or meaningful `language`/`script`; RTL only reverses codepoints. Use a shaping library and test Latin + RTL + vertical cases. |
 | F-G7 | 3D Minkowski of a genuinely concave leaf remains a warned convex approximation. | Keep it loud and permanent, or implement bounded convex decomposition; never silently relabel it exact. |
 
 ### P1 — measurement gaps
@@ -148,11 +147,14 @@ Rust/Wasm kernel tests. No volume-changing fix lands with only a unit test.
 
 ### F3 — text and file-format conformance
 
-1. Shape text (including kerning/ligatures), then add complex and vertical
-   scripts; preserve the bundled Liberation fallback for deterministic models.
-2. Implement import arguments/selectors independently of parser breadth.
-3. Add SVG transforms/structure and DXF curves/layers.
-4. Assemble 3MF/AMF objects with units/transforms/components.
+1. ~~Shape text (including kerning/ligatures), then add complex and vertical
+   scripts; preserve the bundled Liberation fallback for deterministic models.~~
+   Complete, via `rustybuzz`.
+2. ~~Implement import arguments/selectors independently of parser breadth.~~
+   Complete.
+3. ~~Add SVG transforms/structure and DXF curves/layers.~~ Complete.
+4. ~~Assemble 3MF/AMF objects with units/transforms/components.~~ Complete;
+   3MF multi-object assembly is a recorded deliberate divergence.
 
 Use small authored fixtures and exported metrics. Do not import implementation
 details or tests from OpenSCAD source.
@@ -177,7 +179,7 @@ M10 is complete only when all of the following are CI-enforced:
 - `COMPAT.md`, completion metadata, and the manifest cannot drift without a CI
   failure.
 
-Passing 108/108 or 505/513 remains useful evidence, but completion is defined by
+Passing 111/111 or 505/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
 
 ## Completed during the initial Track F pass
