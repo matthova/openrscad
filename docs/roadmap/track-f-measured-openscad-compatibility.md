@@ -60,8 +60,8 @@ Each manifest entry has exactly one status:
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 189 surfaces: 128 `verified`, 51
-`implemented` but not yet oracle-proven, 8 `missing`, one warned divergence,
+The executable manifest currently classifies 189 surfaces: 128 `verified`, 52
+`implemented` but not yet oracle-proven, 7 `missing`, one warned divergence,
 and one permanent divergence. Of those, 184 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
@@ -88,7 +88,6 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 | F-I1 | Text is not fully shaped. | System fonts are now discoverable, but layout is codepoint-by-codepoint: no kerning, ligatures, complex-script shaping, vertical text, or meaningful `language`/`script`; RTL only reverses codepoints. Use a shaping library and test Latin + RTL + vertical cases. |
 | F-I2 | DXF/SVG import is a useful subset, not format parity. | Selectors and placement (`layer`, `id`, `origin`, `scale`) are closed and oracle-gated. Remaining: SVG nesting/`<use>`/style/visibility and general element transforms, DXF bulges/splines/ellipses, and caller fragment controls. |
 | F-I3 | 3MF/AMF import flattens XML tags rather than a scene graph. | Units, per-object index bases, build-item transforms/components, and multi-object assembly can be wrong. Implement scene/object assembly before materials. |
-| F-I4 | OpenSCAD-style `.csg` tree export is absent. | Serialize the evaluated operation tree and add CLI/export round-trip fixtures. Unknown-suffix handling is fixed (F-X1 closed), so `.csg` now fails loudly instead of silently writing STL — this is a missing feature, no longer a silent one. |
 | F-G7 | 3D Minkowski of a genuinely concave leaf remains a warned convex approximation. | Keep it loud and permanent, or implement bounded convex decomposition; never silently relabel it exact. |
 
 ### P1 — measurement gaps

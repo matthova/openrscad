@@ -48,7 +48,7 @@ struct Cli {
     input: PathBuf,
 
     /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`,
-    /// 2D `.dxf`/`.svg`. If omitted, only prints model statistics.
+    /// 2D `.dxf`/`.svg`, tree `.csg`. If omitted, only prints model statistics.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -128,13 +128,13 @@ impl Cli {
         if self.check {
             return RenderMode::Preview;
         }
-        // PNG (including `--animate`) is a preview raster upstream. An
-        // unclassifiable suffix is reported later, by `run`.
-        let png = self.animate.is_some()
+        // PNG (including `--animate`) and `.csg` are produced without an exact
+        // render upstream. An unclassifiable suffix is reported later, by `run`.
+        let no_render = self.animate.is_some()
             || self.output.as_deref().is_some_and(|p| {
-                OutputFormat::from_path(p).is_ok_and(OutputFormat::is_preview_raster)
+                OutputFormat::from_path(p).is_ok_and(OutputFormat::skips_exact_render)
             });
-        if png {
+        if no_render {
             RenderMode::Preview
         } else {
             RenderMode::Exact
@@ -157,6 +157,7 @@ enum Proj {
 /// The export format an `-o` path selects, by suffix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputFormat {
+    Csg,
     Stl,
     Off,
     Obj,
@@ -190,28 +191,25 @@ impl OutputFormat {
             "dxf" => OutputFormat::Dxf,
             "svg" => OutputFormat::Svg,
             "png" => OutputFormat::Png,
-            // A real OpenSCAD format we do not implement yet. Worth its own
-            // message so it does not read as a typo.
-            "csg" => anyhow::bail!(
-                "CSG tree export (.csg) is not supported yet; \
-                 see COMPAT.md. Supported: stl, off, obj, 3mf, amf, dxf, svg, png"
-            ),
+            "csg" => OutputFormat::Csg,
             "" => anyhow::bail!(
                 "output path '{}' has no suffix; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png",
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg",
                 path.display()
             ),
             other => anyhow::bail!(
                 "invalid output suffix '{other}'; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png"
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg"
             ),
         })
     }
 
-    /// Whether this format is produced without an exact render (see
-    /// [`Cli::render_mode`]).
-    fn is_preview_raster(self) -> bool {
-        self == OutputFormat::Png
+    /// Whether this format is produced *without* an exact render, and so keeps
+    /// `$preview` true (see [`Cli::render_mode`]). PNG is a preview raster and
+    /// `.csg` serializes the tree without rendering at all; both report true
+    /// upstream.
+    fn skips_exact_render(self) -> bool {
+        matches!(self, OutputFormat::Png | OutputFormat::Csg)
     }
 }
 
@@ -445,6 +443,14 @@ fn run() -> Result<()> {
     }
 
     // 2D vector export (DXF/SVG): write contours directly, no 3D mesh needed.
+    // `.csg` is a serialization of the evaluated tree, so it needs no render at
+    // all — emit it before the (potentially slow) geometry pass.
+    if let (Some(path), Some(OutputFormat::Csg)) = (&cli.output, format) {
+        std::fs::write(path, openrscad_eval::export_csg(&out.node))?;
+        eprintln!("wrote {}", path.display());
+        return Ok(());
+    }
+
     if let (Some(path), Some(format @ (OutputFormat::Dxf | OutputFormat::Svg))) =
         (&cli.output, format)
     {
@@ -540,7 +546,9 @@ fn run() -> Result<()> {
             OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
             // Returned above; listed so a new format cannot silently fall
             // through to STL.
-            OutputFormat::Dxf | OutputFormat::Svg => unreachable!("2D formats exported earlier"),
+            OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Csg => {
+                unreachable!("2D and .csg formats exported earlier")
+            }
         }
         eprintln!("wrote {}", path.display());
     }
@@ -609,6 +617,7 @@ mod tests {
             ("m.dxf", Dxf),
             ("m.SVG", Svg),
             ("m.png", Png),
+            ("m.csg", Csg),
             ("a.b.stl", Stl),
         ] {
             assert_eq!(
@@ -627,12 +636,14 @@ mod tests {
                 "{name} should be rejected, not silently written as STL"
             );
         }
-        // `.csg` is a real OpenSCAD format we do not implement; it gets its own
-        // message so it does not read as a typo.
-        let err = OutputFormat::from_path(Path::new("m.csg"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("CSG"), "{err}");
+    }
+
+    #[test]
+    fn csg_export_keeps_preview_true() {
+        // `.csg` serializes the tree without rendering, so upstream reports
+        // $preview true for it, as it does for a PNG.
+        assert_eq!(mode(&["-o", "out.csg"]), RenderMode::Preview);
+        assert_eq!(mode(&["-o", "out.stl"]), RenderMode::Exact);
     }
 
     #[test]

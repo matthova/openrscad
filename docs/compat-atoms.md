@@ -220,6 +220,44 @@ golden both exist.
 
 ## Closed
 
+### A-X01 — `.csg` tree export was absent — **closed**
+
+| | |
+|---|---|
+| repro | `openrscad -o out.csg model.scad` |
+| OpenSCAD | writes the resolved operation tree |
+| before | binary STL named `.csg` (silent), then a format-specific error |
+| now | writes the tree; re-rendering it reproduces the geometry |
+| was | M · gap `F-I4` · manifest `export.csg`, now `implemented` |
+| guarded by | `crates/openrscad-cli/tests/csg_roundtrip.rs` |
+
+`.csg` is the flattened program: modules resolved, expressions evaluated, and
+every transform lowered to a `multmatrix` — the format has no
+`translate`/`rotate`/`scale`. It needs no geometry, so it is written straight
+from the tree before the render pass, and `$preview` stays true for it exactly
+as upstream reports.
+
+**The contract is a round trip, not byte-identical text**, and that is a
+deliberate call. OpenSCAD omits parameters left at their defaults; the IR does
+not record whether a value was written or defaulted, so reproducing that
+omission is not possible from what we keep. Writing every parameter explicitly
+is equally valid input, and the meaningful question — does re-rendering give the
+same solid — is testable. Verified two ways: 19 constructs re-rendered through
+OpenSCAD itself matched the original, and the in-repo test re-renders with our
+own engine and additionally asserts a second export is a fixed point, which
+catches a writer and reader that disagree about something the first pass
+happened to survive.
+
+Two details worth recording:
+
+- **A round trip is lossy by construction.** The format writes six significant
+  digits, so a rotation matrix returns slightly rounded — a 6.0 volume comes
+  back 5.999994. Upstream's own round trip loses exactly the same precision, so
+  the test tolerance reflects the text format rather than pretending otherwise.
+- **An omitted `slices=` must stay omitted.** Writing the resolved count would
+  freeze the tessellation that this render happened to choose; the reader has to
+  derive it again from the profile.
+
 ### A-I03, A-I04, A-I06 — import selectors were accepted and ignored — **closed**
 
 | id | repro | OpenSCAD | before | now |
@@ -566,9 +604,9 @@ invocation each one compares against.
 | S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 7 | A-I05, A-I07…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
+| M — missing | 6 | A-I05, A-I07…A-I09, A-T01, A-T02 |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 21 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I04, A-I06, A-X02 |
+| closed | 22 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I04, A-I06, A-X01, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

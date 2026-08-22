@@ -7,11 +7,13 @@
 //! both close over their definition / call-site environments.
 
 mod color;
+mod csg;
 mod dxf;
 mod text;
 mod value;
 mod vm;
 
+pub use csg::export_csg;
 pub use text::{font_completions, register_font_data, register_system_fonts, FontCompletion};
 pub use value::{format_number, Value};
 

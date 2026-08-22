@@ -49,11 +49,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   import does not yet assemble units, independent object index spaces,
   components, or build-item transforms.
 
-- **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
-  mesh and vector formats, but it does not serialize the evaluated model as a
-  `.csg` operation tree. `-o out.csg` now fails with a format-specific error
-  rather than silently writing STL bytes under that name, so the gap is loud.
-
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
   `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
@@ -96,6 +91,20 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 The current gates are `corpus/echo` **29/29**, geometry **102/102**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`.csg` tree export works.** `-o out.csg` serializes the evaluated model the
+  way OpenSCAD does: every module call resolved, every expression evaluated, and
+  every transform lowered to a `multmatrix`. It needs no render, so it is
+  produced straight from the tree and keeps `$preview` true, as upstream does.
+  The contract is a *round trip* rather than byte-identical text — OpenSCAD
+  omits parameters left at their defaults and the IR does not record which were
+  written, so we write them all, which is equally valid input. Re-rendering our
+  output reproduces the geometry in both engines across 19 constructs; the
+  in-repo test also asserts a second export is a fixed point.
+
+  ```sh
+  openrscad -o model.csg model.scad && openscad -o from-csg.stl model.csg
+  ```
 
 - **Import selectors and placement are honoured.** `layer=` keeps a single DXF
   layer or Inkscape SVG layer, `id=` selects any SVG element by id, and
