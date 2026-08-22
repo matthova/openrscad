@@ -73,8 +73,15 @@ fn first_i32(props: &[(i32, String)], code: i32) -> Option<i32> {
 }
 
 /// Tessellate a circle/arc sweep from `a0`..`a1` (radians) about `center`.
-fn arc_points(center: Point2, r: f64, a0: f64, a1: f64, closed: bool) -> Vec<Point2> {
-    let n = fragments(r, FragmentSpec::default()).max(3);
+fn arc_points(
+    center: Point2,
+    r: f64,
+    a0: f64,
+    a1: f64,
+    closed: bool,
+    frags: FragmentSpec,
+) -> Vec<Point2> {
+    let n = fragments(r, frags).max(3);
     let sweep = a1 - a0;
     // For a full circle emit exactly `n` points (no duplicate closing vertex);
     // for an arc, emit `n` steps proportional to its span, endpoints included.
@@ -98,11 +105,23 @@ fn arc_points(center: Point2, r: f64, a0: f64, a1: f64, closed: bool) -> Vec<Poi
 /// emits and reads: `LWPOLYLINE`, `POLYLINE`/`VERTEX`, `LINE`, `CIRCLE`, `ARC`.
 /// Loose `LINE`/open-polyline segments are chained into loops the way OpenSCAD
 /// stitches DXF line soup.
+/// Polyline vertices, dropping the bulge factors.
+///
+/// A DXF bulge (group 42) denotes an arc between two vertices, and it would be
+/// easy to expand into one — but OpenSCAD 2024.12 does not: a two-vertex closed
+/// polyline bulged into a full circle imports as *nothing* there, for both
+/// LWPOLYLINE and old-style POLYLINE/VERTEX. Expanding the arcs here would make
+/// us disagree with the oracle rather than agree with it, so the factors are
+/// read and discarded. `SPLINE` is skipped for the same measured reason.
+fn drop_bulges(pts: &[(Point2, f64)]) -> Vec<Point2> {
+    pts.iter().map(|(p, _)| *p).collect()
+}
+
 /// Import a DXF's 2D outlines.
 ///
 /// `layer` keeps only entities on that layer (group 8); `None` takes every
 /// entity, as an omitted `layer=` does upstream.
-pub fn import_dxf(bytes: &[u8], layer: Option<&str>) -> Vec<Contour> {
+pub fn import_dxf(bytes: &[u8], layer: Option<&str>, frags: FragmentSpec) -> Vec<Contour> {
     let text = String::from_utf8_lossy(bytes);
     let mut entities = parse_entities(&text);
     if let Some(want) = layer {
@@ -132,37 +151,47 @@ pub fn import_dxf(bytes: &[u8], layer: Option<&str>) -> Vec<Contour> {
             }
             "LWPOLYLINE" => {
                 let closed = first_i32(props, 70).unwrap_or(0) & 1 != 0;
-                let mut pts: Vec<Point2> = Vec::new();
+                // Group 42 is the *previous* vertex's bulge, so it is attached
+                // to the point already pushed.
+                let mut pts: Vec<(Point2, f64)> = Vec::new();
                 let mut px: Option<f64> = None;
                 for (c, v) in props {
                     match c {
                         10 => px = v.parse().ok(),
                         20 => {
                             if let (Some(x), Ok(y)) = (px.take(), v.parse::<f64>()) {
-                                pts.push([x, y]);
+                                pts.push(([x, y], 0.0));
+                            }
+                        }
+                        42 => {
+                            if let (Some(last), Ok(b)) = (pts.last_mut(), v.parse::<f64>()) {
+                                last.1 = b;
                             }
                         }
                         _ => {}
                     }
                 }
-                push_polyline(pts, closed, &mut contours, &mut segs);
+                push_polyline(drop_bulges(&pts), closed, &mut contours, &mut segs);
             }
             "POLYLINE" => {
                 let closed = first_i32(props, 70).unwrap_or(0) & 1 != 0;
-                let mut pts: Vec<Point2> = Vec::new();
+                let mut pts: Vec<(Point2, f64)> = Vec::new();
                 i += 1;
                 while i < entities.len() && entities[i].0 == "VERTEX" {
                     let vp = &entities[i].1;
-                    pts.push([
-                        first_f64(vp, 10).unwrap_or(0.0),
-                        first_f64(vp, 20).unwrap_or(0.0),
-                    ]);
+                    pts.push((
+                        [
+                            first_f64(vp, 10).unwrap_or(0.0),
+                            first_f64(vp, 20).unwrap_or(0.0),
+                        ],
+                        first_f64(vp, 42).unwrap_or(0.0),
+                    ));
                     i += 1;
                 }
                 if i < entities.len() && entities[i].0 == "SEQEND" {
                     i += 1;
                 }
-                push_polyline(pts, closed, &mut contours, &mut segs);
+                push_polyline(drop_bulges(&pts), closed, &mut contours, &mut segs);
                 continue;
             }
             "CIRCLE" => {
@@ -172,7 +201,7 @@ pub fn import_dxf(bytes: &[u8], layer: Option<&str>) -> Vec<Contour> {
                 ];
                 let r = first_f64(props, 40).unwrap_or(0.0);
                 if r > 0.0 {
-                    contours.push(arc_points(c, r, 0.0, 2.0 * PI, true));
+                    contours.push(arc_points(c, r, 0.0, 2.0 * PI, true, frags));
                 }
             }
             "ARC" => {
@@ -187,9 +216,55 @@ pub fn import_dxf(bytes: &[u8], layer: Option<&str>) -> Vec<Contour> {
                     a1 += 2.0 * PI; // DXF arcs go CCW
                 }
                 if r > 0.0 {
-                    let pts = arc_points(c, r, a0, a1, false);
+                    let pts = arc_points(c, r, a0, a1, false, frags);
                     for w in pts.windows(2) {
                         segs.push((w[0], w[1]));
+                    }
+                }
+            }
+            "ELLIPSE" => {
+                let c = [
+                    first_f64(props, 10).unwrap_or(0.0),
+                    first_f64(props, 20).unwrap_or(0.0),
+                ];
+                // Group 11/21 is the major-axis endpoint *relative* to the
+                // centre, so it carries both the semi-major length and the
+                // rotation; 40 is the minor/major ratio.
+                let major = [
+                    first_f64(props, 11).unwrap_or(0.0),
+                    first_f64(props, 21).unwrap_or(0.0),
+                ];
+                let ratio = first_f64(props, 40).unwrap_or(1.0);
+                let t0 = first_f64(props, 41).unwrap_or(0.0);
+                let t1 = first_f64(props, 42).unwrap_or(2.0 * PI);
+                let a = major[0].hypot(major[1]);
+                let b = a * ratio;
+                if a > 0.0 {
+                    let rot = major[1].atan2(major[0]);
+                    let (sr, cr) = rot.sin_cos();
+                    let full = (t1 - t0).abs() >= 2.0 * PI - 1e-9;
+                    let n = fragments(a.max(b), frags).max(3);
+                    let steps = if full {
+                        n
+                    } else {
+                        ((n as f64) * ((t1 - t0).abs() / (2.0 * PI)))
+                            .ceil()
+                            .max(1.0) as u32
+                    };
+                    let count = if full { steps } else { steps + 1 };
+                    let pts: Vec<Point2> = (0..count)
+                        .map(|k| {
+                            let t = t0 + (t1 - t0) * (k as f64 / steps as f64);
+                            let (x, y) = (a * t.cos(), b * t.sin());
+                            [c[0] + x * cr - y * sr, c[1] + x * sr + y * cr]
+                        })
+                        .collect();
+                    if full {
+                        contours.push(pts);
+                    } else {
+                        for w in pts.windows(2) {
+                            segs.push((w[0], w[1]));
+                        }
                     }
                 }
             }
@@ -1232,7 +1307,7 @@ mod tests {
         let outer = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
         let hole = vec![[4.0, 4.0], [4.0, 6.0], [6.0, 6.0], [6.0, 4.0]];
         let dxf = export_dxf(&[outer, hole]);
-        let back = import_dxf(dxf.as_bytes(), None);
+        let back = import_dxf(dxf.as_bytes(), None, FragmentSpec::default());
         assert_eq!(back.len(), 2, "expected two contours");
         assert!(
             (net_area(&back).abs() - 196.0).abs() < 1e-6,
@@ -1251,7 +1326,7 @@ mod tests {
 0\nLINE\n10\n5\n20\n5\n11\n0\n21\n5\n\
 0\nLINE\n10\n0\n20\n5\n11\n0\n21\n0\n\
 0\nENDSEC\n0\nEOF\n";
-        let cs = import_dxf(dxf.as_bytes(), None);
+        let cs = import_dxf(dxf.as_bytes(), None, FragmentSpec::default());
         assert_eq!(cs.len(), 1);
         assert!((net_area(&cs).abs() - 25.0).abs() < 1e-6);
     }

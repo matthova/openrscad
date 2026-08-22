@@ -1606,6 +1606,7 @@ impl Interp<'_> {
                 origin,
                 scale,
                 dpi,
+                frags: self.frag_spec(&m),
             }),
             None => {
                 self.warn(format!("Can't open import file '{path}'"));
