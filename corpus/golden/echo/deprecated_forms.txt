@@ -1,0 +1,11 @@
+ECHO: "assign", 1, 101
+ECHO: "let", 1, 2
+ECHO: "after", 100
+ECHO: "no bindings"
+ECHO: "nested", 1, 2
+ECHO: "first"
+ECHO: "k1"
+ECHO: "c0"
+ECHO: "c1"
+ECHO: "children", 2
+ECHO: "a"

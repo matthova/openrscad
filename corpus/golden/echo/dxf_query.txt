@@ -1,0 +1,21 @@
+ECHO: "rot0", 6
+ECHO: "rot90", 8
+ECHO: "rot45", 9.89949
+ECHO: "aligned", 10
+ECHO: "flagged", 6
+ECHO: "radius", 5
+ECHO: "first", 6
+ECHO: "scaled", 12
+ECHO: "origin-is-ignored-for-a-length", 6
+ECHO: "layered", 5
+ECHO: "wrong-layer", undef
+ECHO: "no-such-name", undef
+ECHO: "no-such-file", undef
+ECHO: "positional", 24
+ECHO: "cross", [5, 5]
+ECHO: "cross-anylayer", [5, 5]
+ECHO: "cross-origin", [4, 3]
+ECHO: "cross-scale", [10, 10]
+ECHO: "cross-both", [8, 6]
+ECHO: "cross-one-line", undef
+ECHO: "cross-no-file", undef

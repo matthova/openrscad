@@ -30,10 +30,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Missing or partial compatibility
 
-- **Deprecated compatibility aliases remain undecided.** OpenSCAD 2021.01 still
-  accepts legacy `assign`, `child`, `import_dxf`, `import_stl`, `dxf_dim`, and
-  `dxf_cross` forms; OpenRSCAD does not currently implement them.
-
 - **Text font discovery is broad, but shaping is partial.** Native hosts scan
   installed fonts; Chromium can load permission-granted local fonts; the bundled
   Liberation family remains the deterministic fallback. Layout is still
@@ -96,9 +92,23 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **97/97**, and BOSL2
+The current gates are `corpus/echo` **29/29**, geometry **100/100**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **The retained deprecated 2021.01 forms are implemented.** `assign`, `child`,
+  `import_stl`, `import_dxf`, `dxf_dim`, and `dxf_cross` all work, each with the
+  deprecation notice OpenSCAD prints. Two behaviours are easy to get wrong and
+  are pinned by oracle cases: `assign()` is *not* `let()` — every right-hand
+  side evaluates in the enclosing scope and the bindings land together, so with
+  `x = 100`, `assign(x = 1, y = x + 1)` gives `y == 101` — and bare `child()` is
+  the *first* child alone where bare `children()` is all of them.
+
+  ```scad
+  x = 100; assign(x = 1, y = x + 1) echo(x, y);   // 1, 101
+  module m() { child(); } m() { cube(2); cube(9); }  // just the cube(2)
+  echo(dxf_dim(file="part.dxf", name="width"), dxf_cross(file="part.dxf", layer="marks"));
+  ```
 
 - **Non-planar extrude walls are split along the shorter diagonal.** A twisted
   or non-uniformly scaled wall quad is not planar, so its two diagonals enclose

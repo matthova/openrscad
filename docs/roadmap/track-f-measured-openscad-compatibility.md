@@ -55,13 +55,13 @@ Each manifest entry has exactly one status:
 
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
-| `xtask echo` | 27/27 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 97/97 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask echo` | 29/29 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
+| `xtask geom` | 100/100 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
 | Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 189 surfaces: 119 `verified`, 51
-`implemented` but not yet oracle-proven, 17 `missing`, one warned divergence,
+The executable manifest currently classifies 189 surfaces: 125 `verified`, 51
+`implemented` but not yet oracle-proven, 11 `missing`, one warned divergence,
 and one permanent divergence. Of those, 184 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
@@ -85,7 +85,6 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 
 | id | gap | scope |
 |---|---|---|
-| F-L6 | Retained deprecated 2021-era aliases are unsupported. | Decide and record support for `assign`, `child`, `import_dxf`, `import_stl`, `dxf_dim`, and `dxf_cross`. Raw include/use paths are now fixed. |
 | F-I1 | Text is not fully shaped. | System fonts are now discoverable, but layout is codepoint-by-codepoint: no kerning, ligatures, complex-script shaping, vertical text, or meaningful `language`/`script`; RTL only reverses codepoints. Use a shaping library and test Latin + RTL + vertical cases. |
 | F-I2 | DXF/SVG import is a useful subset, not format parity. | Layer/id selection, import transforms/DPI, SVG group/element transforms, `<use>`, style/visibility, DXF bulges/splines/ellipses, and caller fragment controls are missing. Split selectors, SVG structure, and DXF curves into separate commits. |
 | F-I3 | 3MF/AMF import flattens XML tags rather than a scene graph. | Units, per-object index bases, build-item transforms/components, and multi-object assembly can be wrong. Implement scene/object assembly before materials. |
@@ -181,7 +180,7 @@ M10 is complete only when all of the following are CI-enforced:
 - `COMPAT.md`, completion metadata, and the manifest cannot drift without a CI
   failure.
 
-Passing 97/97 or 505/513 remains useful evidence, but completion is defined by
+Passing 100/100 or 505/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
 
 ## Completed during the initial Track F pass
