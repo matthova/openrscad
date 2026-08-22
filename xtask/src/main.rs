@@ -155,7 +155,7 @@ fn bosl2_block_passes(b: &Bosl2Block, dir_str: &str) -> bool {
             // true as it would be under `--export-format=echo`.
             let result = openrscad_eval::eval_program_with_mode(
                 &prog,
-                &DiskResolver,
+                &DiskResolver::default(),
                 dir_str,
                 &[],
                 openrscad_eval::RenderMode::Preview,
@@ -639,7 +639,7 @@ fn run_warm_gate(root: &Path) -> bool {
                 continue;
             }
         };
-        let eval = || openrscad_eval::eval_program_with(&prog, &DiskResolver, &base_dir);
+        let eval = || openrscad_eval::eval_program_with(&prog, &DiskResolver::default(), &base_dir);
         let out = match eval() {
             Ok(o) => o,
             Err(e) => {
@@ -723,7 +723,8 @@ fn warm_edit_bench(root: &Path, models: &[(&str, &str)]) {
             .parent()
             .map(|d| d.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let eval = |()| openrscad_eval::eval_program_with(&prog, &DiskResolver, &dir).ok();
+        let eval =
+            |()| openrscad_eval::eval_program_with(&prog, &DiskResolver::default(), &dir).ok();
         let Some(out) = eval(()) else { continue };
         let mut cache = openrscad_geom::GeomCache::new();
         let t0 = Instant::now();
@@ -786,11 +787,30 @@ fn echo_lines(s: &str) -> Vec<String> {
         .collect()
 }
 
-struct DiskResolver;
+/// Resolves `include`/`use` next to the including file first, then in each
+/// library directory — the same order the CLI applies to `OPENSCADPATH`.
+#[derive(Default)]
+struct DiskResolver {
+    libs: Vec<String>,
+}
+
+impl DiskResolver {
+    /// Candidate paths for `path` seen from `from_dir`, in resolution order.
+    fn candidates(&self, path: &str, from_dir: &str) -> impl Iterator<Item = PathBuf> + '_ {
+        std::iter::once(Path::new(from_dir).join(path)).chain(
+            self.libs
+                .iter()
+                .map(move |lib| Path::new(lib).join(path))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
 impl openrscad_eval::FileResolver for DiskResolver {
     fn load(&self, path: &str, from_dir: &str) -> Option<openrscad_eval::LoadedFile> {
-        let p = Path::new(from_dir).join(path);
-        let source = fs::read_to_string(&p).ok()?;
+        let (p, source) = self
+            .candidates(path, from_dir)
+            .find_map(|p| fs::read_to_string(&p).ok().map(|s| (p, s)))?;
         let key = fs::canonicalize(&p)
             .map(|c| c.to_string_lossy().into_owned())
             .unwrap_or_else(|_| p.to_string_lossy().into_owned());
@@ -803,8 +823,27 @@ impl openrscad_eval::FileResolver for DiskResolver {
 
     /// Raw bytes for `import()` of meshes/2D files (STL/OFF/3MF/DXF/SVG).
     fn load_bytes(&self, path: &str, from_dir: &str) -> Option<Vec<u8>> {
-        fs::read(Path::new(from_dir).join(path)).ok()
+        self.candidates(path, from_dir)
+            .find_map(|p| fs::read(p).ok())
     }
+}
+
+/// Library directories declared by a case as `// oracle: libs <dir> [<dir>…]`,
+/// resolved against the case's own directory. These stand in for the hosts'
+/// `OPENSCADPATH`, which the oracle reads from the environment.
+fn oracle_libs(case: &Path, src: &str) -> Vec<String> {
+    let dir = case.parent().unwrap_or(Path::new("."));
+    src.lines()
+        .filter_map(|l| l.trim().strip_prefix("// oracle:"))
+        .flat_map(|rest| {
+            let toks: Vec<&str> = rest.split_whitespace().collect();
+            match toks.split_first() {
+                Some((&"libs", rest)) => rest.to_vec(),
+                _ => Vec::new(),
+            }
+        })
+        .map(|d| dir.join(d).to_string_lossy().into_owned())
+        .collect()
 }
 
 fn openrscad_echo(case: &Path) -> Vec<String> {
@@ -816,13 +855,16 @@ fn openrscad_echo(case: &Path) -> Vec<String> {
         .parent()
         .map(|d| d.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into());
+    let resolver = DiskResolver {
+        libs: oracle_libs(case, &src),
+    };
     match openrscad_syntax::parse(&src) {
         // The oracle runs `--export-format=echo`, which performs no render, so
         // upstream reports `$preview == true`. Match that or the gate compares
         // two different modes.
         Ok(prog) => match openrscad_eval::eval_program_with_mode(
             &prog,
-            &DiskResolver,
+            &resolver,
             &dir,
             &[],
             openrscad_eval::RenderMode::Preview,
@@ -838,9 +880,14 @@ fn bless_echo(cases: &Path, goldens: &Path) {
     fs::create_dir_all(goldens).unwrap();
     let mut n = 0;
     for case in scad_cases(cases) {
-        let out = Command::new("openscad")
-            .args(["--export-format=echo", "-o", "-"])
-            .arg(&case)
+        let src = fs::read_to_string(&case).unwrap_or_default();
+        let mut cmd = Command::new("openscad");
+        cmd.args(["--export-format=echo", "-o", "-"]).arg(&case);
+        let libs = oracle_libs(&case, &src);
+        if !libs.is_empty() {
+            cmd.env("OPENSCADPATH", libs.join(":"));
+        }
+        let out = cmd
             .output()
             .expect("failed to run openscad — is it installed and on PATH?");
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1240,7 +1287,7 @@ fn openrscad_mesh(case: &Path) -> Result<Mesh, String> {
     let prog = openrscad_syntax::parse(&src).map_err(|e| format!("parse: {}", e.message))?;
     // The oracle exports binary STL, an exact render, so `$preview == false`
     // (the default mode) on both sides.
-    let out = openrscad_eval::eval_program_with(&prog, &DiskResolver, &dir)
+    let out = openrscad_eval::eval_program_with(&prog, &DiskResolver::default(), &dir)
         .map_err(|e| format!("eval: {}", e.message))?;
     openrscad_geom::render(&out.node).map_err(|e| format!("render: {e}"))
 }

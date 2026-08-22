@@ -39,201 +39,3662 @@
     }
   ],
   "features": [
-    { "id": "syntax.assignment", "category": "syntax", "surface": "name = expression;", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Assignments, last-write-wins hoisting, dead RHS suppression, and no-forward-reference behavior match the oracle cases.", "tests": ["echo:assign_hoist"] },
-    { "id": "syntax.conditional.ternary", "category": "syntax", "surface": "condition ? then : else", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Conditional expressions and nesting are oracle-covered.", "tests": ["echo:ternary_let", "echo:darkcorners"] },
-    { "id": "syntax.module.definition_call", "category": "syntax", "surface": "module name(params) body; name(args);", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "User module definition, lexical lookup, and invocation are exercised through observable echoes.", "tests": ["echo:scoping", "echo:children"] },
-    { "id": "syntax.function.definition_call", "category": "syntax", "surface": "function name(params) = expression; name(args)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Named functions, recursion, mutual recursion, and calls are oracle-covered.", "tests": ["echo:recursion", "echo:advanced"] },
-    { "id": "syntax.function.literal", "category": "syntax", "surface": "function(params) expression", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Function literals and calls through function values are oracle-covered.", "tests": ["echo:functions"] },
-    { "id": "syntax.arguments.named_positional", "category": "syntax", "surface": "call(positional, name=value)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Generic named and positional binding is implemented; only selected builtin signatures have direct oracle cases." },
-    { "id": "syntax.arguments.special_variable_scope", "category": "syntax", "surface": "call($fn=..., ...) children", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A $-prefixed argument is dynamically scoped over the callee and everything under it, for builtin modules, user modules and their children(), and function calls; each argument expression evaluates once in the caller's scope and does not leak past the call.", "tests": ["echo:special_args", "geom:special_args_fn"] },    { "id": "syntax.arguments.defaults", "category": "syntax", "surface": "function/module parameter defaults", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Omitted function and module defaults are lazy and use the definition's ordinary lexical environment, while special variables remain dynamic and explicit arguments use caller scope; these paths are oracle-covered.", "tests": ["echo:functions"] },
-    { "id": "syntax.scope.lexical", "category": "syntax", "surface": "ordinary variable/function/module lexical scope", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Ordinary bindings and closures use lexical scope.", "tests": ["echo:scoping"] },
-    { "id": "syntax.scope.special_dynamic", "category": "syntax", "surface": "$-prefixed dynamic scope", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Special variables follow the dynamic call chain.", "tests": ["echo:scoping"] },
-    { "id": "syntax.statement.if_else", "category": "syntax", "surface": "if (condition) body else body", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Statement-level conditional branching is parsed and evaluated; upstream diagnostic and edge parity are not inventoried." },
-    { "id": "syntax.statement.for", "category": "syntax", "surface": "for (name=range/list, ...) body", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Range/list and Cartesian statement iteration are implemented; exhaustive oracle coverage is pending." },
-    { "id": "syntax.statement.let", "category": "syntax", "surface": "let (bindings) body", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Statement-level lexical bindings are implemented." },
-    { "id": "syntax.expression.let", "category": "syntax", "surface": "let (bindings) expression", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Sequential let bindings and shadowing are oracle-covered.", "tests": ["echo:ternary_let", "echo:advanced"] },
-    { "id": "syntax.comprehension.for", "category": "syntax", "surface": "[for (bindings) expression]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Range and Cartesian list generation are oracle-covered.", "tests": ["echo:comprehension"] },
-    { "id": "syntax.comprehension.c_for", "category": "syntax", "surface": "[for (init; condition; update) expression]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "C-style accumulator comprehensions are oracle-covered.", "tests": ["echo:cfor"] },
-    { "id": "syntax.comprehension.each", "category": "syntax", "surface": "[each expression]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "List flattening, including conditional operands, is oracle-covered.", "tests": ["echo:comprehension", "echo:sideeffects"] },
-    { "id": "syntax.comprehension.if_else", "category": "syntax", "surface": "[if (condition) then else alternative]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Conditional list elements are oracle-covered.", "tests": ["echo:comprehension"] },
-    { "id": "syntax.comprehension.let", "category": "syntax", "surface": "[let (bindings) expression]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Comprehension-local bindings are oracle-covered.", "tests": ["echo:comprehension", "echo:advanced"] },
-    { "id": "syntax.block", "category": "syntax", "surface": "{ statements }", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Bare and child blocks are parsed and scoped." },
-    { "id": "syntax.expression.echo", "category": "syntax", "surface": "echo(args) expression", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Expression-prefix echo returns its body and preserves side-effect order.", "tests": ["echo:sideeffects"] },
-    { "id": "syntax.expression.assert", "category": "syntax", "surface": "assert(condition, message) expression", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Expression-prefix assertions and short-circuit suppression are oracle-covered.", "tests": ["echo:sideeffects"] },
-    { "id": "syntax.modifier.disable", "category": "syntax", "surface": "*module_call", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Disabled subtrees are omitted." },
-    { "id": "syntax.modifier.root", "category": "syntax", "surface": "!module_call", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The last root-modified subtree becomes the rendered root." },
-    { "id": "syntax.modifier.highlight", "category": "syntax", "surface": "#module_call", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Highlight metadata is retained for preview and included in exact geometry." },
-    { "id": "syntax.modifier.background", "category": "syntax", "surface": "%module_call", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Background metadata is previewed and excluded from fused exports." },
-    { "id": "syntax.comments", "category": "syntax", "surface": "// line and /* block */ comments", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Line and block comments are lexed." },
-    { "id": "syntax.intersection_for", "category": "syntax", "surface": "intersection_for(bindings) body", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Dependent Cartesian bindings produce one intersected operand per iteration.", "tests": ["geom:bool_intersection_for"] },
-    { "id": "syntax.assign_legacy", "category": "syntax", "surface": "assign(bindings) body", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Scoped bindings whose right-hand sides all evaluate in the enclosing scope and take effect together, unlike let(); bindings do not escape the body.", "tests": ["echo:deprecated_forms", "geom:deprecated_assign_child"] },
-
-    { "id": "value.undef", "category": "value", "surface": "undef", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Undefined propagation, comparison, indexing, and iteration cases are oracle-covered.", "tests": ["echo:darkcorners"] },
-    { "id": "value.boolean", "category": "value", "surface": "true / false", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Boolean values and truthiness are oracle-covered.", "tests": ["echo:logic", "echo:arithmetic"] },
-    { "id": "value.number", "category": "value", "surface": "numeric literals, infinities, NaN", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Decimal/scientific literals and echo formatting for finite and non-finite numbers are oracle-covered.", "tests": ["echo:numbers"] },
-    { "id": "value.string", "category": "value", "surface": "Unicode string literals", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "String representation, escaping, Unicode length, and core conversions are implemented; representative output is oracle-covered.", "tests": ["echo:strings"] },
-    { "id": "value.list", "category": "value", "surface": "[value, ...]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Nested lists, indexing, equality, and common operations are oracle-covered.", "tests": ["echo:vectors", "echo:advanced"] },
-    { "id": "value.range", "category": "value", "surface": "[start:end] / [start:step:end]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Ascending normalization, explicit descending steps, and empty direction mismatches are oracle-covered.", "tests": ["echo:ranges"] },
-    { "id": "value.function", "category": "value", "surface": "first-class function value", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Function values can be stored, indexed, called, and type-tested.", "tests": ["echo:functions"] },
-    { "id": "value.pi", "category": "value", "surface": "PI", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The mathematical constant is seeded and oracle-covered.", "tests": ["echo:numbers"] },
-
-    { "id": "operator.arithmetic", "category": "operator", "surface": "+ - * / %", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Scalar arithmetic, precedence, associativity, modulo signs, and selected vector forms are oracle-covered.", "tests": ["echo:arithmetic", "echo:darkcorners"] },
-    { "id": "operator.power", "category": "operator", "surface": "^", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Exponentiation precedence and right associativity are oracle-covered.", "tests": ["echo:power"] },
-    { "id": "operator.relational", "category": "operator", "surface": "< <= == != >= >", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Scalar, string, list, mixed-type, and nested-list comparisons have representative oracle coverage.", "tests": ["echo:arithmetic", "echo:compare"] },
-    { "id": "operator.logical", "category": "operator", "surface": "&& || !", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Truthiness and short-circuit behavior are oracle-covered.", "tests": ["echo:arithmetic", "echo:sideeffects"] },
-    { "id": "operator.unary", "category": "operator", "surface": "+value / -value", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Numeric and vector unary negation plus precedence cases are oracle-covered.", "tests": ["echo:arithmetic", "echo:power"] },
-    { "id": "operator.vector_matrix", "category": "operator", "surface": "vector/matrix arithmetic", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Dot products, scaling, vector addition, and matrix multiplication are implemented; the full dimensional/type matrix lacks a dedicated oracle inventory." },
-    { "id": "operator.index", "category": "operator", "surface": "value[index]", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "List indexing, out-of-range behavior, and NaN indices are oracle-covered.", "tests": ["echo:vectors", "echo:darkcorners"] },
-    { "id": "operator.member_xyz", "category": "operator", "surface": "value.x / value.y / value.z", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Vector dot-index aliases are oracle-covered.", "tests": ["echo:vectors"] },
-
-    { "id": "function.abs", "category": "function", "surface": "abs(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative positive result is oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.sign", "category": "function", "surface": "sign(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Negative, zero, and positive cases are oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.floor", "category": "function", "surface": "floor(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Positive and negative cases are oracle-covered.", "tests": ["echo:math", "echo:advanced"] },
-    { "id": "function.ceil", "category": "function", "surface": "ceil(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Positive and negative cases are oracle-covered.", "tests": ["echo:math", "echo:advanced"] },
-    { "id": "function.round", "category": "function", "surface": "round(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Positive and negative half cases are oracle-covered.", "tests": ["echo:math", "echo:advanced"] },
-    { "id": "function.sqrt", "category": "function", "surface": "sqrt(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative results are oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.exp", "category": "function", "surface": "exp(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative results are oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.ln", "category": "function", "surface": "ln(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative results are oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.log", "category": "function", "surface": "log(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Base-10 logarithm behavior is oracle-covered.", "tests": ["echo:math"] },
-    { "id": "function.sin", "category": "function", "surface": "sin(degrees)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree-based trigonometry has representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.cos", "category": "function", "surface": "cos(degrees)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree-based trigonometry has representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.tan", "category": "function", "surface": "tan(degrees)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree-based trigonometry has representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.asin", "category": "function", "surface": "asin(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree output has representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.acos", "category": "function", "surface": "acos(number)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree output has representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.atan", "category": "function", "surface": "atan(number)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Degree output is implemented; the committed math oracle currently exercises atan2 rather than atan." },
-    { "id": "function.atan2", "category": "function", "surface": "atan2(y, x)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Argument order and degree output have representative oracle coverage.", "tests": ["echo:math"] },
-    { "id": "function.pow", "category": "function", "surface": "pow(base, exponent)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Integer and fractional exponent cases are oracle-covered.", "tests": ["echo:advanced", "echo:power"] },
-    { "id": "function.min", "category": "function", "surface": "min(values... / list)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Variadic/list reducers and strict mixed-value edge cases are oracle-covered.", "tests": ["echo:math", "echo:darkcorners"] },
-    { "id": "function.max", "category": "function", "surface": "max(values... / list)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Variadic/list reducers and strict mixed-value edge cases are oracle-covered.", "tests": ["echo:math", "echo:darkcorners"] },
-    { "id": "function.len", "category": "function", "surface": "len(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "List and Unicode-string lengths have representative oracle coverage.", "tests": ["echo:vectors", "echo:advanced"] },
-    { "id": "function.norm", "category": "function", "surface": "norm(vector)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Numeric vectors and strict mixed-value behavior are oracle-covered.", "tests": ["echo:advanced", "echo:darkcorners"] },
-    { "id": "function.cross", "category": "function", "surface": "cross(vector, vector)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative 3D cross products are oracle-covered; 2D scalar behavior has local tests.", "tests": ["echo:vectors", "echo:advanced"] },
-    { "id": "function.concat", "category": "function", "surface": "concat(values...)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Lists, nested lists, and scalar operands have representative oracle coverage.", "tests": ["echo:advanced", "echo:vectors"] },
-    { "id": "function.lookup", "category": "function", "surface": "lookup(key, table)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Interpolation has a committed oracle case.", "tests": ["echo:builtins2"] },
-    { "id": "function.search", "category": "function", "surface": "search(needle, haystack, num_returns_per_match, index_col_num)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Scalar, string, vector, missing, and all-match cases have representative oracle coverage.", "tests": ["echo:builtins2"] },
-    { "id": "function.str", "category": "function", "surface": "str(values...)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Empty, scalar, string, and list representations have representative oracle coverage.", "tests": ["echo:strings", "echo:darkcorners"] },
-    { "id": "function.chr", "category": "function", "surface": "chr(codepoints... / list)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Scalar, variadic, list, and NUL codepoint behavior is oracle-covered.", "tests": ["echo:advanced", "echo:darkcorners", "echo:compare"] },
-    { "id": "function.ord", "category": "function", "surface": "ord(string)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative first-codepoint conversion is oracle-covered.", "tests": ["echo:strings", "echo:advanced"] },
-    { "id": "function.is_undef", "category": "function", "surface": "is_undef(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative type tests are oracle-covered.", "tests": ["echo:builtins2"] },
-    { "id": "function.is_bool", "category": "function", "surface": "is_bool(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative type tests are oracle-covered.", "tests": ["echo:builtins2"] },
-    { "id": "function.is_num", "category": "function", "surface": "is_num(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative numeric tests are oracle-covered; NaN rejection has a local regression test.", "tests": ["echo:builtins2"] },
-    { "id": "function.is_string", "category": "function", "surface": "is_string(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative type tests are oracle-covered.", "tests": ["echo:builtins2"] },
-    { "id": "function.is_list", "category": "function", "surface": "is_list(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative type tests are oracle-covered.", "tests": ["echo:builtins2"] },
-    { "id": "function.is_function", "category": "function", "surface": "is_function(value)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Function and non-function cases are oracle-covered.", "tests": ["echo:functions"] },
-    { "id": "function.is_range", "category": "function", "surface": "is_range(value)", "tier": "openrscad_extension", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "OpenRSCAD's range type-testing extension is exercised by the BOSL2 gate; OpenSCAD 2024.12 reports this function as unknown." },
-    { "id": "function.rands", "category": "function", "surface": "rands(min, max, count, seed)", "tier": "core_2021_01", "status": "permanent_divergence", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Range, reproducibility, and global/seeded advancement semantics are implemented, but the xorshift sequence is not bit-compatible with OpenSCAD.", "repros": ["compat:rands-sequence"], "rationale": "OpenRSCAD intentionally uses a deterministic xorshift generator; identical upstream pseudo-random values are not promised." },
-    { "id": "function.version", "category": "function", "surface": "version()", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Returns the declared compatibility baseline [2021, 1, 0]; no standalone oracle case is committed." },
-    { "id": "function.version_num", "category": "function", "surface": "version_num(version)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Two/three-component conversion and representative current-version input are oracle-covered.", "tests": ["echo:darkcorners"] },
-    { "id": "function.parent_module", "category": "function", "surface": "parent_module(index)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Default/indexed lookup and nested user-module stack behavior are oracle-covered.", "tests": ["echo:children"] },
-
-    { "id": "special.fa", "category": "special_variable", "surface": "$fa", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Angular fragment control participates in oracle-checked sphere tessellation.", "tests": ["geom:prim_sphere_fs"] },
-    { "id": "special.fs", "category": "special_variable", "surface": "$fs", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Linear fragment control participates in oracle-checked sphere tessellation.", "tests": ["geom:prim_sphere_fs"] },
-    { "id": "special.fn", "category": "special_variable", "surface": "$fn", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Explicit fragment counts are oracle-covered across curved primitives and rotate_extrude.", "tests": ["geom:prim_sphere_fn8", "geom:prim_sphere_fn32", "geom:ext_rotate_partial_fn"] },
-    { "id": "special.t", "category": "special_variable", "surface": "$t", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Animation time overrides and frame sweeps are implemented; no upstream oracle sequence is committed." },
-    { "id": "special.vpr", "category": "special_variable", "surface": "$vpr", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Viewport rotation is readable/writable and propagated to first-party camera paths." },
-    { "id": "special.vpt", "category": "special_variable", "surface": "$vpt", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Viewport translation is readable/writable and propagated to first-party camera paths." },
-    { "id": "special.vpd", "category": "special_variable", "surface": "$vpd", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Viewport distance is readable/writable and propagated to first-party camera paths." },
-    { "id": "special.vpf", "category": "special_variable", "surface": "$vpf", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Viewport field of view is readable/writable and propagated to first-party camera paths." },
-    { "id": "special.children", "category": "special_variable", "surface": "$children", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Child-slot counting in user modules is oracle-covered.", "tests": ["echo:children"] },
-    { "id": "special.parent_modules", "category": "special_variable", "surface": "$parent_modules", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Nested user-module stack depth is oracle-covered.", "tests": ["echo:children"] },
-    { "id": "special.preview", "category": "special_variable", "surface": "$preview", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Evaluation mode is explicit per host: false for exact render and mesh/2D-vector export, true for F5 preview, PNG rasters, and echo-only runs, matching the oracle on both sides.", "tests": ["geom:preview_branch", "echo:preview_mode"] },
-
-    { "id": "module.cube", "category": "module", "surface": "cube(size, center)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Positive scalar/vector sizes and centering have committed geometry oracles.", "tests": ["geom:prim_cube", "geom:prim_cube_center"] },
-    { "id": "module.cube.invalid_dimensions", "category": "module_parameter", "surface": "cube(size <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A zero or negative component yields no geometry, matching upstream.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.sphere.radius", "category": "module", "surface": "sphere(r, $fn/$fa/$fs)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Radius and explicit/adaptive fragment controls have geometry oracles.", "tests": ["geom:prim_sphere_fn8", "geom:prim_sphere_fn32", "geom:prim_sphere_fs"] },
-    { "id": "module.sphere.diameter", "category": "module_parameter", "surface": "sphere(d=diameter)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Diameter-to-radius binding is implemented but lacks a dedicated upstream geometry case." },
-    { "id": "module.cylinder.core", "category": "module", "surface": "cylinder(h, r/r1/r2, center, $fn)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Cylinders, cones, centering, the fourth positional center argument, and explicit fragment counts are geometry-oracle covered.", "tests": ["geom:prim_cylinder", "geom:prim_cylinder_center", "geom:prim_cone"] },
-    { "id": "module.cylinder.diameters", "category": "module_parameter", "surface": "cylinder(d/d1/d2)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Diameter aliases and endpoint precedence are implemented but lack dedicated upstream geometry cases." },
-    { "id": "module.cylinder.invalid_dimensions", "category": "module_parameter", "surface": "cylinder(h/r/r1/r2 <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Non-positive height, a negative radius, or two zero radii yield no geometry; a single zero radius remains a valid cone.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.polyhedron.basic", "category": "module", "surface": "polyhedron(points, faces)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Indexed triangular faces have a committed geometry oracle.", "tests": ["geom:prim_polyhedron"] },
-    { "id": "module.polyhedron.convexity", "category": "module_parameter", "surface": "polyhedron(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "module.polyhedron.concave_faces", "category": "module_parameter", "surface": "polyhedron() general planar concave faces", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Planar concave faces use projected earcut triangulation; a boolean-sensitive U-prism regression has a committed OpenSCAD geometry oracle.", "tests": ["geom:prim_polyhedron_concave"] },
-    { "id": "module.polyhedron.triangles_alias", "category": "module_parameter", "surface": "polyhedron(triangles=...)", "tier": "deprecated_core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The legacy triangles parameter aliases faces, without a dedicated upstream oracle." },
-    { "id": "module.square", "category": "module", "surface": "square(size, center)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Positive scalar/vector sizes and centering have extrusion-based geometry oracles.", "tests": ["geom:prim_square_ext", "geom:prim_square_center_ext"] },
-    { "id": "module.square.invalid_dimensions", "category": "module_parameter", "surface": "square(size <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A zero or negative component yields no geometry, matching upstream.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.circle.invalid_radius", "category": "module_parameter", "surface": "circle(r <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A zero or negative radius yields no geometry.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.sphere.invalid_radius", "category": "module_parameter", "surface": "sphere(r <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A zero or negative radius yields no geometry.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.circle.radius", "category": "module", "surface": "circle(r, $fn)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Radius and explicit fragment count have an extrusion-based geometry oracle.", "tests": ["geom:prim_circle_ext"] },
-    { "id": "module.circle.diameter", "category": "module_parameter", "surface": "circle(d=diameter)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Diameter-to-radius binding is implemented but lacks a dedicated upstream geometry case." },
-    { "id": "module.polygon", "category": "module", "surface": "polygon(points, paths)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Single paths and explicit outer/hole paths have extrusion-based geometry oracles.", "tests": ["geom:prim_polygon_ext", "geom:prim_polygon_hole_ext"] },
-    { "id": "module.polygon.convexity", "category": "module_parameter", "surface": "polygon(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "module.text.basic", "category": "module", "surface": "text(text, font)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Bundled Liberation Sans/Serif/Mono family and style outlines have geometry oracles.", "tests": ["geom:text_mono", "geom:text_sans_bold", "geom:text_sans_italic", "geom:text_serif"] },
-    { "id": "module.text.layout", "category": "module_parameter", "surface": "text(size, halign, valign, spacing)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "halign uses the advance width; valign aligns the ink box, not the font ascender/descender, so x-height-only text sits differently from text with ascenders.", "tests": ["geom:text_valign"] },
-    { "id": "module.text.shaping", "category": "module_parameter", "surface": "text() kerning, ligatures, and complex-script shaping", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Runs are shaped with rustybuzz, the Rust port of the HarfBuzz shaper OpenSCAD uses, so kerning pairs, ligatures and joining scripts match rather than being summed glyph by glyph.", "tests": ["geom:text_shaping"] },
-    { "id": "module.text.direction_language_script", "category": "module_parameter", "surface": "text(direction, language, script)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "direction selects ltr/rtl/ttb/btt and script/language are passed to the shaper; a vertical run centres each glyph in an OS/2 typographic ascent-to-descent slot and on the column, as upstream.", "tests": ["geom:text_direction"] },
-    { "id": "module.linear_extrude.core", "category": "module", "surface": "linear_extrude(height, center, twist, scale, slices)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Explicit height, centering, twist, scale, and slices have geometry oracles.", "tests": ["geom:ext_linear", "geom:ext_linear_center", "geom:ext_linear_scale", "geom:ext_linear_slices"] },
-    { "id": "module.linear_extrude.convexity", "category": "module_parameter", "surface": "linear_extrude(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "module.linear_extrude.segments", "category": "module_parameter", "surface": "linear_extrude(segments=...)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "segments= subdivides each profile outline, applies without twist, and overrides $fn/$fa/$fs.", "tests": ["geom:ext_linear_segments", "geom:ext_linear_segments_twist"] },
-    { "id": "module.linear_extrude.implicit_slices", "category": "module_parameter", "surface": "linear_extrude() omitted slices with $fn/$fa/$fs", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "An omitted slice count takes the tighter of the $fa per-slice twist limit and the $fs helical-travel limit, or $fn slices per revolution.", "tests": ["geom:ext_linear_twist", "geom:ext_linear_twist_fn"] },
-    { "id": "module.linear_extrude.twist_profile", "category": "module_parameter", "surface": "linear_extrude(twist=) profile refinement", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A twisted profile outline is re-tessellated from $fn/$fa/$fs independently of the slice count, apportioning a per-contour segment budget across edges by length.", "tests": ["geom:ext_linear_twist_profile", "geom:ext_linear_twist_shape", "geom:ext_linear_twist_round"] },
-    { "id": "module.linear_extrude.twist_scale_refinement", "category": "module_parameter", "surface": "linear_extrude(twist=, scale=) combined refinement", "tier": "core_2021_01", "status": "missing", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Twist alone and non-uniform scale alone each follow an exact measured rule, but combining them weights the profile edges the opposite way upstream (the edge that shrinks earns more segments); the mesh reads 0.8% high in volume.", "gap_ids": ["F-G3"] },
-    { "id": "module.linear_extrude.twist_diagonal", "category": "module_parameter", "surface": "linear_extrude() non-planar wall triangulation", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A non-planar wall quad is split along its shorter diagonal, ties falling back to the wall lean (twist direction, flipped for a hole). Matched per quad against the oracle over 3142 quads, and exact for off-axis, holed, and non-uniformly scaled curved profiles.", "tests": ["geom:ext_linear_twist_hole", "geom:ext_linear_twist_offaxis", "geom:ext_linear_scale_round"] },
-    { "id": "module.linear_extrude.scale_refinement", "category": "module_parameter", "surface": "linear_extrude(scale=) non-uniform refinement", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A non-uniform scale refines the profile by max(original, scaled) edge length and adds slices from the worst point travel; a uniform scale keeps the walls planar and refines nothing. Triangle counts are pinned, not just volume.", "tests": ["geom:ext_linear_scale_nonuniform", "geom:ext_linear_scale_uniform_tris"] },
-    { "id": "module.linear_extrude.invalid_height", "category": "module_parameter", "surface": "linear_extrude(height <= 0)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A non-positive height yields no geometry; the children are still evaluated so their echo/assert side effects run.", "tests": ["geom:prim_invalid_dims"] },
-    { "id": "module.linear_extrude.vector", "category": "module_parameter", "surface": "linear_extrude(v=direction)", "tier": "current_stable", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Post-baseline oblique extrusion along a normalized direction has committed geometry oracles.", "tests": ["geom:ext_linear_v", "geom:ext_linear_v_tilt"] },
-    { "id": "module.rotate_extrude", "category": "module", "surface": "rotate_extrude(angle, $fn)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Full/partial sweeps, negative-side profiles, over-rotation, axis crossings, and partial fragment counts have geometry oracles.", "tests": ["geom:ext_rotate_full", "geom:ext_rotate_angle", "geom:ext_rotate_negative_x", "geom:ext_rotate_over360", "geom:ext_rotate_partial_fn"] },
-    { "id": "module.rotate_extrude.convexity", "category": "module_parameter", "surface": "rotate_extrude(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "module.rotate_extrude.start", "category": "module_parameter", "surface": "rotate_extrude(start=...)", "tier": "current_stable", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Post-baseline start-angle rotation is implemented and invariant-tested; the selected upstream oracle predates the parameter." },
-    { "id": "module.projection", "category": "module", "surface": "projection(cut)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Flat silhouette and Z=0 cut projection have geometry oracles, including nested 2D operations.", "tests": ["geom:d2_projection_flat", "geom:d2_projection_cut", "geom:d2_proj_offset_flat", "geom:d2_proj_offset_cut"] },
-    { "id": "module.translate", "category": "module", "surface": "translate(v)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "2D/3D vectors and named binding have geometry oracles.", "tests": ["geom:xf_translate", "geom:xf_translate_2d", "geom:xf_translate_named"] },
-    { "id": "module.rotate", "category": "module", "surface": "rotate(a) / rotate(a, v)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Euler and axis-angle positional/named forms have geometry oracles.", "tests": ["geom:xf_rotate_euler", "geom:xf_rotate_axis", "geom:xf_rotate_named"] },
-    { "id": "module.scale", "category": "module", "surface": "scale(v)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Vector and scalar broadcast forms have geometry oracles.", "tests": ["geom:xf_scale", "geom:xf_scale_scalar"] },
-    { "id": "module.resize", "category": "module", "surface": "resize(newsize, auto)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative zero-dimension auto scaling has a geometry oracle.", "tests": ["geom:xf_resize"] },
-    { "id": "module.resize.convexity", "category": "module_parameter", "surface": "resize(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "module.mirror", "category": "module", "surface": "mirror(v)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative plane reflection has a geometry oracle.", "tests": ["geom:xf_mirror"] },
-    { "id": "module.multmatrix", "category": "module", "surface": "multmatrix(m)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Named matrix binding and affine shear have a geometry oracle.", "tests": ["geom:xf_multmatrix"] },
-    { "id": "module.color", "category": "module", "surface": "color(name/hex/vector, alpha)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "CSS names, #rgb[a]/#rrggbb[aa], vectors, and alpha are implemented and locally tested; no upstream color oracle is committed." },
-    { "id": "module.offset", "category": "module", "surface": "offset(r/delta, chamfer, $fn)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Round/radial and delta/chamfer paths, explicit fragments, holes, concavity, and collapse cases have geometry oracles.", "tests": ["geom:d2_offset_r", "geom:d2_offset_delta", "geom:d2_offset_concave_round", "geom:d2_offset_concave_collapse"] },
-    { "id": "module.union", "category": "module", "surface": "union()", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Overlapping, disjoint, coplanar, nested, and 2D unions have geometry oracles.", "tests": ["geom:bool_union", "geom:bool_union_disjoint", "geom:bool_coplanar", "geom:d2_union"] },
-    { "id": "module.difference", "category": "module", "surface": "difference()", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "3D/2D difference and empty-tool behavior have geometry oracles.", "tests": ["geom:bool_difference", "geom:bool_diff_empty", "geom:d2_difference_hole"] },
-    { "id": "module.intersection", "category": "module", "surface": "intersection()", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative and empty intersections have geometry oracles.", "tests": ["geom:bool_intersection", "geom:bool_intersection_empty"] },
-    { "id": "module.hull", "category": "module", "surface": "hull()", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "2D and multiple 3D hull configurations have geometry oracles.", "tests": ["geom:hullmink_hull_2d", "geom:hullmink_hull_points", "geom:hullmink_hull_spheres"] },
-    { "id": "module.minkowski.exact", "category": "module", "surface": "minkowski() for 2D, convex 3D, and unions of convex parts", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "2D sums, convex 3D sums, and distribution over explicit unions have geometry oracles.", "tests": ["geom:hullmink_minkowski_2d", "geom:hullmink_minkowski_3d", "geom:minkowski_union"] },
-    { "id": "module.minkowski.concave_leaf", "category": "module_parameter", "surface": "minkowski() with a genuinely concave 3D leaf", "tier": "core_2021_01", "status": "warned_divergence", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A concave leaf is replaced by its convex hull, with a runtime warning; explicit unions of convex parts remain exact.", "repros": ["compat:minkowski-concave-leaf"], "gap_ids": ["F-G7"] },
-    { "id": "module.render", "category": "module", "surface": "render(convexity)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The child passes through the exact rendering pipeline; convexity is accepted as a preview hint, without an upstream render-boundary oracle." },
-    { "id": "module.group", "category": "module", "surface": "group()", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Child grouping is implemented as a transparent geometry group." },
-    { "id": "module.echo", "category": "module", "surface": "echo(values...) children", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Named/scalar/list/string formatting and child pass-through are exercised throughout the echo oracle suite.", "tests": ["echo:strings", "echo:advanced"] },
-    { "id": "module.assert", "category": "module", "surface": "assert(condition, message) children", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Passing/failing assertions and child pass-through are implemented and broadly exercised by BOSL2, without a standalone upstream diagnostic oracle." },
-    { "id": "module.children", "category": "module", "surface": "children(index/list/range)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Child capture, forwarding, and indexed selection are locally tested; geometry output lacks a dedicated upstream oracle." },
-    { "id": "module.child_legacy", "category": "module", "surface": "child(index)", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Singular child selection; bare child() is the first child alone, where bare children() is all of them.", "tests": ["echo:deprecated_forms", "geom:deprecated_assign_child"] },
-
-    { "id": "file.include", "category": "file_semantics", "surface": "include <path>", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Included definitions, assignments, and side effects have an echo oracle.", "tests": ["echo:inc_include"] },
-    { "id": "file.use", "category": "file_semantics", "surface": "use <path>", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Definition-only loading and suppression of assignments/side effects have an echo oracle.", "tests": ["echo:inc_use"] },
-    { "id": "file.include_use.raw_path", "category": "file_semantics", "surface": "include/use paths with spaces and punctuation", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Angle-bracket contents are preserved from raw source; focused parser/resolver tests exist but no standalone upstream oracle case is committed." },
-    { "id": "file.relative_resolution", "category": "file_semantics", "surface": "nested include/use/import relative paths", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Nested files resolve relative to their containing file; native and virtual resolvers implement the same evaluator contract." },
-    { "id": "file.openscadpath", "category": "file_semantics", "surface": "OPENSCADPATH library lookup", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "lsp"], "summary": "Native resolvers search OPENSCADPATH after the containing directory; browser hosts instead use their project/library registry." },
-
-    { "id": "import.stl", "category": "import", "surface": "import(file.stl)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative STL mesh import has a geometry oracle.", "tests": ["geom:import_stl"] },
-    { "id": "import.off", "category": "import", "surface": "import(file.off)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Representative OFF mesh import has a geometry oracle.", "tests": ["geom:import_off"] },
-    { "id": "import.amf.basic", "category": "import", "surface": "import(file.amf) basic mesh", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Plain AMF vertices/triangles are parsed, without a committed upstream geometry fixture." },
-    { "id": "import.3mf.basic", "category": "import", "surface": "import(file.3mf) basic mesh", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A representative compressed 3MF mesh has a geometry oracle.", "tests": ["geom:import_3mf"] },
-    { "id": "import.convexity", "category": "module_parameter", "surface": "import(convexity=...)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The OpenCSG preview hint is accepted but has no dedicated upstream preview oracle." },
-    { "id": "import.obj", "category": "import", "surface": "import(file.obj, convexity)", "tier": "current_stable", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "OBJ vertex/face import is implemented and fuzzed; its upstream introduction/version and complete syntax are not oracle-classified here." },
-    { "id": "import.dxf.basic", "category": "import", "surface": "import(file.dxf, convexity) basic entities", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A representative simple 2D DXF import has an extrusion-based geometry oracle.", "tests": ["geom:import_dxf"] },
-    { "id": "import.dxf.layer", "category": "import", "surface": "import(file.dxf, layer=...)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Keeps only entities on the named layer; a selector matching nothing yields no geometry.", "tests": ["geom:import_dxf_selectors"] },
-    { "id": "import.dxf.origin_scale", "category": "import", "surface": "import(file.dxf, origin=..., scale=...)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Places the imported outline as (point - origin) * scale; both are 2D-only, as upstream, and do not affect a mesh import.", "tests": ["geom:import_dxf_selectors"] },
-    { "id": "import.dxf.curves", "category": "import", "surface": "DXF curve entities and caller fragment controls", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE/POLYLINE import, tessellated by the call-site $fn/$fa/$fs. Bulges (group 42) and SPLINE are deliberately not expanded: OpenSCAD 2024.12 imports neither, so expanding them would be a divergence.", "tests": ["geom:import_dxf_curves", "geom:import_dxf_fragments"] },
-    { "id": "import.svg.basic", "category": "import", "surface": "import(file.svg, convexity) basic paths", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A representative basic SVG path import has an extrusion-based geometry oracle.", "tests": ["geom:import_svg"] },
-    { "id": "import.svg.layer_id", "category": "import", "surface": "import(file.svg, layer/id=...)", "tier": "current_stable", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "layer= selects an Inkscape layer group by label and id= selects any element by id; either keeps that subtree alone.", "tests": ["geom:import_svg_selectors"] },
-    { "id": "import.svg.transforms_dpi", "category": "import", "surface": "SVG transforms, dimensions, units, and DPI options", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "translate/scale/rotate/matrix/skew transforms compose down the tree and with an element own transform; a physical width pins the scale, else viewBox units are inches at dpi (default 72), and with no viewBox coordinates are 1:1.", "tests": ["geom:import_svg_transforms", "geom:import_svg_dpi"] },
-    { "id": "import.svg.structure_style", "category": "import", "surface": "SVG nesting, use, style, and visibility", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "The document is walked as a tree: <use> instantiates a referenced element, <defs> draws nothing, display:none hides (attribute or style) while visibility:hidden does not, and an explicit id= overrides display:none but not <defs>.", "tests": ["geom:import_svg_structure", "geom:import_svg_visibility"] },
-    { "id": "import.amf_3mf.scene_graph", "category": "import", "surface": "AMF/3MF units, objects, components, and build transforms", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Each object is read in its own index space, and a 3MF build is assembled with per-item transforms and repeat instancing. AMF units and constellations are ignored, matching upstream. 3MF multi-object assembly is a deliberate divergence: OpenSCAD 2024.12 returns only the highest-id object and ignores the build, which drops geometry.", "notes": "Multi-object 3MF cannot have a geom oracle case because we deliberately differ there; covered by unit tests in crates/openrscad-geom/src/mesh.rs and documented in COMPAT.md." },
-    { "id": "import.alias_dxf", "category": "import", "surface": "import_dxf(...) legacy alias", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A plain alias for import(): the format still comes from the file suffix, not the module name.", "tests": ["geom:import_alias_dxf"] },
-    { "id": "import.alias_stl", "category": "import", "surface": "import_stl(...) legacy alias", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "A plain alias for import(): the format still comes from the file suffix, not the module name.", "tests": ["geom:import_alias_stl"] },
-    { "id": "function.dxf_dim", "category": "function", "surface": "dxf_dim(file, layer, origin, scale, name)", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Reads a DIMENSION measurement, matching on the dimension text and recomputing from the definition points; linear dimensions project onto the group-50 rotation, aligned ones use the plain distance, radius and diameter the centre-to-chord distance.", "tests": ["echo:dxf_query"] },
-    { "id": "function.dxf_cross", "category": "function", "surface": "dxf_cross(file, layer, origin, scale)", "tier": "deprecated_core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Returns the intersection of two lines on a layer, mapped through (point - origin) * scale; an empty layer selector matches any layer.", "tests": ["echo:dxf_query"] },
-    { "id": "module.surface.dat", "category": "import", "surface": "surface(file.dat)", "tier": "core_2021_01", "status": "verified", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Whitespace heightmaps have a committed geometry oracle.", "tests": ["geom:surface_dat"] },
-    { "id": "module.surface.dat_options", "category": "module_parameter", "surface": "surface(file.dat, center, convexity)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "DAT centering is implemented and convexity is accepted as a preview hint; neither has a dedicated upstream oracle case." },
-    { "id": "module.surface.png", "category": "import", "surface": "surface(file.png, center, invert, convexity)", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "PNG luminance heightmaps, centering, and inversion are locally tested; no OpenSCAD-derived geometry golden is committed." },
-
-    { "id": "export.stl", "category": "export", "surface": "STL binary/ASCII export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Binary and ASCII STL serialization is implemented and locally round-trip tested; byte identity is outside the compatibility contract." },
-    { "id": "export.off", "category": "export", "surface": "OFF export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "OFF serialization is implemented; color-aware preview output uses compatible extensions where applicable." },
-    { "id": "export.amf", "category": "export", "surface": "AMF export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Basic AMF mesh serialization is implemented." },
-    { "id": "export.3mf", "category": "export", "surface": "3MF export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "3MF package serialization and color groups are implemented and locally integration-tested." },
-    { "id": "export.dxf", "category": "export", "surface": "DXF export of 2D geometry/projection", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated." },
-    { "id": "export.svg", "category": "export", "surface": "SVG export of 2D geometry/projection", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "wasm", "npm", "lsp"], "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated." },
-    { "id": "export.png", "category": "export", "surface": "PNG render export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli", "desktop", "web", "npm", "lsp"], "summary": "Raster rendering, camera, projection, and image sizing are implemented; GUI/raster pixel parity is outside the core language criterion." },
-    { "id": "export.csg", "category": "export", "surface": "CSG tree export", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli"], "summary": "Serializes the evaluated tree as OpenSCAD .csg -- every module resolved, every transform lowered to multmatrix. Round-trip tested: re-rendering the output reproduces the geometry in both engines. Text is not byte-identical because OpenSCAD omits defaulted parameters and the IR does not record which were written.", "notes": "Like every other export entry this has no .scad-level oracle case, so it stays implemented rather than verified; covered by crates/openrscad-cli/tests/csg_roundtrip.rs." },
-    { "id": "export.suffix_validation", "category": "export", "surface": "output suffix validation", "tier": "core_2021_01", "status": "implemented", "hosts": ["cli"], "summary": "An unrecognized or missing -o suffix is rejected before any render, exiting non-zero and writing nothing, matching the 2024.12 binary across eleven suffixes; recognized suffixes match case-insensitively. Unit-tested, but like every other export entry it has no .scad-level oracle case, so it stays implemented rather than verified.", "notes": "CLI workflow parity is tracked separately from .scad program semantics; see Track F." }
+    {
+      "id": "syntax.assignment",
+      "category": "syntax",
+      "surface": "name = expression;",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Assignments, last-write-wins hoisting, dead RHS suppression, and no-forward-reference behavior match the oracle cases.",
+      "tests": [
+        "echo:assign_hoist"
+      ]
+    },
+    {
+      "id": "syntax.conditional.ternary",
+      "category": "syntax",
+      "surface": "condition ? then : else",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Conditional expressions and nesting are oracle-covered.",
+      "tests": [
+        "echo:ternary_let",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "syntax.module.definition_call",
+      "category": "syntax",
+      "surface": "module name(params) body; name(args);",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "User module definition, lexical lookup, and invocation are exercised through observable echoes.",
+      "tests": [
+        "echo:scoping",
+        "echo:children"
+      ]
+    },
+    {
+      "id": "syntax.function.definition_call",
+      "category": "syntax",
+      "surface": "function name(params) = expression; name(args)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Named functions, recursion, mutual recursion, and calls are oracle-covered.",
+      "tests": [
+        "echo:recursion",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "syntax.function.literal",
+      "category": "syntax",
+      "surface": "function(params) expression",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Function literals and calls through function values are oracle-covered.",
+      "tests": [
+        "echo:functions"
+      ]
+    },
+    {
+      "id": "syntax.arguments.named_positional",
+      "category": "syntax",
+      "surface": "call(positional, name=value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positional and named binding, including named-after-positional and defaulted parameters, match the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.arguments.special_variable_scope",
+      "category": "syntax",
+      "surface": "call($fn=..., ...) children",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A $-prefixed argument is dynamically scoped over the callee and everything under it, for builtin modules, user modules and their children(), and function calls; each argument expression evaluates once in the caller's scope and does not leak past the call.",
+      "tests": [
+        "echo:special_args",
+        "geom:special_args_fn"
+      ]
+    },
+    {
+      "id": "syntax.arguments.defaults",
+      "category": "syntax",
+      "surface": "function/module parameter defaults",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Omitted function and module defaults are lazy and use the definition's ordinary lexical environment, while special variables remain dynamic and explicit arguments use caller scope; these paths are oracle-covered.",
+      "tests": [
+        "echo:functions"
+      ]
+    },
+    {
+      "id": "syntax.scope.lexical",
+      "category": "syntax",
+      "surface": "ordinary variable/function/module lexical scope",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Ordinary bindings and closures use lexical scope.",
+      "tests": [
+        "echo:scoping"
+      ]
+    },
+    {
+      "id": "syntax.scope.special_dynamic",
+      "category": "syntax",
+      "surface": "$-prefixed dynamic scope",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Special variables follow the dynamic call chain.",
+      "tests": [
+        "echo:scoping"
+      ]
+    },
+    {
+      "id": "syntax.statement.if_else",
+      "category": "syntax",
+      "surface": "if (condition) body else body",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Statement-level if/else, including else-if chains and non-boolean conditions, matches the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.statement.for",
+      "category": "syntax",
+      "surface": "for (name=range/list, ...) body",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Statement-level for over ranges, stepped ranges, lists, and multiple (cartesian) generators matches the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.statement.let",
+      "category": "syntax",
+      "surface": "let (bindings) body",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Statement-level let, including sequential bindings and shadowing of an enclosing name, matches the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.expression.let",
+      "category": "syntax",
+      "surface": "let (bindings) expression",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Sequential let bindings and shadowing are oracle-covered.",
+      "tests": [
+        "echo:ternary_let",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "syntax.comprehension.for",
+      "category": "syntax",
+      "surface": "[for (bindings) expression]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Range and Cartesian list generation are oracle-covered.",
+      "tests": [
+        "echo:comprehension"
+      ]
+    },
+    {
+      "id": "syntax.comprehension.c_for",
+      "category": "syntax",
+      "surface": "[for (init; condition; update) expression]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "C-style accumulator comprehensions are oracle-covered.",
+      "tests": [
+        "echo:cfor"
+      ]
+    },
+    {
+      "id": "syntax.comprehension.each",
+      "category": "syntax",
+      "surface": "[each expression]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "List flattening, including conditional operands, is oracle-covered.",
+      "tests": [
+        "echo:comprehension",
+        "echo:sideeffects"
+      ]
+    },
+    {
+      "id": "syntax.comprehension.if_else",
+      "category": "syntax",
+      "surface": "[if (condition) then else alternative]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Conditional list elements are oracle-covered.",
+      "tests": [
+        "echo:comprehension"
+      ]
+    },
+    {
+      "id": "syntax.comprehension.let",
+      "category": "syntax",
+      "surface": "[let (bindings) expression]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Comprehension-local bindings are oracle-covered.",
+      "tests": [
+        "echo:comprehension",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "syntax.block",
+      "category": "syntax",
+      "surface": "{ statements }",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A bare `{ ... }` block groups statements and scopes its assignments, matching the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.expression.echo",
+      "category": "syntax",
+      "surface": "echo(args) expression",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Expression-prefix echo returns its body and preserves side-effect order.",
+      "tests": [
+        "echo:sideeffects"
+      ]
+    },
+    {
+      "id": "syntax.expression.assert",
+      "category": "syntax",
+      "surface": "assert(condition, message) expression",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Expression-prefix assertions and short-circuit suppression are oracle-covered.",
+      "tests": [
+        "echo:sideeffects"
+      ]
+    },
+    {
+      "id": "syntax.modifier.disable",
+      "category": "syntax",
+      "surface": "*module_call",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The `*` disable modifier removes a subtree from the render, matching the oracle.",
+      "tests": [
+        "geom:modifiers"
+      ]
+    },
+    {
+      "id": "syntax.modifier.root",
+      "category": "syntax",
+      "surface": "!module_call",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The `!` root modifier renders its subtree alone, matching the oracle.",
+      "tests": [
+        "geom:modifier_root"
+      ]
+    },
+    {
+      "id": "syntax.modifier.highlight",
+      "category": "syntax",
+      "surface": "#module_call",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The `#` highlight modifier is preview-only and leaves the rendered mesh unchanged, matching the oracle.",
+      "tests": [
+        "geom:modifiers"
+      ]
+    },
+    {
+      "id": "syntax.modifier.background",
+      "category": "syntax",
+      "surface": "%module_call",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The `%` background modifier excludes a subtree from the render, matching the oracle.",
+      "tests": [
+        "geom:modifiers"
+      ]
+    },
+    {
+      "id": "syntax.comments",
+      "category": "syntax",
+      "surface": "// line and /* block */ comments",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Line and block comments, including comment-like text inside strings, match the oracle.",
+      "tests": [
+        "echo:syntax_statements"
+      ]
+    },
+    {
+      "id": "syntax.intersection_for",
+      "category": "syntax",
+      "surface": "intersection_for(bindings) body",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Dependent Cartesian bindings produce one intersected operand per iteration.",
+      "tests": [
+        "geom:bool_intersection_for"
+      ]
+    },
+    {
+      "id": "syntax.assign_legacy",
+      "category": "syntax",
+      "surface": "assign(bindings) body",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Scoped bindings whose right-hand sides all evaluate in the enclosing scope and take effect together, unlike let(); bindings do not escape the body.",
+      "tests": [
+        "echo:deprecated_forms",
+        "geom:deprecated_assign_child"
+      ]
+    },
+    {
+      "id": "value.undef",
+      "category": "value",
+      "surface": "undef",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Undefined propagation, comparison, indexing, and iteration cases are oracle-covered.",
+      "tests": [
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "value.boolean",
+      "category": "value",
+      "surface": "true / false",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Boolean values and truthiness are oracle-covered.",
+      "tests": [
+        "echo:logic",
+        "echo:arithmetic"
+      ]
+    },
+    {
+      "id": "value.number",
+      "category": "value",
+      "surface": "numeric literals, infinities, NaN",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Decimal/scientific literals and echo formatting for finite and non-finite numbers are oracle-covered.",
+      "tests": [
+        "echo:numbers"
+      ]
+    },
+    {
+      "id": "value.string",
+      "category": "value",
+      "surface": "Unicode string literals",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "String representation, escaping, Unicode length, and core conversions are implemented; representative output is oracle-covered.",
+      "tests": [
+        "echo:strings"
+      ]
+    },
+    {
+      "id": "value.list",
+      "category": "value",
+      "surface": "[value, ...]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Nested lists, indexing, equality, and common operations are oracle-covered.",
+      "tests": [
+        "echo:vectors",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "value.range",
+      "category": "value",
+      "surface": "[start:end] / [start:step:end]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Ascending normalization, explicit descending steps, and empty direction mismatches are oracle-covered.",
+      "tests": [
+        "echo:ranges"
+      ]
+    },
+    {
+      "id": "value.function",
+      "category": "value",
+      "surface": "first-class function value",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Function values can be stored, indexed, called, and type-tested.",
+      "tests": [
+        "echo:functions"
+      ]
+    },
+    {
+      "id": "value.pi",
+      "category": "value",
+      "surface": "PI",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The mathematical constant is seeded and oracle-covered.",
+      "tests": [
+        "echo:numbers"
+      ]
+    },
+    {
+      "id": "operator.arithmetic",
+      "category": "operator",
+      "surface": "+ - * / %",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Scalar arithmetic, precedence, associativity, modulo signs, and selected vector forms are oracle-covered.",
+      "tests": [
+        "echo:arithmetic",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "operator.power",
+      "category": "operator",
+      "surface": "^",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Exponentiation precedence and right associativity are oracle-covered.",
+      "tests": [
+        "echo:power"
+      ]
+    },
+    {
+      "id": "operator.relational",
+      "category": "operator",
+      "surface": "< <= == != >= >",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Scalar, string, list, mixed-type, and nested-list comparisons have representative oracle coverage.",
+      "tests": [
+        "echo:arithmetic",
+        "echo:compare"
+      ]
+    },
+    {
+      "id": "operator.logical",
+      "category": "operator",
+      "surface": "&& || !",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Truthiness and short-circuit behavior are oracle-covered.",
+      "tests": [
+        "echo:arithmetic",
+        "echo:sideeffects"
+      ]
+    },
+    {
+      "id": "operator.unary",
+      "category": "operator",
+      "surface": "+value / -value",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Numeric and vector unary negation plus precedence cases are oracle-covered.",
+      "tests": [
+        "echo:arithmetic",
+        "echo:power"
+      ]
+    },
+    {
+      "id": "operator.vector_matrix",
+      "category": "operator",
+      "surface": "vector/matrix arithmetic",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Vector/vector, vector/scalar, and matrix products (including the dot product and matrix-vector form) match the oracle.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "operator.index",
+      "category": "operator",
+      "surface": "value[index]",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "List indexing, out-of-range behavior, and NaN indices are oracle-covered.",
+      "tests": [
+        "echo:vectors",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "operator.member_xyz",
+      "category": "operator",
+      "surface": "value.x / value.y / value.z",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Vector dot-index aliases are oracle-covered.",
+      "tests": [
+        "echo:vectors"
+      ]
+    },
+    {
+      "id": "function.abs",
+      "category": "function",
+      "surface": "abs(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative positive result is oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.sign",
+      "category": "function",
+      "surface": "sign(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Negative, zero, and positive cases are oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.floor",
+      "category": "function",
+      "surface": "floor(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positive and negative cases are oracle-covered.",
+      "tests": [
+        "echo:math",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.ceil",
+      "category": "function",
+      "surface": "ceil(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positive and negative cases are oracle-covered.",
+      "tests": [
+        "echo:math",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.round",
+      "category": "function",
+      "surface": "round(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positive and negative half cases are oracle-covered.",
+      "tests": [
+        "echo:math",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.sqrt",
+      "category": "function",
+      "surface": "sqrt(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative results are oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.exp",
+      "category": "function",
+      "surface": "exp(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative results are oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.ln",
+      "category": "function",
+      "surface": "ln(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative results are oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.log",
+      "category": "function",
+      "surface": "log(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Base-10 logarithm behavior is oracle-covered.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.sin",
+      "category": "function",
+      "surface": "sin(degrees)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Degree-based trigonometry has representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.cos",
+      "category": "function",
+      "surface": "cos(degrees)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Degree-based trigonometry has representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.tan",
+      "category": "function",
+      "surface": "tan(degrees)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Degree-based trigonometry has representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.asin",
+      "category": "function",
+      "surface": "asin(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Degree output has representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.acos",
+      "category": "function",
+      "surface": "acos(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Degree output has representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.atan",
+      "category": "function",
+      "surface": "atan(number)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Single-argument atan matches the oracle across quadrants and at the poles.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "function.atan2",
+      "category": "function",
+      "surface": "atan2(y, x)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Argument order and degree output have representative oracle coverage.",
+      "tests": [
+        "echo:math"
+      ]
+    },
+    {
+      "id": "function.pow",
+      "category": "function",
+      "surface": "pow(base, exponent)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Integer and fractional exponent cases are oracle-covered.",
+      "tests": [
+        "echo:advanced",
+        "echo:power"
+      ]
+    },
+    {
+      "id": "function.min",
+      "category": "function",
+      "surface": "min(values... / list)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Variadic/list reducers and strict mixed-value edge cases are oracle-covered.",
+      "tests": [
+        "echo:math",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "function.max",
+      "category": "function",
+      "surface": "max(values... / list)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Variadic/list reducers and strict mixed-value edge cases are oracle-covered.",
+      "tests": [
+        "echo:math",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "function.len",
+      "category": "function",
+      "surface": "len(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "List and Unicode-string lengths have representative oracle coverage.",
+      "tests": [
+        "echo:vectors",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.norm",
+      "category": "function",
+      "surface": "norm(vector)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Numeric vectors and strict mixed-value behavior are oracle-covered.",
+      "tests": [
+        "echo:advanced",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "function.cross",
+      "category": "function",
+      "surface": "cross(vector, vector)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative 3D cross products are oracle-covered; 2D scalar behavior has local tests.",
+      "tests": [
+        "echo:vectors",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.concat",
+      "category": "function",
+      "surface": "concat(values...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Lists, nested lists, and scalar operands have representative oracle coverage.",
+      "tests": [
+        "echo:advanced",
+        "echo:vectors"
+      ]
+    },
+    {
+      "id": "function.lookup",
+      "category": "function",
+      "surface": "lookup(key, table)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Interpolation has a committed oracle case.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.search",
+      "category": "function",
+      "surface": "search(needle, haystack, num_returns_per_match, index_col_num)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Scalar, string, vector, missing, and all-match cases have representative oracle coverage.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.str",
+      "category": "function",
+      "surface": "str(values...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Empty, scalar, string, and list representations have representative oracle coverage.",
+      "tests": [
+        "echo:strings",
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "function.chr",
+      "category": "function",
+      "surface": "chr(codepoints... / list)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Scalar, variadic, list, and NUL codepoint behavior is oracle-covered.",
+      "tests": [
+        "echo:advanced",
+        "echo:darkcorners",
+        "echo:compare"
+      ]
+    },
+    {
+      "id": "function.ord",
+      "category": "function",
+      "surface": "ord(string)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative first-codepoint conversion is oracle-covered.",
+      "tests": [
+        "echo:strings",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "function.is_undef",
+      "category": "function",
+      "surface": "is_undef(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative type tests are oracle-covered.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.is_bool",
+      "category": "function",
+      "surface": "is_bool(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative type tests are oracle-covered.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.is_num",
+      "category": "function",
+      "surface": "is_num(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative numeric tests are oracle-covered; NaN rejection has a local regression test.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.is_string",
+      "category": "function",
+      "surface": "is_string(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative type tests are oracle-covered.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.is_list",
+      "category": "function",
+      "surface": "is_list(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative type tests are oracle-covered.",
+      "tests": [
+        "echo:builtins2"
+      ]
+    },
+    {
+      "id": "function.is_function",
+      "category": "function",
+      "surface": "is_function(value)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Function and non-function cases are oracle-covered.",
+      "tests": [
+        "echo:functions"
+      ]
+    },
+    {
+      "id": "function.is_range",
+      "category": "function",
+      "surface": "is_range(value)",
+      "tier": "openrscad_extension",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "OpenRSCAD-only range predicate, exercised by the BOSL2 gate. OpenSCAD has no such function and returns undef, so an oracle case would pin the divergence rather than the behaviour; the extension tier keeps it out of the OpenSCAD exit criterion."
+    },
+    {
+      "id": "function.rands",
+      "category": "function",
+      "surface": "rands(min, max, count, seed)",
+      "tier": "core_2021_01",
+      "status": "permanent_divergence",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Range, reproducibility, and global/seeded advancement semantics are implemented, but the xorshift sequence is not bit-compatible with OpenSCAD.",
+      "repros": [
+        "compat:rands-sequence"
+      ],
+      "rationale": "OpenRSCAD intentionally uses a deterministic xorshift generator; identical upstream pseudo-random values are not promised."
+    },
+    {
+      "id": "function.version",
+      "category": "function",
+      "surface": "version()",
+      "tier": "core_2021_01",
+      "status": "permanent_divergence",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`version()` and `version_num()` report the declared compatibility baseline 2021.01 as [2021, 1, 0] / 20210100; upstream reports whichever OpenSCAD build is running.",
+      "repros": [
+        "compat:version-baseline"
+      ],
+      "rationale": "An engine reports its own version. OpenRSCAD states the OpenSCAD baseline it targets rather than impersonating a specific upstream build, so no oracle value can be matched and a version-gated script may take a different branch."
+    },
+    {
+      "id": "function.version_num",
+      "category": "function",
+      "surface": "version_num(version)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Two/three-component conversion and representative current-version input are oracle-covered.",
+      "tests": [
+        "echo:darkcorners"
+      ]
+    },
+    {
+      "id": "function.parent_module",
+      "category": "function",
+      "surface": "parent_module(index)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Default/indexed lookup and nested user-module stack behavior are oracle-covered.",
+      "tests": [
+        "echo:children"
+      ]
+    },
+    {
+      "id": "special.fa",
+      "category": "special_variable",
+      "surface": "$fa",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Angular fragment control participates in oracle-checked sphere tessellation.",
+      "tests": [
+        "geom:prim_sphere_fs"
+      ]
+    },
+    {
+      "id": "special.fs",
+      "category": "special_variable",
+      "surface": "$fs",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Linear fragment control participates in oracle-checked sphere tessellation.",
+      "tests": [
+        "geom:prim_sphere_fs"
+      ]
+    },
+    {
+      "id": "special.fn",
+      "category": "special_variable",
+      "surface": "$fn",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Explicit fragment counts are oracle-covered across curved primitives and rotate_extrude.",
+      "tests": [
+        "geom:prim_sphere_fn8",
+        "geom:prim_sphere_fn32",
+        "geom:ext_rotate_partial_fn"
+      ]
+    },
+    {
+      "id": "special.t",
+      "category": "special_variable",
+      "surface": "$t",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The animation step defaults to 0, as the oracle reports.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "special.vpr",
+      "category": "special_variable",
+      "surface": "$vpr",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The default viewport rotation matches the oracle.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "special.vpt",
+      "category": "special_variable",
+      "surface": "$vpt",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The default viewport translation matches the oracle.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "special.vpd",
+      "category": "special_variable",
+      "surface": "$vpd",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The default viewport distance matches the oracle.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "special.vpf",
+      "category": "special_variable",
+      "surface": "$vpf",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The default viewport field of view is 22.5, as the oracle reports; it was previously 45.",
+      "tests": [
+        "echo:operators_math"
+      ]
+    },
+    {
+      "id": "special.children",
+      "category": "special_variable",
+      "surface": "$children",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Child-slot counting in user modules is oracle-covered.",
+      "tests": [
+        "echo:children"
+      ]
+    },
+    {
+      "id": "special.parent_modules",
+      "category": "special_variable",
+      "surface": "$parent_modules",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Nested user-module stack depth is oracle-covered.",
+      "tests": [
+        "echo:children"
+      ]
+    },
+    {
+      "id": "special.preview",
+      "category": "special_variable",
+      "surface": "$preview",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Evaluation mode is explicit per host: false for exact render and mesh/2D-vector export, true for F5 preview, PNG rasters, and echo-only runs, matching the oracle on both sides.",
+      "tests": [
+        "geom:preview_branch",
+        "echo:preview_mode"
+      ]
+    },
+    {
+      "id": "module.cube",
+      "category": "module",
+      "surface": "cube(size, center)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positive scalar/vector sizes and centering have committed geometry oracles.",
+      "tests": [
+        "geom:prim_cube",
+        "geom:prim_cube_center"
+      ]
+    },
+    {
+      "id": "module.cube.invalid_dimensions",
+      "category": "module_parameter",
+      "surface": "cube(size <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A zero or negative component yields no geometry, matching upstream.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.sphere.radius",
+      "category": "module",
+      "surface": "sphere(r, $fn/$fa/$fs)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Radius and explicit/adaptive fragment controls have geometry oracles.",
+      "tests": [
+        "geom:prim_sphere_fn8",
+        "geom:prim_sphere_fn32",
+        "geom:prim_sphere_fs"
+      ]
+    },
+    {
+      "id": "module.sphere.diameter",
+      "category": "module_parameter",
+      "surface": "sphere(d=diameter)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`sphere(d=)` matches the oracle and takes precedence over `r`.",
+      "tests": [
+        "geom:prim_diameters"
+      ]
+    },
+    {
+      "id": "module.cylinder.core",
+      "category": "module",
+      "surface": "cylinder(h, r/r1/r2, center, $fn)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Cylinders, cones, centering, the fourth positional center argument, and explicit fragment counts are geometry-oracle covered.",
+      "tests": [
+        "geom:prim_cylinder",
+        "geom:prim_cylinder_center",
+        "geom:prim_cone"
+      ]
+    },
+    {
+      "id": "module.cylinder.diameters",
+      "category": "module_parameter",
+      "surface": "cylinder(d/d1/d2)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`cylinder(d=)`, `d1=`, and `d2=` match the oracle and take precedence over the radii.",
+      "tests": [
+        "geom:prim_diameters"
+      ]
+    },
+    {
+      "id": "module.cylinder.invalid_dimensions",
+      "category": "module_parameter",
+      "surface": "cylinder(h/r/r1/r2 <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Non-positive height, a negative radius, or two zero radii yield no geometry; a single zero radius remains a valid cone.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.polyhedron.basic",
+      "category": "module",
+      "surface": "polyhedron(points, faces)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Indexed triangular faces have a committed geometry oracle.",
+      "tests": [
+        "geom:prim_polyhedron"
+      ]
+    },
+    {
+      "id": "module.polyhedron.winding",
+      "category": "module_parameter",
+      "surface": "polyhedron(faces=...) face orientation",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Faces wind clockwise seen from outside; an inside-out but consistently wound solid is a positive solid to the CSG kernel, so it adds under union and cuts under difference, matching the oracle.",
+      "tests": [
+        "geom:polyhedron_winding"
+      ]
+    },
+    {
+      "id": "module.polyhedron.convexity",
+      "category": "module_parameter",
+      "surface": "polyhedron(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "module.polyhedron.concave_faces",
+      "category": "module_parameter",
+      "surface": "polyhedron() general planar concave faces",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Planar concave faces use projected earcut triangulation; a boolean-sensitive U-prism regression has a committed OpenSCAD geometry oracle.",
+      "tests": [
+        "geom:prim_polyhedron_concave"
+      ]
+    },
+    {
+      "id": "module.polyhedron.triangles_alias",
+      "category": "module_parameter",
+      "surface": "polyhedron(triangles=...)",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The deprecated `triangles=` alias for `faces=` matches the oracle.",
+      "tests": [
+        "geom:polyhedron_triangles"
+      ]
+    },
+    {
+      "id": "module.square",
+      "category": "module",
+      "surface": "square(size, center)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Positive scalar/vector sizes and centering have extrusion-based geometry oracles.",
+      "tests": [
+        "geom:prim_square_ext",
+        "geom:prim_square_center_ext"
+      ]
+    },
+    {
+      "id": "module.square.invalid_dimensions",
+      "category": "module_parameter",
+      "surface": "square(size <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A zero or negative component yields no geometry, matching upstream.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.circle.invalid_radius",
+      "category": "module_parameter",
+      "surface": "circle(r <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A zero or negative radius yields no geometry.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.sphere.invalid_radius",
+      "category": "module_parameter",
+      "surface": "sphere(r <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A zero or negative radius yields no geometry.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.circle.radius",
+      "category": "module",
+      "surface": "circle(r, $fn)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Radius and explicit fragment count have an extrusion-based geometry oracle.",
+      "tests": [
+        "geom:prim_circle_ext"
+      ]
+    },
+    {
+      "id": "module.circle.diameter",
+      "category": "module_parameter",
+      "surface": "circle(d=diameter)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`circle(d=)` matches the oracle and takes precedence over `r`.",
+      "tests": [
+        "geom:prim_diameters"
+      ]
+    },
+    {
+      "id": "module.polygon",
+      "category": "module",
+      "surface": "polygon(points, paths)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Single paths and explicit outer/hole paths have extrusion-based geometry oracles.",
+      "tests": [
+        "geom:prim_polygon_ext",
+        "geom:prim_polygon_hole_ext"
+      ]
+    },
+    {
+      "id": "module.polygon.convexity",
+      "category": "module_parameter",
+      "surface": "polygon(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "module.text.basic",
+      "category": "module",
+      "surface": "text(text, font)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Bundled Liberation Sans/Serif/Mono family and style outlines have geometry oracles.",
+      "tests": [
+        "geom:text_mono",
+        "geom:text_sans_bold",
+        "geom:text_sans_italic",
+        "geom:text_serif"
+      ]
+    },
+    {
+      "id": "module.text.layout",
+      "category": "module_parameter",
+      "surface": "text(size, halign, valign, spacing)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "halign uses the advance width; valign aligns the ink box, not the font ascender/descender, so x-height-only text sits differently from text with ascenders.",
+      "tests": [
+        "geom:text_valign"
+      ]
+    },
+    {
+      "id": "module.text.shaping",
+      "category": "module_parameter",
+      "surface": "text() kerning, ligatures, and complex-script shaping",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Runs are shaped with rustybuzz, the Rust port of the HarfBuzz shaper OpenSCAD uses, so kerning pairs, ligatures and joining scripts match rather than being summed glyph by glyph.",
+      "tests": [
+        "geom:text_shaping"
+      ]
+    },
+    {
+      "id": "module.text.direction_language_script",
+      "category": "module_parameter",
+      "surface": "text(direction, language, script)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "direction selects ltr/rtl/ttb/btt and script/language are passed to the shaper; a vertical run centres each glyph in an OS/2 typographic ascent-to-descent slot and on the column, as upstream.",
+      "tests": [
+        "geom:text_direction"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.core",
+      "category": "module",
+      "surface": "linear_extrude(height, center, twist, scale, slices)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Explicit height, centering, twist, scale, and slices have geometry oracles.",
+      "tests": [
+        "geom:ext_linear",
+        "geom:ext_linear_center",
+        "geom:ext_linear_scale",
+        "geom:ext_linear_slices"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.convexity",
+      "category": "module_parameter",
+      "surface": "linear_extrude(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.segments",
+      "category": "module_parameter",
+      "surface": "linear_extrude(segments=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "segments= subdivides each profile outline, applies without twist, and overrides $fn/$fa/$fs.",
+      "tests": [
+        "geom:ext_linear_segments",
+        "geom:ext_linear_segments_twist"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.implicit_slices",
+      "category": "module_parameter",
+      "surface": "linear_extrude() omitted slices with $fn/$fa/$fs",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "An omitted slice count takes the tighter of the $fa per-slice twist limit and the $fs helical-travel limit, or $fn slices per revolution.",
+      "tests": [
+        "geom:ext_linear_twist",
+        "geom:ext_linear_twist_fn"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.twist_profile",
+      "category": "module_parameter",
+      "surface": "linear_extrude(twist=) profile refinement",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A twisted profile outline is re-tessellated from $fn/$fa/$fs independently of the slice count, apportioning a per-contour segment budget across edges by length.",
+      "tests": [
+        "geom:ext_linear_twist_profile",
+        "geom:ext_linear_twist_shape",
+        "geom:ext_linear_twist_round"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.twist_scale_refinement",
+      "category": "module_parameter",
+      "surface": "linear_extrude(twist=, scale=) combined refinement",
+      "tier": "core_2021_01",
+      "status": "missing",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Twist alone and non-uniform scale alone each follow an exact measured rule, but combining them weights the profile edges the opposite way upstream (the edge that shrinks earns more segments); the mesh reads 0.8% high in volume.",
+      "gap_ids": [
+        "F-G3"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.twist_diagonal",
+      "category": "module_parameter",
+      "surface": "linear_extrude() non-planar wall triangulation",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A non-planar wall quad is split along its shorter diagonal, ties falling back to the wall lean (twist direction, flipped for a hole). Matched per quad against the oracle over 3142 quads, and exact for off-axis, holed, and non-uniformly scaled curved profiles.",
+      "tests": [
+        "geom:ext_linear_twist_hole",
+        "geom:ext_linear_twist_offaxis",
+        "geom:ext_linear_scale_round"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.scale_refinement",
+      "category": "module_parameter",
+      "surface": "linear_extrude(scale=) non-uniform refinement",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A non-uniform scale refines the profile by max(original, scaled) edge length and adds slices from the worst point travel; a uniform scale keeps the walls planar and refines nothing. Triangle counts are pinned, not just volume.",
+      "tests": [
+        "geom:ext_linear_scale_nonuniform",
+        "geom:ext_linear_scale_uniform_tris"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.invalid_height",
+      "category": "module_parameter",
+      "surface": "linear_extrude(height <= 0)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A non-positive height yields no geometry; the children are still evaluated so their echo/assert side effects run.",
+      "tests": [
+        "geom:prim_invalid_dims"
+      ]
+    },
+    {
+      "id": "module.linear_extrude.vector",
+      "category": "module_parameter",
+      "surface": "linear_extrude(v=direction)",
+      "tier": "current_stable",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Post-baseline oblique extrusion along a normalized direction has committed geometry oracles.",
+      "tests": [
+        "geom:ext_linear_v",
+        "geom:ext_linear_v_tilt"
+      ]
+    },
+    {
+      "id": "module.rotate_extrude",
+      "category": "module",
+      "surface": "rotate_extrude(angle, $fn)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Full/partial sweeps, negative-side profiles, over-rotation, axis crossings, and partial fragment counts have geometry oracles.",
+      "tests": [
+        "geom:ext_rotate_full",
+        "geom:ext_rotate_angle",
+        "geom:ext_rotate_negative_x",
+        "geom:ext_rotate_over360",
+        "geom:ext_rotate_partial_fn"
+      ]
+    },
+    {
+      "id": "module.rotate_extrude.convexity",
+      "category": "module_parameter",
+      "surface": "rotate_extrude(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "module.rotate_extrude.start",
+      "category": "module_parameter",
+      "surface": "rotate_extrude(start=...)",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Post-baseline start-angle rotation is implemented and invariant-tested (volume preserved, geometry rotated); the 2024.12 oracle predates the parameter and warns it is unknown, so no oracle case is possible."
+    },
+    {
+      "id": "module.projection",
+      "category": "module",
+      "surface": "projection(cut)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Flat silhouette and Z=0 cut projection have geometry oracles, including nested 2D operations.",
+      "tests": [
+        "geom:d2_projection_flat",
+        "geom:d2_projection_cut",
+        "geom:d2_proj_offset_flat",
+        "geom:d2_proj_offset_cut"
+      ]
+    },
+    {
+      "id": "module.translate",
+      "category": "module",
+      "surface": "translate(v)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "2D/3D vectors and named binding have geometry oracles.",
+      "tests": [
+        "geom:xf_translate",
+        "geom:xf_translate_2d",
+        "geom:xf_translate_named"
+      ]
+    },
+    {
+      "id": "module.rotate",
+      "category": "module",
+      "surface": "rotate(a) / rotate(a, v)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Euler and axis-angle positional/named forms have geometry oracles.",
+      "tests": [
+        "geom:xf_rotate_euler",
+        "geom:xf_rotate_axis",
+        "geom:xf_rotate_named"
+      ]
+    },
+    {
+      "id": "module.scale",
+      "category": "module",
+      "surface": "scale(v)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Vector and scalar broadcast forms have geometry oracles.",
+      "tests": [
+        "geom:xf_scale",
+        "geom:xf_scale_scalar"
+      ]
+    },
+    {
+      "id": "module.resize",
+      "category": "module",
+      "surface": "resize(newsize, auto)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative zero-dimension auto scaling has a geometry oracle.",
+      "tests": [
+        "geom:xf_resize"
+      ]
+    },
+    {
+      "id": "module.resize.convexity",
+      "category": "module_parameter",
+      "surface": "resize(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "module.mirror",
+      "category": "module",
+      "surface": "mirror(v)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative plane reflection has a geometry oracle.",
+      "tests": [
+        "geom:xf_mirror"
+      ]
+    },
+    {
+      "id": "module.multmatrix",
+      "category": "module",
+      "surface": "multmatrix(m)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Named matrix binding and affine shear have a geometry oracle.",
+      "tests": [
+        "geom:xf_multmatrix"
+      ]
+    },
+    {
+      "id": "module.color",
+      "category": "module",
+      "surface": "color(name/hex/vector, alpha)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`color()` by name with alpha and by RGB vector is a preview tint that leaves the mesh unchanged, matching the oracle.",
+      "tests": [
+        "geom:modules_core"
+      ]
+    },
+    {
+      "id": "module.offset",
+      "category": "module",
+      "surface": "offset(r/delta, chamfer, $fn)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Round/radial and delta/chamfer paths, explicit fragments, holes, concavity, and collapse cases have geometry oracles.",
+      "tests": [
+        "geom:d2_offset_r",
+        "geom:d2_offset_delta",
+        "geom:d2_offset_concave_round",
+        "geom:d2_offset_concave_collapse"
+      ]
+    },
+    {
+      "id": "module.union",
+      "category": "module",
+      "surface": "union()",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Overlapping, disjoint, coplanar, nested, and 2D unions have geometry oracles.",
+      "tests": [
+        "geom:bool_union",
+        "geom:bool_union_disjoint",
+        "geom:bool_coplanar",
+        "geom:d2_union"
+      ]
+    },
+    {
+      "id": "module.difference",
+      "category": "module",
+      "surface": "difference()",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "3D/2D difference and empty-tool behavior have geometry oracles.",
+      "tests": [
+        "geom:bool_difference",
+        "geom:bool_diff_empty",
+        "geom:d2_difference_hole"
+      ]
+    },
+    {
+      "id": "module.intersection",
+      "category": "module",
+      "surface": "intersection()",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative and empty intersections have geometry oracles.",
+      "tests": [
+        "geom:bool_intersection",
+        "geom:bool_intersection_empty"
+      ]
+    },
+    {
+      "id": "module.hull",
+      "category": "module",
+      "surface": "hull()",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "2D and multiple 3D hull configurations have geometry oracles.",
+      "tests": [
+        "geom:hullmink_hull_2d",
+        "geom:hullmink_hull_points",
+        "geom:hullmink_hull_spheres"
+      ]
+    },
+    {
+      "id": "module.minkowski.exact",
+      "category": "module",
+      "surface": "minkowski() for 2D, convex 3D, and unions of convex parts",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "2D sums, convex 3D sums, and distribution over explicit unions have geometry oracles.",
+      "tests": [
+        "geom:hullmink_minkowski_2d",
+        "geom:hullmink_minkowski_3d",
+        "geom:minkowski_union"
+      ]
+    },
+    {
+      "id": "module.minkowski.concave_leaf",
+      "category": "module_parameter",
+      "surface": "minkowski() with a genuinely concave 3D leaf",
+      "tier": "core_2021_01",
+      "status": "warned_divergence",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A concave leaf is replaced by its convex hull, with a runtime warning; explicit unions of convex parts remain exact.",
+      "repros": [
+        "compat:minkowski-concave-leaf"
+      ],
+      "gap_ids": [
+        "F-G7"
+      ]
+    },
+    {
+      "id": "module.render",
+      "category": "module",
+      "surface": "render(convexity)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`render(convexity=)` forces an exact sub-render and yields the same geometry as the subtree, matching the oracle.",
+      "tests": [
+        "geom:modules_core"
+      ]
+    },
+    {
+      "id": "module.group",
+      "category": "module",
+      "surface": "group()",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`group()` unions its children like a bare block, matching the oracle.",
+      "tests": [
+        "geom:modules_core"
+      ]
+    },
+    {
+      "id": "module.echo",
+      "category": "module",
+      "surface": "echo(values...) children",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Named/scalar/list/string formatting and child pass-through are exercised throughout the echo oracle suite.",
+      "tests": [
+        "echo:strings",
+        "echo:advanced"
+      ]
+    },
+    {
+      "id": "module.assert",
+      "category": "module",
+      "surface": "assert(condition, message) children",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A passing `assert()` yields its children unchanged, with or without a message, matching the oracle.",
+      "tests": [
+        "geom:modules_core"
+      ]
+    },
+    {
+      "id": "module.children",
+      "category": "module",
+      "surface": "children(index/list/range)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`children()` bare, by index, by index list, and by range all match the oracle.",
+      "tests": [
+        "geom:children_select"
+      ]
+    },
+    {
+      "id": "module.child_legacy",
+      "category": "module",
+      "surface": "child(index)",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Singular child selection; bare child() is the first child alone, where bare children() is all of them.",
+      "tests": [
+        "echo:deprecated_forms",
+        "geom:deprecated_assign_child"
+      ]
+    },
+    {
+      "id": "file.include",
+      "category": "file_semantics",
+      "surface": "include <path>",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Included definitions, assignments, and side effects have an echo oracle.",
+      "tests": [
+        "echo:inc_include"
+      ]
+    },
+    {
+      "id": "file.use",
+      "category": "file_semantics",
+      "surface": "use <path>",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Definition-only loading and suppression of assignments/side effects have an echo oracle.",
+      "tests": [
+        "echo:inc_use"
+      ]
+    },
+    {
+      "id": "file.include_use.raw_path",
+      "category": "file_semantics",
+      "surface": "include/use paths with spaces and punctuation",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Include/use paths are taken raw to the closing bracket, preserving spaces and punctuation, matching the oracle.",
+      "tests": [
+        "echo:inc_include",
+        "echo:inc_raw_path",
+        "echo:inc_use"
+      ]
+    },
+    {
+      "id": "file.relative_resolution",
+      "category": "file_semantics",
+      "surface": "nested include/use/import relative paths",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A relative include resolves against the including file's own directory, not the caller's or the process cwd, matching the oracle.",
+      "tests": [
+        "echo:inc_relative"
+      ]
+    },
+    {
+      "id": "file.openscadpath",
+      "category": "file_semantics",
+      "surface": "OPENSCADPATH library lookup",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "lsp"
+      ],
+      "summary": "A library not found beside the script is resolved from OPENSCADPATH, matching the oracle run with the same directory on its environment.",
+      "tests": [
+        "echo:inc_openscadpath"
+      ]
+    },
+    {
+      "id": "import.stl",
+      "category": "import",
+      "surface": "import(file.stl)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative STL mesh import has a geometry oracle.",
+      "tests": [
+        "geom:import_stl"
+      ]
+    },
+    {
+      "id": "import.off",
+      "category": "import",
+      "surface": "import(file.off)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Representative OFF mesh import has a geometry oracle.",
+      "tests": [
+        "geom:import_off"
+      ]
+    },
+    {
+      "id": "import.amf.basic",
+      "category": "import",
+      "surface": "import(file.amf) basic mesh",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "AMF import matches the oracle, including multiple `<volume>`s sharing one object's vertex list.",
+      "tests": [
+        "geom:import_amf_obj"
+      ]
+    },
+    {
+      "id": "import.3mf.basic",
+      "category": "import",
+      "surface": "import(file.3mf) basic mesh",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A representative compressed 3MF mesh has a geometry oracle.",
+      "tests": [
+        "geom:import_3mf"
+      ]
+    },
+    {
+      "id": "import.convexity",
+      "category": "module_parameter",
+      "surface": "import(convexity=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`convexity=` is accepted as a preview hint and does not change the imported mesh, matching the oracle.",
+      "tests": [
+        "geom:convexity_hints"
+      ]
+    },
+    {
+      "id": "import.obj",
+      "category": "import",
+      "surface": "import(file.obj, convexity)",
+      "tier": "current_stable",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "OBJ import matches the oracle, including 1-based indices and quad faces.",
+      "tests": [
+        "geom:import_amf_obj"
+      ]
+    },
+    {
+      "id": "import.dxf.basic",
+      "category": "import",
+      "surface": "import(file.dxf, convexity) basic entities",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A representative simple 2D DXF import has an extrusion-based geometry oracle.",
+      "tests": [
+        "geom:import_dxf"
+      ]
+    },
+    {
+      "id": "import.dxf.layer",
+      "category": "import",
+      "surface": "import(file.dxf, layer=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Keeps only entities on the named layer; a selector matching nothing yields no geometry.",
+      "tests": [
+        "geom:import_dxf_selectors"
+      ]
+    },
+    {
+      "id": "import.dxf.origin_scale",
+      "category": "import",
+      "surface": "import(file.dxf, origin=..., scale=...)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Places the imported outline as (point - origin) * scale; both are 2D-only, as upstream, and do not affect a mesh import.",
+      "tests": [
+        "geom:import_dxf_selectors"
+      ]
+    },
+    {
+      "id": "import.dxf.curves",
+      "category": "import",
+      "surface": "DXF curve entities and caller fragment controls",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "LINE/ARC/CIRCLE/ELLIPSE/LWPOLYLINE/POLYLINE import, tessellated by the call-site $fn/$fa/$fs. Bulges (group 42) and SPLINE are deliberately not expanded: OpenSCAD 2024.12 imports neither, so expanding them would be a divergence.",
+      "tests": [
+        "geom:import_dxf_curves",
+        "geom:import_dxf_fragments"
+      ]
+    },
+    {
+      "id": "import.svg.basic",
+      "category": "import",
+      "surface": "import(file.svg, convexity) basic paths",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A representative basic SVG path import has an extrusion-based geometry oracle.",
+      "tests": [
+        "geom:import_svg"
+      ]
+    },
+    {
+      "id": "import.svg.layer_id",
+      "category": "import",
+      "surface": "import(file.svg, layer/id=...)",
+      "tier": "current_stable",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "layer= selects an Inkscape layer group by label and id= selects any element by id; either keeps that subtree alone.",
+      "tests": [
+        "geom:import_svg_selectors"
+      ]
+    },
+    {
+      "id": "import.svg.transforms_dpi",
+      "category": "import",
+      "surface": "SVG transforms, dimensions, units, and DPI options",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "translate/scale/rotate/matrix/skew transforms compose down the tree and with an element own transform; a physical width pins the scale, else viewBox units are inches at dpi (default 72), and with no viewBox coordinates are 1:1.",
+      "tests": [
+        "geom:import_svg_transforms",
+        "geom:import_svg_dpi"
+      ]
+    },
+    {
+      "id": "import.svg.structure_style",
+      "category": "import",
+      "surface": "SVG nesting, use, style, and visibility",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The document is walked as a tree: <use> instantiates a referenced element, <defs> draws nothing, display:none hides (attribute or style) while visibility:hidden does not, and an explicit id= overrides display:none but not <defs>.",
+      "tests": [
+        "geom:import_svg_structure",
+        "geom:import_svg_visibility"
+      ]
+    },
+    {
+      "id": "import.amf_3mf.scene_graph",
+      "category": "import",
+      "surface": "AMF/3MF units, objects, components, and build transforms",
+      "tier": "core_2021_01",
+      "status": "permanent_divergence",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "3MF `<build>` items are assembled with their transforms and repeat instancing; upstream ignores `<build>` and imports only the highest-id object. AMF `unit` and `<constellation>` are ignored by both.",
+      "notes": "Multi-object 3MF cannot have a geom oracle case because we deliberately differ there; covered by unit tests in crates/openrscad-geom/src/mesh.rs and documented in COMPAT.md.",
+      "repros": [
+        "compat:3mf-multi-object"
+      ],
+      "rationale": "Silently discarding a user's geometry is the worse failure, and OpenRSCAD's own colour-group 3MF export writes one object per colour, which upstream's rule would make unreadable. Single-object packages are identical either way."
+    },
+    {
+      "id": "import.alias_dxf",
+      "category": "import",
+      "surface": "import_dxf(...) legacy alias",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A plain alias for import(): the format still comes from the file suffix, not the module name.",
+      "tests": [
+        "geom:import_alias_dxf"
+      ]
+    },
+    {
+      "id": "import.alias_stl",
+      "category": "import",
+      "surface": "import_stl(...) legacy alias",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A plain alias for import(): the format still comes from the file suffix, not the module name.",
+      "tests": [
+        "geom:import_alias_stl"
+      ]
+    },
+    {
+      "id": "function.dxf_dim",
+      "category": "function",
+      "surface": "dxf_dim(file, layer, origin, scale, name)",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Reads a DIMENSION measurement, matching on the dimension text and recomputing from the definition points; linear dimensions project onto the group-50 rotation, aligned ones use the plain distance, radius and diameter the centre-to-chord distance.",
+      "tests": [
+        "echo:dxf_query"
+      ]
+    },
+    {
+      "id": "function.dxf_cross",
+      "category": "function",
+      "surface": "dxf_cross(file, layer, origin, scale)",
+      "tier": "deprecated_core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Returns the intersection of two lines on a layer, mapped through (point - origin) * scale; an empty layer selector matches any layer.",
+      "tests": [
+        "echo:dxf_query"
+      ]
+    },
+    {
+      "id": "module.surface.dat",
+      "category": "import",
+      "surface": "surface(file.dat)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Whitespace heightmaps have a committed geometry oracle.",
+      "tests": [
+        "geom:surface_dat"
+      ]
+    },
+    {
+      "id": "module.surface.dat_options",
+      "category": "module_parameter",
+      "surface": "surface(file.dat, center, convexity)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "`center`, `invert`, and `convexity` on a `.dat` heightfield match the oracle (upstream ignores `invert` outside PNG).",
+      "tests": [
+        "geom:surface_options"
+      ]
+    },
+    {
+      "id": "module.surface.png",
+      "category": "import",
+      "surface": "surface(file.png, center, invert, convexity)",
+      "tier": "core_2021_01",
+      "status": "verified",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "PNG heightfields match the oracle, including upstream's `invert`, which offsets the relief by inverting the sample against 1 rather than 255.",
+      "tests": [
+        "geom:surface_png"
+      ]
+    },
+    {
+      "id": "export.stl",
+      "category": "export",
+      "surface": "STL binary/ASCII export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Binary and ASCII STL serialization is implemented and locally round-trip tested; byte identity is outside the compatibility contract. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.off",
+      "category": "export",
+      "surface": "OFF export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "OFF serialization is implemented; color-aware preview output uses compatible extensions where applicable. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.amf",
+      "category": "export",
+      "surface": "AMF export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Basic AMF mesh serialization is implemented. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.3mf",
+      "category": "export",
+      "surface": "3MF export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "3MF package serialization and color groups are implemented and locally integration-tested. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.dxf",
+      "category": "export",
+      "surface": "DXF export of 2D geometry/projection",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.svg",
+      "category": "export",
+      "surface": "SVG export of 2D geometry/projection",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Kernel-aware contour export is wired across first-party hosts; 2D output bytes are not yet upstream-oracle gated. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.png",
+      "category": "export",
+      "surface": "PNG render export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Raster rendering, camera, projection, and image sizing are implemented; GUI/raster pixel parity is outside the core language criterion. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract."
+    },
+    {
+      "id": "export.csg",
+      "category": "export",
+      "surface": "CSG tree export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Serializes the evaluated tree as OpenSCAD .csg -- every module resolved, every transform lowered to multmatrix. Round-trip tested: re-rendering the output reproduces the geometry in both engines. Text is not byte-identical because OpenSCAD omits defaulted parameters and the IR does not record which were written. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract.",
+      "notes": "Like every other export entry this has no .scad-level oracle case, so it stays implemented rather than verified; covered by crates/openrscad-cli/tests/csg_roundtrip.rs."
+    },
+    {
+      "id": "export.suffix_validation",
+      "category": "export",
+      "surface": "output suffix validation",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "An unrecognized or missing -o suffix is rejected before any render, exiting non-zero and writing nothing, matching the 2024.12 binary across eleven suffixes; recognized suffixes match case-insensitively. Unit-tested, but like every other export entry it has no .scad-level oracle case, so it stays implemented rather than verified. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract.",
+      "notes": "CLI workflow parity is tracked separately from .scad program semantics; see Track F."
+    }
   ]
 }

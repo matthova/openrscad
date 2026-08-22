@@ -74,45 +74,35 @@ class S · gap `F-G3` · manifest `module.linear_extrude.twist_scale_refinement`
 The implementation deliberately keeps the twist-only lengths here rather than
 encoding a guess.
 
-**What is now known.** Measuring per-edge counts on `square(10)`, `twist=90`,
-`$fa=12`, `$fs=2` over a 5×5 grid of scale factors (`n_x` = segments on each
-x-aligned edge, `n_y` on each y-aligned):
+**What is now known.** The refinement is a segment *budget* apportioned across
+the profile edges, capped per edge by `$fs`. Both parts have been isolated by
+measurement — set `$fa` low and the budget never binds, leaving the cap; set
+`$fs` low and the cap never binds, leaving the apportionment. Because the cap is
+exactly `ceil(L / $fs)`, an effective length `L` can be read straight off a
+count.
 
-| | sy=0.5 | sy=1 | sy=1.5 | sy=2 | sy=3 |
-|---|---|---|---|---|---|
-| **sx=0.5** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
-| **sx=1** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
-| **sx=1.5** | (6,8) | (6,8) | (7,7) | (9,6) | (10,5) |
-| **sx=2** | (6,9) | (6,9) | (6,9) | (7,7) | (9,6) |
-| **sx=3** | (5,10) | (5,10) | (5,10) | (6,9) | (7,7) |
+*The cap.* For the edge whose own axis does **not** stretch,
+`L = length × max(1, s_perpendicular)` — the scale factor *across* the edge, not
+along it. Every cap-limited measurement fits: with `scale=[1,2]` on a square the
+x-aligned edge gets `L = 20` though it never changes length, and `[1,0.5]`,
+`[0.5,0.5]` and `[2,2]` all land on `length × max(1, s_perp)` too. For the edge
+that *does* stretch, the effective length is neither its own nor its scaled
+length: `[1,2]` gives 12.75 where its own is 10 and its scaled length 20.
 
-- The table is antisymmetric under swapping the axes, as it must be.
-- **Only `max(sx, sy)` matters**, and which axis attains it. Every entry with
-  `sy=2, sx≤1.5` is identical, so the rule cannot be a function of the resulting
-  edge lengths — `max(original, scaled)` is the same for `sx=1` and `sx=1.5`.
-- **The weighting inverts relative to pure scale.** Under `scale=[1,2]` without
-  twist the stretching y-edge takes 10 segments and the x-edge 5; add twist and
-  it becomes 9 and 6 — the edge that does *not* stretch earns more. Confirmed
-  from raw cap coordinates, so it is not an indexing artifact.
-- Scaling *down* alone changes nothing: `[0.2,1]` and `[1,0.5]` both give the
-  pure-twist `(5,5)`. Only a factor above 1 has any effect.
-- Uniform scale ≥1.5 gives `(7,7)` where pure twist gives `(5,5)`, which pins one
-  sub-rule exactly: the `$fs` cap uses the edge's **longest length over the
-  sweep**, `original × max(1, scale)`. That alone does not explain the
-  non-uniform rows, where `n_x` exceeds any such cap.
+*The apportionment.* With `sx = 1` and the budget binding, the x-share is 0.5,
+0.5694, 0.6111 and 0.6361 for `sy` of 1, 1.5, 2 and 2.5. Four shapes were fitted
+against it and all fail: `s_perp/(s_perp + s_own)` (0.6, 0.667, 0.714), the mean
+edge length over the sweep `2/(1 + sy)`, its RMS, and `1/sy`. The measured curve
+sits below the first and crosses the second, so it is not a simple function of
+the swept length.
 
-Sweeping `sx=1` and reading the quotas back out of the tie-blocking (a total of
-28 instead of 30 means both fractional parts were exactly ½):
-
-| max scale | 1 | 1.25 | 1.5 | 1.75 | 2 | 2.5 | 3 | 4 | 6 | 10 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `(n_x, n_y)` | (5,5) | (7,6) | (8,6) | (9,6) | (9,6) | (10,5) | (10,5) | (10,5) | (10,4) | (11,4) |
-| implied `q_x` | 7.5 | — | 8.5 | 9 | 9 | 10 | 10 | 10 | 10.5 | 11 |
-
-`q_x` grows sublinearly in the maximum scale factor and no closed form tried
-(linear, `m/(m+1)`, logarithmic, powers) reproduces all of it; the `m=1.25` row
-sums to 26, which the tie rule does not explain either, so at least one further
-mechanism is involved.
+*What this is worth.* Implementing the perpendicular-axis rule as far as it is
+known was tried and reverted. It makes the **triangle counts match exactly** on
+three of five cases — so the totals and the slice count are right and only the
+split between edges is wrong — and improves volume on four, but regresses the
+fifth (0.01% → 0.07%) and leaves the headline cases at 0.6–1.1%. A partial
+heuristic that cannot be oracle-gated is worse than a documented gap, so the
+implementation keeps the twist-only lengths.
 
 Closes when that mechanism is identified. The per-quad harness that settled
 A-G09 is the right tool — applied to segment counts rather than diagonals — and
@@ -164,22 +154,19 @@ section below for each.
 
 ## Class U — implemented but unproven
 
-Fifty manifest entries are `implemented`: present, locally tested, no known
-difference, but with no committed upstream oracle case. They are not defects and
-they are not evidence. Track F's exit criterion requires every 2021.01 core
-entry to reach `verified`, so each is an atom-shaped unit of measurement work.
+This class was fifty entries and is now **eleven**, none of which a `.scad`
+oracle can reach. Measuring the other thirty-nine turned up two real bugs
+(`$vpf`, and PNG `invert`) and one silent geometry difference that nothing in
+the corpus had exercised (A-G12, below) — which is the point of the class: an
+unproven entry is not a passing entry.
 
-| family | count | examples |
+The eleven that remain are blocked structurally, not by effort:
+
+| family | count | why no oracle case is possible |
 |---|---:|---|
-| syntax | 10 | `if/else`, `for`, `let`, blocks, the four modifiers, comments |
-| module parameters | 13 | `sphere(d=)`, `cylinder(d1/d2)`, every `convexity=`, `text()` layout |
-| export formats | 7 | STL, OFF, AMF, 3MF, DXF, SVG, PNG |
-| special variables | 5 | `$t`, `$vpr`, `$vpt`, `$vpd`, `$vpf` |
-| modules | 5 | `color`, `render`, `group`, `assert`, `children` |
-| functions | 3 | `atan`, `version`, `is_range` (OpenRSCAD extension) |
-| file semantics | 3 | raw include/use paths, relative resolution, `OPENSCADPATH` |
-| imports | 3 | AMF basic, OBJ, `surface()` PNG heightmaps |
-| operators | 1 | vector/matrix arithmetic |
+| export formats | 9 | The only `.scad`-level comparison is byte identity of the output file, which is explicitly outside the compatibility contract. Round-trip and suffix validation are covered by Rust tests. |
+| `rotate_extrude(start=)` | 1 | Post-baseline parameter; the 2024.12 oracle predates it and warns it is unknown. Invariant-tested instead (volume preserved, geometry rotated). |
+| `is_range()` | 1 | An OpenRSCAD extension. OpenSCAD has no such function and returns `undef`, so a golden would pin the divergence rather than the behaviour. Tiered `openrscad_extension`, outside the exit criterion. |
 
 Regenerate the exact list from the manifest:
 
@@ -194,7 +181,10 @@ for f in json.load(open('compatibility/openscad-2021.01.json'))['features']:
 
 Promote an entry by adding an `echo:`/`geom:` case and flipping it to
 `verified`; `compatibility/validate.py` enforces that the linked case and its
-golden both exist.
+golden both exist. A case can declare library directories with
+`// oracle: libs <dir>`, which the harness puts on the oracle's `OPENSCADPATH`
+and on our resolver's search path — that is what makes `OPENSCADPATH` itself
+provable.
 
 ---
 
@@ -615,25 +605,78 @@ preview for analysis and live rendering but exact for its `openrscad.render`
 export command, and `xtask echo`/`xtask geom` match the mode of the oracle
 invocation each one compares against.
 
+### A-G12 — an inside-out `polyhedron` subtracted instead of adding — **closed**
+
+OpenSCAD winds a face **clockwise seen from outside**. Write the opposite
+winding and the solid is inside-out — and a lone one exports with reversed
+normals in *both* engines, so nothing looks wrong. It only becomes visible once
+the mesh reaches the CSG kernel, where upstream treats it as an ordinary
+positive solid and OpenRSCAD treated it as a negative one.
+
+| repro | OpenSCAD | OpenRSCAD (before) |
+|---|---:|---:|
+| inside-out tetra `∪` `cube(3)` | 28.3333 | 25.6667 |
+| `difference() { cube(3); inside-out tetra; }` | 26.8333 | 27.0000 (no cut at all) |
+| inside-out tetra alone | −1.3333 | −1.3333 (agree) |
+
+Both directions are wrong in the way that is hardest to notice: a union *lost*
+volume and a difference *cut nothing*. The fix normalises orientation at the one
+place a mesh enters the kernel — `to_manifold`, in both the C++ and pure-Rust
+backends — so it applies to imported meshes too, and leaves the no-kernel export
+path alone, which is what keeps the lone-solid case matching upstream.
+
+Found by accident: `convexity_hints.scad` was written with the wrong winding, so
+the case failed by 0.014 mm of centroid while every element passed in isolation.
+The composite disagreeing with the sum of its parts was the whole signal.
+
+- **closes when** `corpus/geom/polyhedron_winding.scad` passes. Done —
+  manifest `module.polyhedron.winding`.
+
+### A-I10 — `surface()` inverted a PNG heightfield against the wrong white — **closed**
+
+`surface(png, invert=true)` maps grey `g` to height `(1 − g)/2.55` upstream, not
+the `(255 − g)/2.55` a reader would expect — upstream inverts the sample against
+normalised white while dividing a 0–255 byte. Verified on two independent
+images, including the cell-average vertices `surface` interpolates.
+
+| repro | OpenSCAD z | OpenRSCAD z (before) |
+|---|---|---|
+| `surface("heights.png", invert=true);` | `[−79.0392, 0.3922]` | `[20.5686, 100]` |
+| `surface("heights.png");` | `[−1, 78.4314]` | identical |
+
+The relief is bit-identical either way — the two differ by a constant
+`254/2.55` in z — so matching upstream costs nothing in shape and makes the
+placement exact. `invert` on a `.dat` heightfield is a no-op in both engines.
+
+- **closes when** `corpus/geom/surface_png.scad` passes. Done — manifest
+  `module.surface.png`.
+
 ## Ledger
 
 | class | atoms | meaning |
 |---|---:|---|
 | S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
-| P — permanent | 1 | A-L02 |
+| P — permanent | 3 | A-L02, plus `version()` and 3MF `<build>` assembly |
 | M — missing | 0 | — |
-| U — unproven | 50 | manifest `implemented` entries |
-| closed | 28 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I09, A-T01, A-T02, A-X01, A-X02 |
+| U — unproven | 11 | manifest `implemented` entries, all structurally unoracleable |
+| closed | 30 | A-L01, A-G01…A-G07, A-G09, A-G10, A-G12, A-L03…A-L06, A-L08, A-I01…A-I10, A-T01, A-T02, A-X01, A-X02 |
 
 **Class M is empty**: every missing surface is closed. One silent atom remains
-(A-G11), one warned divergence, and one permanent one; the 50 `unproven` entries
-are measurement work, not defects.
+(A-G11); the eleven `unproven` entries are the residue that no `.scad` oracle can
+reach, not measurement work still owed.
 
-Six of the atoms were found by measuring rather than by reading docs:
-A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the
-twist family. Fixing one atom exactly is what exposed the next three — each was
-hidden behind an error an order of magnitude larger.
+Eight of the atoms were found by measuring rather than by reading docs:
+A-X01/A-X02 while writing this register, A-G09/A-G10/A-L08 while closing the
+twist family, and A-G12/A-I10 while clearing Class U. Fixing one atom exactly is
+what exposed the next three — each was hidden behind an error an order of
+magnitude larger.
+
+Clearing Class U is the sharpest argument for the class existing. Thirty-nine
+entries were "implemented, locally tested, no known difference". Writing the
+oracle case for them found `$vpf` defaulting to 45 instead of 22.5, PNG `invert`
+off by a constant, and a `polyhedron` that silently subtracted itself from a
+union. None of those had a bug report; they had an absence of measurement.
 
 Measuring also *removed* work three times. The register listed DXF bulges and
 splines, AMF units, and AMF constellations as gaps; the oracle shows OpenSCAD
