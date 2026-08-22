@@ -1573,14 +1573,35 @@ impl Interp<'_> {
     }
 
     fn b_import(&mut self, args: &[Arg]) -> EResult<Node> {
-        let m = self.bind_named(&["file"], args)?;
+        let m = self.bind_named(&["file", "convexity"], args)?;
         let path = match m.get("file") {
             Some(Value::Str(s)) => s.clone(),
             _ => return Ok(Node::Empty),
         };
         let format = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        let text_arg = |key: &str| match m.get(key) {
+            Some(Value::Str(s)) => Some(s.clone()),
+            _ => None,
+        };
+        // `origin` and `scale` place the imported outline as
+        // `(point - origin) * scale`; both are 2D-only upstream.
+        let origin = match m.get("origin") {
+            Some(Value::Vector(v)) => {
+                let g = |i: usize| v.get(i).and_then(Value::as_number).unwrap_or(0.0);
+                [g(0), g(1)]
+            }
+            _ => [0.0, 0.0],
+        };
+        let scale = m.get("scale").and_then(Value::as_number).unwrap_or(1.0);
         match self.resolver.load_bytes(&path, &self.cur_dir) {
-            Some(data) => Ok(Node::Import { data, format }),
+            Some(data) => Ok(Node::Import {
+                data,
+                format,
+                layer: text_arg("layer"),
+                id: text_arg("id"),
+                origin,
+                scale,
+            }),
             None => {
                 self.warn(format!("Can't open import file '{path}'"));
                 Ok(Node::Empty)

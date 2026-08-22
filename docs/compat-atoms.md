@@ -168,20 +168,17 @@ fixture before it becomes a proper atom with numbers.
 
 | id | surface | gap | manifest |
 |---|---|---|---|
-| A-I03 | `import(…, layer=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.layer` |
-| A-I04 | `import(…, origin=, scale=)` for DXF — accepted, ignored | `F-I2` | `import.dxf.origin_scale` |
 | A-I05 | DXF bulges, splines, ellipses, caller fragment controls | `F-I2` | `import.dxf.curves` |
-| A-I06 | SVG `layer`/`id` selectors — accepted, ignored | `F-I2` | `import.svg.layer_id` |
 | A-I07 | SVG transforms, units, DPI | `F-I2` | `import.svg.transforms_dpi` |
 | A-I08 | SVG nesting, `<use>`, style, visibility | `F-I2` | `import.svg.structure_style` |
 | A-I09 | AMF/3MF units, object index spaces, components, build transforms | `F-I3` | `import.amf_3mf.scene_graph` |
 | A-T01 | `text()` kerning, ligatures, complex-script shaping | `F-I1` | `module.text.shaping` |
 | A-T02 | `text(direction=, language=, script=)` — RTL only reverses codepoints | `F-I1` | `module.text.direction_language_script` |
 
-An accepted-and-ignored parameter (A-I03, A-I04, A-I06) is arguably class S, not
-M: the import succeeds and returns the wrong contents. They are listed here
-because that is how the manifest currently classifies them; re-classifying is a
-decision for the `F-I2` batch, not a documentation change.
+A-I05 and A-I07…A-I09 are format-parser breadth. The accepted-and-ignored
+*parameters* that used to sit alongside them — A-I03, A-I04, A-I06 — are closed;
+they were arguably class S rather than M, since the import succeeded and
+returned the wrong contents.
 
 ---
 
@@ -222,6 +219,29 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-I03, A-I04, A-I06 — import selectors were accepted and ignored — **closed**
+
+| id | repro | OpenSCAD | before | now |
+|---|---|---:|---:|---|
+| A-I03 | `import("layers.dxf", layer="A")` | 16 | 20 (whole file) | 16 |
+| A-I04 | `…, origin=[1,1], scale=2` | 64 | 20 (untransformed) | 64 |
+| A-I06 | `import("layers.svg", layer="LayerA")` | 1.991 | 3.609 (whole file) | 1.991 |
+
+was M (arguably S — the import succeeded and returned the wrong contents) ·
+gap `F-I2` · manifest `import.dxf.layer`, `import.dxf.origin_scale`,
+`import.svg.layer_id`, all now `verified`. Guarded by
+`corpus/geom/import_{dxf,svg}_selectors.scad` with committed fixtures, `tris`
+pinned.
+
+Placement is `(point - origin) * scale`, confirmed by bounding box and not just
+area: `origin=[1,1], scale=2` moves a 0…4 square to −2…6. Both are 2D-only, as
+upstream — a mesh import ignores them.
+
+SVG selection pulls the matching subtree out of the source text before the
+element walk, rather than teaching that walk to track nesting. The walk is flat,
+and making it hierarchical is the separate A-I08; extracting the subtree first
+gets `layer=`/`id=` exactly right without waiting on it.
 
 ### A-L03…A-L06, A-I01, A-I02 — the deprecated 2021.01 forms — **closed**
 
@@ -546,9 +566,9 @@ invocation each one compares against.
 | S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 10 | A-I03…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
+| M — missing | 7 | A-I05, A-I07…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 18 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01, A-I02, A-X02 |
+| closed | 21 | A-L01, A-G01…A-G04, A-G05…A-G07, A-G09, A-G10, A-L03…A-L06, A-L08, A-I01…A-I04, A-I06, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the

@@ -43,10 +43,11 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   ```
 
 - **Import parsers accept the headline formats, not every documented construct.**
-  DXF/SVG selectors and options (`layer`, `id`, transforms/DPI), SVG nesting,
-  transforms, use/style/visibility, DXF bulges/splines/ellipses, and caller curve
-  resolution remain incomplete. 3MF/AMF import does not yet assemble units,
-  independent object index spaces, components, or build-item transforms.
+  Selectors and placement (`layer`, `id`, `origin`, `scale`) now work; what
+  remains is SVG nesting/`<use>`/style/visibility and general element
+  transforms, DXF bulges/splines/ellipses, and caller curve resolution. 3MF/AMF
+  import does not yet assemble units, independent object index spaces,
+  components, or build-item transforms.
 
 - **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
   mesh and vector formats, but it does not serialize the evaluated model as a
@@ -92,9 +93,20 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **29/29**, geometry **100/100**, and BOSL2
+The current gates are `corpus/echo` **29/29**, geometry **102/102**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Import selectors and placement are honoured.** `layer=` keeps a single DXF
+  layer or Inkscape SVG layer, `id=` selects any SVG element by id, and
+  `origin`/`scale` place a 2D import as `(point - origin) * scale` — all four
+  were previously accepted and silently ignored, so a selective import returned
+  the whole drawing. `origin`/`scale` remain 2D-only, as upstream.
+
+  ```scad
+  import("part.dxf", layer="outline", origin=[1,1], scale=2);
+  import("art.svg", id="badge");
+  ```
 
 - **The retained deprecated 2021.01 forms are implemented.** `assign`, `child`,
   `import_stl`, `import_dxf`, `dxf_dim`, and `dxf_cross` all work, each with the

@@ -155,6 +155,14 @@ pub enum Node {
     Import {
         data: Vec<u8>,
         format: String,
+        /// 2D selectors: keep only the named DXF layer / SVG layer or element.
+        /// `None` takes everything.
+        layer: Option<String>,
+        id: Option<String>,
+        /// 2D placement, applied as `(point - origin) * scale`. Ignored by the
+        /// 3D formats, as upstream.
+        origin: Vec2,
+        scale: f64,
     },
     /// `projection(cut)` — flatten a 3D child to 2D. `cut=true` sections at z=0.
     Projection {
