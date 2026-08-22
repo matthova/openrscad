@@ -1,0 +1,27 @@
+ECHO: "if-taken"
+ECHO: "else-taken"
+ECHO: "chained"
+ECHO: "range", 0
+ECHO: "range", 1
+ECHO: "range", 2
+ECHO: "list", 7
+ECHO: "list", "x"
+ECHO: "list", [1, 2]
+ECHO: "step", 0
+ECHO: "step", 2
+ECHO: "step", 4
+ECHO: "step", 6
+ECHO: "cartesian", 0, "a"
+ECHO: "cartesian", 0, "b"
+ECHO: "cartesian", 1, "a"
+ECHO: "cartesian", 1, "b"
+ECHO: "let", 1, 2
+ECHO: "after-let", 100
+ECHO: "block", 5
+ECHO: "comments", 1
+ECHO: "comment-in-expr", 3
+ECHO: "bind", 1, 2, 3
+ECHO: "bind", 1, 2, 3
+ECHO: "bind", 1, 2, 3
+ECHO: "bind", 1, 2, undef
+ECHO: "fn-bind", [1, 9], [1, 2], [4, 5]

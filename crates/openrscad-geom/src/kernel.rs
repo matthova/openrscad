@@ -85,7 +85,12 @@ mod rust_manifold {
         // vertices, leaving the mesh manifold by position but not by index. The
         // kernel needs shared edges, so without this the pure-Rust (wasm) path
         // would reject a lot of geometry the native path accepts.
-        let welded = m.welded(1e-7);
+        let mut welded = m.welded(1e-7);
+        // An inside-out but consistently wound solid — the classic mis-wound
+        // `polyhedron` — is a positive solid to the kernel upstream, not a
+        // negative one. Orient it before the boolean sees it, so it adds under
+        // union and cuts under difference instead of doing the reverse.
+        welded.ensure_outward();
         let m = &welded;
         let mut vert_properties = Vec::with_capacity(m.verts.len() * 3);
         for v in &m.verts {
@@ -208,7 +213,10 @@ mod manifold_backend {
         // Weld coincident-but-unshared vertices first: many BOSL2 primitives emit
         // revolution seams and cap rings as duplicate vertices, leaving the mesh
         // manifold by position but not by index. The kernel needs shared edges.
-        let welded = m.welded(1e-7);
+        let mut welded = m.welded(1e-7);
+        // See the pure-Rust backend: an inside-out solid is still a positive
+        // solid to the kernel upstream.
+        welded.ensure_outward();
         let m = &welded;
         let mut props: Vec<f64> = Vec::with_capacity(m.verts.len() * 3);
         for v in &m.verts {
@@ -289,6 +297,93 @@ mod manifold_backend {
                 return Ok(Mesh::new());
             }
             Ok(from_manifold(&Manifold::hull_pts(&points)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tetrahedron with outward-facing normals, or its inside-out twin.
+    fn tetra(inside_out: bool) -> Mesh {
+        let verts = vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 0.0, 2.0],
+        ];
+        let mut tris = vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+        if inside_out {
+            for t in &mut tris {
+                t.swap(1, 2);
+            }
+        }
+        Mesh { verts, tris }
+    }
+
+    fn unit_cube(at: f64) -> Mesh {
+        let mut m = Mesh::new();
+        let (a, b) = (at, at + 3.0);
+        for &z in &[0.0, 3.0] {
+            for &(x, y) in &[(a, 0.0), (b, 0.0), (b, 3.0), (a, 3.0)] {
+                m.verts.push([x, y, z]);
+            }
+        }
+        for &[i, j, k] in &[
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 6],
+            [1, 6, 5],
+            [2, 3, 7],
+            [2, 7, 6],
+            [3, 0, 4],
+            [3, 4, 7],
+        ] {
+            m.tris.push([i, j, k]);
+        }
+        m
+    }
+
+    /// An inside-out but consistently wound solid is a *positive* solid to the
+    /// kernel, as it is upstream — so it adds under union rather than cancelling
+    /// the volume it overlaps. Gated here as well as by `geom:polyhedron_winding`
+    /// because the corpus only runs the native backend, and this is the one the
+    /// browser uses.
+    #[test]
+    fn rust_kernel_orients_an_inside_out_solid() {
+        let k = RustManifoldKernel::new();
+        let expected = 27.0 + 4.0 / 3.0;
+        for inside_out in [false, true] {
+            let out = k
+                .union(vec![tetra(inside_out), unit_cube(6.0)])
+                .expect("union of two disjoint solids");
+            assert!(
+                (out.volume() - expected).abs() < 1e-6,
+                "inside_out={inside_out}: got {}, want {expected}",
+                out.volume()
+            );
+        }
+    }
+
+    /// The same solid used as a difference tool must cut, not add.
+    #[test]
+    fn rust_kernel_inside_out_tool_still_cuts() {
+        let k = RustManifoldKernel::new();
+        let base = unit_cube(0.0).volume();
+        for inside_out in [false, true] {
+            let out = k
+                .difference(unit_cube(0.0), vec![tetra(inside_out)])
+                .expect("difference by an overlapping tool");
+            assert!(
+                out.volume() < base - 1e-6,
+                "inside_out={inside_out}: tool removed nothing ({} vs {base})",
+                out.volume()
+            );
         }
     }
 }

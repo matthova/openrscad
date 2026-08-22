@@ -72,6 +72,11 @@ fn first_i32(props: &[(i32, String)], code: i32) -> Option<i32> {
         .map(|f| f as i32)
 }
 
+/// Upper bound on the points one arc may tessellate to. Far above any fragment
+/// count a real drawing asks for; it exists so a malformed sweep cannot turn
+/// into an unbounded allocation.
+const MAX_ARC_STEPS: u32 = 1 << 20;
+
 /// Tessellate a circle/arc sweep from `a0`..`a1` (radians) about `center`.
 fn arc_points(
     center: Point2,
@@ -88,7 +93,17 @@ fn arc_points(
     let steps = if closed {
         n
     } else {
-        ((n as f64) * (sweep.abs() / (2.0 * PI))).ceil().max(1.0) as u32
+        // A hand-rolled DXF can carry a nonsense sweep (a fuzz case reached
+        // 1e23 radians). Unclamped that saturates the cast at `u32::MAX`, which
+        // then overflows `steps + 1` and would try to allocate the points
+        // anyway, so bound it: no real arc needs more than a full circle's
+        // worth of fragments.
+        let turns = if sweep.is_finite() {
+            sweep.abs() / (2.0 * PI)
+        } else {
+            1.0
+        };
+        ((n as f64) * turns).ceil().clamp(1.0, MAX_ARC_STEPS as f64) as u32
     };
     let count = if closed { steps } else { steps + 1 };
     (0..count)
@@ -210,12 +225,23 @@ pub fn import_dxf(bytes: &[u8], layer: Option<&str>, frags: FragmentSpec) -> Vec
                     first_f64(props, 20).unwrap_or(0.0),
                 ];
                 let r = first_f64(props, 40).unwrap_or(0.0);
-                let a0 = first_f64(props, 50).unwrap_or(0.0).to_radians();
-                let mut a1 = first_f64(props, 51).unwrap_or(0.0).to_radians();
+                // DXF arc angles are degrees in [0, 360); a file carrying
+                // anything else is out of spec, so fold it back rather than
+                // sweeping the difference literally.
+                let deg = |code| {
+                    let d = first_f64(props, code).unwrap_or(0.0);
+                    if d.is_finite() {
+                        d.rem_euclid(360.0)
+                    } else {
+                        0.0
+                    }
+                };
+                let a0 = deg(50).to_radians();
+                let mut a1 = deg(51).to_radians();
                 if a1 <= a0 {
                     a1 += 2.0 * PI; // DXF arcs go CCW
                 }
-                if r > 0.0 {
+                if r > 0.0 && r.is_finite() && c.iter().all(|v| v.is_finite()) {
                     let pts = arc_points(c, r, a0, a1, false, frags);
                     for w in pts.windows(2) {
                         segs.push((w[0], w[1]));
@@ -247,9 +273,11 @@ pub fn import_dxf(bytes: &[u8], layer: Option<&str>, frags: FragmentSpec) -> Vec
                     let steps = if full {
                         n
                     } else {
+                        // Bounded for the same reason as `arc_points`: a
+                        // malformed span must not become an unbounded count.
                         ((n as f64) * ((t1 - t0).abs() / (2.0 * PI)))
                             .ceil()
-                            .max(1.0) as u32
+                            .clamp(1.0, MAX_ARC_STEPS as f64) as u32
                     };
                     let count = if full { steps } else { steps + 1 };
                     let pts: Vec<Point2> = (0..count)
@@ -1406,6 +1434,43 @@ mod robustness_tests {
     /// byte by byte and slices as it goes, which is exactly how a multi-byte
     /// character gets cut in half — this covers that class directly, since
     /// `cargo fuzz` needs a nightly toolchain and does not run in `cargo test`.
+    /// A DXF entity may carry any number its file format allows, including ones
+    /// no drawing would contain. `cargo fuzz` reached an `ARC` with an end angle
+    /// of 1e23 degrees: the sweep scaled the fragment count past `u32::MAX`, the
+    /// saturating cast then overflowed `steps + 1`, and even without the
+    /// overflow the point buffer would have been unbounded. Angles are now
+    /// folded into a single turn and the step count is clamped.
+    #[test]
+    fn dxf_absurd_arc_angles_are_bounded() {
+        let dxf = |a0: &str, a1: &str| {
+            format!(
+                "0\nSECTION\n2\nENTITIES\n0\nARC\n8\n0\n10\n0\n20\n0\n\
+                 40\n10\n50\n{a0}\n51\n{a1}\n0\nENDSEC\n0\nEOF\n"
+            )
+            .into_bytes()
+        };
+        for (a0, a1) in [
+            ("0", "99999999999999999999999"),
+            ("-99999999999999999999999", "0"),
+            ("0", "1e400"), // parses to infinity
+            ("nan", "90"),  // does not parse at all
+            ("350", "10"),  // ordinary wrap-around arc
+        ] {
+            let out = import_dxf(&dxf(a0, a1), None, FragmentSpec::default());
+            let points: usize = out.iter().map(|c| c.len()).sum();
+            assert!(
+                points <= MAX_ARC_STEPS as usize + 1,
+                "arc {a0}..{a1} produced {points} points"
+            );
+            assert!(
+                out.iter()
+                    .flatten()
+                    .all(|p| p.iter().all(|v| v.is_finite())),
+                "arc {a0}..{a1} produced a non-finite point"
+            );
+        }
+    }
+
     #[test]
     fn importers_survive_arbitrary_bytes() {
         let multibyte = "<svg><g transform=\"translate(1,2)\"><rect id=\"日本語テキスト\"                          width=\"4\" height=\"4\"/></g></svg>";

@@ -57,7 +57,18 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   minkowski() { linear_extrude(6) polygon([[0,0],[24,0],[24,6],[6,6],[6,24],[0,24]]); sphere(2); }
   ```
 
-## Deliberate divergences
+## Permanent divergences
+
+- **`version()` reports the baseline OpenRSCAD targets, not an upstream build.**
+  `version()` is `[2021, 1, 0]` and `version_num()` is `20210100`, where the
+  oracle reports whichever OpenSCAD is installed (2024.12.17 → `20241217`). An
+  engine reports its own version; impersonating a specific upstream build would
+  be the actual bug. The consequence worth knowing is that a script gating on
+  `version_num()` may take a different branch here.
+
+  ```scad
+  echo(version(), version_num());   // [2021, 1, 0], 20210100
+  ```
 
 - **A multi-object 3MF imports every object; OpenSCAD imports one.** Upstream
   2024.12 returns only the highest-`id` object in `<resources>` and ignores
@@ -74,8 +85,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   import("two-objects.3mf");   // both objects here; the larger-id one upstream
   ```
 
-## Permanent divergences
-
 - **`rands()` is not bit-compatible.** OpenRSCAD uses an xorshift PRNG; values
   are reproducible and global/seeded advance semantics match, but the sequence
   differs from OpenSCAD's generator. This is intentional.
@@ -86,9 +95,41 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **29/29**, geometry **111/111**, and BOSL2
+The current gates are `corpus/echo` **34/34**, geometry **122/122**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **An inside-out `polyhedron` adds instead of subtracting.** OpenSCAD winds a
+  face clockwise seen from outside; the opposite winding makes the solid
+  inside-out. A lone one exports with reversed normals in both engines, so it
+  looks fine — but once it reaches the CSG kernel upstream treats it as an
+  ordinary positive solid, where OpenRSCAD treated it as a negative one. A union
+  *lost* the volume (28.33 → 25.67 on a tetrahedron plus a cube) and a difference
+  cut nothing at all. Orientation is now normalised at the single point a mesh
+  enters the kernel, in both the native C++ and pure-Rust backends, so imported
+  meshes get the same repair. Gated by `corpus/geom/polyhedron_winding.scad`.
+
+  ```scad
+  // faces given the wrong way round; still adds, as upstream
+  polyhedron([[0,0,0],[2,0,0],[0,2,0],[0,0,2]], [[0,2,1],[0,1,3],[1,2,3],[0,3,2]]);
+  translate([6,0,0]) cube(3);
+  ```
+
+- **`surface()` reads PNG heightfields, and inverts them the way upstream does.**
+  `invert=true` maps grey `g` to `(1 - g)/2.55`, not the `(255 - g)/2.55` a
+  reader would expect: upstream inverts the sample against normalised white
+  while dividing a 0–255 byte. The relief is identical either way — the two
+  differ by a constant `254/2.55` in z — so matching it costs nothing in shape
+  and makes the placement exact. `invert` on a `.dat` heightfield is a no-op in
+  both engines. Gated by `corpus/geom/surface_png.scad` and `surface_options.scad`.
+
+  ```scad
+  surface("heights.png", invert = true);   // z in [-79.04, 0.39], as upstream
+  ```
+
+- **`$vpf` defaults to 22.5.** It was 45 — the number a renderer would assume
+  for a field of view, and not what upstream reports. `$t`, `$vpr`, `$vpt` and
+  `$vpd` were already right. Gated by `corpus/echo/operators_math.scad`.
 
 - **`.csg` tree export works.** `-o out.csg` serializes the evaluated model the
   way OpenSCAD does: every module call resolved, every expression evaluated, and

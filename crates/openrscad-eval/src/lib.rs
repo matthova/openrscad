@@ -484,7 +484,8 @@ fn eval_program_impl(
         ]),
     );
     globals.insert("$vpd".to_string(), Value::Number(140.0));
-    globals.insert("$vpf".to_string(), Value::Number(45.0));
+    // 22.5 degrees, as upstream reports it; not the 45 a renderer might assume.
+    globals.insert("$vpf".to_string(), Value::Number(22.5));
     // A `$`-named override (e.g. `$t` for animation, `$fn`) seeds the global
     // special-variable frame rather than a top-level assignment.
     for (name, value) in overrides {
@@ -2861,7 +2862,12 @@ fn png_heightmap(bytes: &[u8], invert: bool) -> Result<Vec<Vec<f64>>, String> {
             };
             let mut z = luma / 2.55; // 0..255 -> 0..100
             if invert {
-                z = 100.0 - z;
+                // Upstream inverts the *sample* against 1, not against 255, so
+                // an inverted heightfield lands at `(1 - luma) / 2.55` — a hair
+                // below zero rather than up at 100. Measured over two images:
+                // the relief is identical either way, just offset by 254/2.55,
+                // so this matches OpenSCAD at no cost to the shape.
+                z = (1.0 - luma) / 2.55;
             }
             row.push(z);
         }

@@ -55,16 +55,30 @@ Each manifest entry has exactly one status:
 
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
-| `xtask echo` | 29/29 | selected expression, scope, comprehension, and builtin behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 111/111 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask echo` | 34/34 | selected expression, scope, comprehension, builtin, and file-resolution behavior | complete syntax/builtin/diagnostic coverage |
+| `xtask geom` | 122/122 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
 | `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
-| Rust workspace tests | 234 tests | local invariants and host integration | upstream equivalence |
+| Rust workspace tests | 265 tests | local invariants and host integration | upstream equivalence |
 
-The executable manifest currently classifies 189 surfaces: 134 `verified`, 52
-`implemented` but not yet oracle-proven, 1 `missing`, one warned divergence,
-and one permanent divergence. Of those, 184 belong to the 2021.01 core or its
+The executable manifest currently classifies 190 surfaces: 174 `verified`, 11
+`implemented` but not oracle-proven, 1 `missing`, one warned divergence, and
+three permanent divergences. Of those, 185 belong to the 2021.01 core or its
 retained deprecated surface. Every confirmed difference is decomposed into a
 measured repro in the [compatibility atom register](../compat-atoms.md).
+
+The 11 that are still only `implemented` are blocked structurally rather than by
+effort: nine export formats, whose only `.scad`-level comparison would be byte
+identity (explicitly outside the contract); `rotate_extrude(start=)`, which the
+selected oracle predates; and `is_range()`, an OpenRSCAD extension the oracle
+reports as unknown. Everything else in the 2021.01 core is now `verified` or a
+documented divergence.
+
+Proving the other 39 was not bookkeeping. It found three real differences that
+no corpus case had ever touched: `$vpf` defaulting to 45 instead of 22.5, PNG
+`surface(invert=true)` inverting against 255 where upstream inverts against 1,
+and a mis-wound `polyhedron` that *subtracted* itself from a union instead of
+adding (and cut nothing at all as a difference tool). That last one is the
+strongest evidence for the `implemented` status existing at all.
 
 The geometry oracle compares volume (±0.1%), bounding box and centroid
 (±0.01 mm), components, and manifoldness. It does **not** compare bytes, vertex
@@ -93,9 +107,9 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
   completions, and web completions. The tables already drift: implemented
   `surface`, `rands`, `version`, and other entries are absent or incomplete.
 - Geometry goldens exercise the native C++ kernel and 3D mesh metrics. They do
-  not yet oracle 2D contours/DXF/SVG bytes, diagnostics, or the Rust/Wasm kernel.
-- Import fixtures are deliberately simple. They do not exercise scene graphs,
-  units, transforms, layers, or compound paths.
+  not yet oracle 2D contours/DXF/SVG bytes or diagnostics. The Rust/Wasm kernel
+  is covered by differential and targeted unit tests, not by the corpus, so a
+  backend-specific fix needs its own test — as the winding repair did.
 
 ## Execution plan
 
@@ -159,6 +173,16 @@ Rust/Wasm kernel tests. No volume-changing fix lands with only a unit test.
 Use small authored fixtures and exported metrics. Do not import implementation
 details or tests from OpenSCAD source.
 
+### F5 — clear the unproven class
+
+~~Promote every `implemented` 2021.01 core entry to `verified` or to a documented
+divergence.~~ Complete except for entries no `.scad` oracle can reach (the nine
+export formats, `rotate_extrude(start=)`, and the `is_range` extension). This
+pass added 13 oracle cases, an `// oracle: libs <dir>` directive so the harness
+can put a directory on the oracle's `OPENSCADPATH` and prove library resolution,
+and fixed the three differences it uncovered (`$vpf`, PNG `invert`, polyhedron
+winding).
+
 ### F4 — optional compatibility tails
 
 After the 2021.01 manifest is fully classified, decide deprecated aliases,
@@ -179,8 +203,13 @@ M10 is complete only when all of the following are CI-enforced:
 - `COMPAT.md`, completion metadata, and the manifest cannot drift without a CI
   failure.
 
-Passing 111/111 or 505/513 remains useful evidence, but completion is defined by
+Passing 122/122 or 505/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
+
+**Where this stands:** the first criterion is met apart from F-G3 (the one
+remaining `missing` entry) and the F-G7 decision; there are no other silent
+differences, and every remaining `implemented` entry has a stated structural
+reason. The open items are the two below, not a backlog of unmeasured surface.
 
 ## Completed during the initial Track F pass
 

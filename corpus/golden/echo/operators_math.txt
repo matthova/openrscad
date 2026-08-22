@@ -1,0 +1,12 @@
+ECHO: "add", [5, 7, 9]
+ECHO: "sub", [-3, -3, -3]
+ECHO: "neg", [-1, -2, -3]
+ECHO: "dot", 32
+ECHO: "scale", [2, 4, 6], [2, 4, 6], [0.5, 1, 1.5]
+ECHO: "matmul", [[19, 22], [43, 50]]
+ECHO: "matvec", [3, 7]
+ECHO: "vecmat", [4, 6]
+ECHO: "matadd", [[6, 8], [10, 12]]
+ECHO: "atan", 45, -45, 0, 90
+ECHO: "$t", 0
+ECHO: "viewport", [55, 0, 25], [0, 0, 0], 140, 22.5
