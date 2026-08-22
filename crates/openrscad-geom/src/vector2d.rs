@@ -903,7 +903,9 @@ fn walk_shapes(text: &str, select: Option<(Option<&str>, Option<&str>)>) -> Vec<
     let bytes = text.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] != b'<' {
+        // `<` and `>` are ASCII, so a match is always a char boundary; the
+        // guard keeps the slice below safe on arbitrary bytes regardless.
+        if bytes[i] != b'<' || !text.is_char_boundary(i) {
             i += 1;
             continue;
         }
@@ -1037,7 +1039,10 @@ fn walk_shapes(text: &str, select: Option<(Option<&str>, Option<&str>)>) -> Vec<
 fn svg_subtree(text: &str, layer: Option<&str>, id: Option<&str>) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
-    while let Some(rel) = text[i..].find('<') {
+    while i <= text.len() && text.is_char_boundary(i) {
+        let Some(rel) = text[i..].find('<') else {
+            break;
+        };
         let start = i + rel;
         let Some(rel_end) = text[start..].find('>') else {
             break;
@@ -1064,6 +1069,12 @@ fn svg_subtree(text: &str, layer: Option<&str>, id: Option<&str>) -> Option<Stri
             let open = format!("<{name}");
             let (mut depth, mut j) = (1usize, end + 1);
             while j < bytes.len() {
+                // Slicing at a byte that is not a char boundary panics, and the
+                // bytes here are arbitrary user input (found by fuzzing).
+                if !text.is_char_boundary(j) {
+                    j += 1;
+                    continue;
+                }
                 if text[j..].starts_with(&close) {
                     depth -= 1;
                     if depth == 0 {
@@ -1383,5 +1394,50 @@ mod tests {
             "area {}",
             net_area(&back).abs()
         );
+    }
+}
+
+#[cfg(test)]
+mod robustness_tests {
+    use super::*;
+
+    /// Both importers take user-supplied bytes straight from `import()`, so
+    /// neither may panic on rubbish. The tree walk added for transforms scans
+    /// byte by byte and slices as it goes, which is exactly how a multi-byte
+    /// character gets cut in half — this covers that class directly, since
+    /// `cargo fuzz` needs a nightly toolchain and does not run in `cargo test`.
+    #[test]
+    fn importers_survive_arbitrary_bytes() {
+        let multibyte = "<svg><g transform=\"translate(1,2)\"><rect id=\"日本語テキスト\"                          width=\"4\" height=\"4\"/></g></svg>";
+        let mut cases: Vec<Vec<u8>> = vec![
+            Vec::new(),
+            b"<".to_vec(),
+            b"<svg".to_vec(),
+            b"<svg><g transform=\"".to_vec(),
+            b"<svg><g transform=\"rotate(\"".to_vec(),
+            b"<svg><use href=\"#a\" id=\"a\"/></svg>".to_vec(), // self-reference
+            b"<svg><g><g><g><rect/>".to_vec(),                  // unclosed nesting
+            multibyte.as_bytes().to_vec(),
+            vec![0xff, 0xfe, 0x3c, 0x73, 0x76, 0x67, 0x3e], // invalid UTF-8 lead
+        ];
+        // Every truncation of the multi-byte document, which walks the cut
+        // through the middle of each character.
+        for n in 0..multibyte.len() {
+            cases.push(multibyte.as_bytes()[..n].to_vec());
+        }
+        // And the same bytes with a lone continuation byte spliced in.
+        for n in (0..multibyte.len()).step_by(7) {
+            let mut v = multibyte.as_bytes()[..n].to_vec();
+            v.push(0x9f);
+            v.extend_from_slice(&multibyte.as_bytes()[n..]);
+            cases.push(v);
+        }
+        for bytes in &cases {
+            let _ = import_svg(bytes, None, None, 72.0);
+            let _ = import_svg(bytes, Some("L1"), None, 72.0);
+            let _ = import_svg(bytes, None, Some("a"), 72.0);
+            let _ = import_dxf(bytes, None, FragmentSpec::default());
+            let _ = import_dxf(bytes, Some("0"), FragmentSpec::default());
+        }
     }
 }
