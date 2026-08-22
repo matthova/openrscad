@@ -900,22 +900,11 @@ pub fn flat_mesh(contours: &[Contour]) -> Mesh {
 /// Without twist there is no refinement at all unless `segments=` asks for it:
 /// a straight prism's walls are planar, so extra points would only add
 /// triangles. This is why `$fn=40` alone leaves `square(10)` a 4-gon.
-fn contour_segments(
-    contour: &[Point2],
-    segments: u32,
-    frags: FragmentSpec,
-    twisting: bool,
-) -> Vec<u32> {
-    let n = contour.len();
-    let lens: Vec<f64> = (0..n)
-        .map(|i| {
-            let (a, b) = (contour[i], contour[(i + 1) % n]);
-            (b[0] - a[0]).hypot(b[1] - a[1])
-        })
-        .collect();
+fn contour_segments(lens: &[f64], segments: u32, frags: FragmentSpec, refining: bool) -> Vec<u32> {
+    let n = lens.len();
     let budget_total = if segments > 0 {
         segments as f64
-    } else if !twisting {
+    } else if !refining {
         return vec![1; n];
     } else if frags.fn_ > 0.0 {
         frags.fn_
@@ -982,7 +971,7 @@ fn contour_segments(
             }
         }
     }
-    if segments == 0 && frags.fn_ <= 0.0 && frags.fs > 0.0 {
+    if segments == 0 && frags.fn_ <= 0.0 && frags.fs > 0.0 && refining {
         for i in 0..n {
             let cap = (lens[i] / frags.fs).ceil().max(1.0) as u32;
             out[i] = out[i].min(cap).max(1);
@@ -991,20 +980,54 @@ fn contour_segments(
     out
 }
 
+/// Whether a `scale` bends the walls. A uniform scale keeps every wall planar —
+/// a frustum's faces are flat — so OpenSCAD refines nothing for it, however far
+/// from 1 it is. A non-uniform one does bend them, and is refined like a twist.
+fn non_uniform(scale: Point2) -> bool {
+    scale[0] != scale[1]
+}
+
 /// Resample every contour so each edge carries its [`contour_segments`] count.
+///
+/// The length an edge is measured by depends on what is bending the wall, and
+/// only two of the three cases are known:
+///
+/// * twisting — the edge's own length, verified against the oracle;
+/// * non-uniform scale alone — `max(original, scaled)`, likewise verified: the
+///   edge that stretches earns proportionally more segments;
+/// * both at once — upstream weights the edges the *other* way round (the edge
+///   that shrinks gets more), which no measured rule yet explains, so this keeps
+///   the twist-only lengths rather than guessing. See A-G10 in
+///   `docs/compat-atoms.md`.
 fn refine_contours(
     contours: &[Contour],
     segments: u32,
     frags: FragmentSpec,
-    twisting: bool,
+    twist: f64,
+    scale: Point2,
 ) -> Vec<Contour> {
+    let twisting = twist != 0.0;
+    let refining = twisting || non_uniform(scale);
     contours
         .iter()
         .map(|c| {
             if c.len() < 2 {
                 return c.clone();
             }
-            let counts = contour_segments(c, segments, frags, twisting);
+            let n = c.len();
+            let lens: Vec<f64> = (0..n)
+                .map(|i| {
+                    let (a, b) = (c[i], c[(i + 1) % n]);
+                    let plain = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    if twisting {
+                        plain
+                    } else {
+                        let scaled = ((b[0] - a[0]) * scale[0]).hypot((b[1] - a[1]) * scale[1]);
+                        plain.max(scaled)
+                    }
+                })
+                .collect();
+            let counts = contour_segments(&lens, segments, frags, refining);
             if counts.iter().all(|&k| k <= 1) {
                 return c.clone();
             }
@@ -1028,26 +1051,60 @@ fn refine_contours(
 /// `$fa` degrees, and no slice may move the outermost profile point further
 /// than `$fs` along its helical path. `$fn`, when set, replaces both with a
 /// plain "`$fn` slices per full revolution".
-fn implicit_slices(twist: f64, height: f64, rmax: f64, frags: FragmentSpec) -> u32 {
-    if twist == 0.0 {
+/// Layers a twisted and/or non-uniformly scaled extrusion is swept in when
+/// `slices=` is omitted.
+///
+/// Twist and scale each impose their own count and the larger wins. For twist,
+/// two limits whichever is tighter: no slice may turn more than `$fa` degrees,
+/// and no slice may move the outermost point further than `$fs` along its
+/// helical path. For a non-uniform scale, no slice may move a profile point
+/// further than `$fs` along its straight path to the scaled position — `$fa`
+/// plays no part, having no angle to bound. `$fn`, when set, replaces both with
+/// a flat count.
+fn implicit_slices(
+    twist: f64,
+    height: f64,
+    rmax: f64,
+    scale: Point2,
+    max_scale_travel: f64,
+    frags: FragmentSpec,
+) -> u32 {
+    let twisting = twist != 0.0;
+    let scaling = non_uniform(scale);
+    if !twisting && !scaling {
         return 1;
     }
     if frags.fn_ > 0.0 {
-        return ((frags.fn_ * twist.abs() / 360.0).ceil() as u32).max(1);
+        // `$fn` slices per full revolution for a twist; a bare non-uniform
+        // scale has no revolution, so it takes `$fn` outright.
+        let by_twist = if twisting {
+            (frags.fn_ * twist.abs() / 360.0).ceil()
+        } else {
+            0.0
+        };
+        let by_scale = if scaling { frags.fn_ } else { 0.0 };
+        return (by_twist.max(by_scale) as u32).max(1);
     }
-    let arc = rmax * twist.abs().to_radians();
-    let helix = arc.hypot(height.abs());
-    let by_angle = if frags.fa > 0.0 {
-        (twist.abs() / frags.fa).ceil()
-    } else {
-        f64::INFINITY
-    };
-    let by_length = if frags.fs > 0.0 {
-        (helix / frags.fs).ceil()
-    } else {
-        f64::INFINITY
-    };
-    (by_angle.min(by_length) as u32).max(1)
+    let mut slices = 1.0f64;
+    if twisting {
+        let arc = rmax * twist.abs().to_radians();
+        let helix = arc.hypot(height.abs());
+        let by_angle = if frags.fa > 0.0 {
+            (twist.abs() / frags.fa).ceil()
+        } else {
+            f64::INFINITY
+        };
+        let by_length = if frags.fs > 0.0 {
+            (helix / frags.fs).ceil()
+        } else {
+            f64::INFINITY
+        };
+        slices = slices.max(by_angle.min(by_length));
+    }
+    if scaling && frags.fs > 0.0 {
+        slices = slices.max((max_scale_travel.hypot(height.abs()) / frags.fs).ceil());
+    }
+    (slices as u32).max(1)
 }
 
 /// `linear_extrude` of the contours to a mesh, cutting out holes (even-odd) in
@@ -1065,14 +1122,20 @@ pub fn linear_extrude(
 ) -> Mesh {
     // Twisting bends the walls, so the profile is resampled before the caps are
     // triangulated — OpenSCAD's caps carry the refined points too.
-    let refined = refine_contours(contours, segments, frags, twist != 0.0);
+    let refined = refine_contours(contours, segments, frags, twist, scale);
     let slices = slices.unwrap_or_else(|| {
         let rmax = refined
             .iter()
             .flatten()
             .map(|p| p[0].hypot(p[1]))
             .fold(0.0f64, f64::max);
-        implicit_slices(twist, height, rmax, frags)
+        // How far the worst-placed profile point travels to its scaled position.
+        let travel = refined
+            .iter()
+            .flatten()
+            .map(|p| (p[0] * (scale[0] - 1.0)).hypot(p[1] * (scale[1] - 1.0)))
+            .fold(0.0f64, f64::max);
+        implicit_slices(twist, height, rmax, scale, travel, frags)
     });
     let (points, ranges, cap_tris) = prepare(&refined);
     let mut mesh = Mesh::new();
@@ -1100,13 +1163,13 @@ pub fn linear_extrude(
 
     // Walls: each contour range forms a loop at every layer.
     //
-    // A twisted quad is not planar, so its two diagonals enclose *different*
-    // volumes — on a 32-gon twisted by exactly one vertex step, one diagonal
-    // reproduces the prism exactly and the other cuts ~1.3% off it. Which one
-    // is correct depends on how the wall leans, i.e. on the twist direction
-    // and on whether this contour is an outer (CCW) or a hole (CW), since a
-    // hole's indices run the other way round. Split along `a-c` when those
-    // agree and `b-d` when they do not.
+    // A twisted or non-uniformly scaled quad is not planar, so its two diagonals
+    // enclose *different* volumes — on a 32-gon twisted by exactly one vertex
+    // step, one reproduces the prism exactly and the other cuts ~1.3% off it.
+    // OpenSCAD splits along the **shorter** diagonal, falling back to the wall's
+    // lean only when the two are equal. Matched per quad against the oracle over
+    // 3142 quads spanning positive and negative twist, off-axis profiles, pure
+    // scale, and a 720-degree sweep.
     for &(start, len) in &ranges {
         let area2: f64 = (0..len)
             .map(|k| {
@@ -1116,14 +1179,28 @@ pub fn linear_extrude(
             })
             .sum();
         let ccw = area2 >= 0.0;
+        // Ties are pervasive — any profile symmetric about the sweep leaves the
+        // two diagonals exactly equal — and they break by which way the wall
+        // leans: the twist direction, flipped for a hole because its indices run
+        // the other way round.
         let lean_ac = (twist >= 0.0) == ccw;
+        let dsq = |p: u32, q: u32| {
+            let (p, q) = (mesh.verts[p as usize], mesh.verts[q as usize]);
+            (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)
+        };
         for layer in 0..slices {
             for k in 0..len {
                 let i = start + k;
                 let j = start + (k + 1) % len;
                 let (a, b) = (ring(layer, i), ring(layer, j));
                 let (cc, d) = (ring(layer + 1, j), ring(layer + 1, i));
-                if lean_ac {
+                let (ac, bd) = (dsq(a, cc), dsq(b, d));
+                let split_ac = if (ac - bd).abs() <= 1e-9 * ac.max(bd) {
+                    lean_ac
+                } else {
+                    ac < bd
+                };
+                if split_ac {
                     mesh.tris.push([a, b, cc]);
                     mesh.tris.push([a, cc, d]);
                 } else {
@@ -1385,6 +1462,21 @@ mod extrude_refinement_tests {
         vec![[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]]
     }
 
+    /// Edge lengths of a closed contour, as `refine_contours` computes them for
+    /// the twist case.
+    fn lens(c: &[Point2]) -> Vec<f64> {
+        (0..c.len())
+            .map(|i| {
+                let (a, b) = (c[i], c[(i + 1) % c.len()]);
+                (b[0] - a[0]).hypot(b[1] - a[1])
+            })
+            .collect()
+    }
+
+    fn segs(c: &[Point2], segments: u32, frags: FragmentSpec, refining: bool) -> Vec<u32> {
+        contour_segments(&lens(c), segments, frags, refining)
+    }
+
     /// Every expectation below was read off OpenSCAD 2024.12.17 by exporting the
     /// mesh and counting the points on each profile edge.
     #[test]
@@ -1393,23 +1485,23 @@ mod extrude_refinement_tests {
         // 7.5, and the four-way tie for the last two segments goes unawarded —
         // 28, not 30.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 0.01), true),
+            segs(&square(10.0), 0, spec(0.0, 12.0, 0.01), true),
             vec![7, 7, 7, 7]
         );
         // Unequal edges split the same budget unevenly and do reach 30.
         assert_eq!(
-            contour_segments(&rect(10.0, 3.0), 0, spec(0.0, 12.0, 0.01), true),
+            segs(&rect(10.0, 3.0), 0, spec(0.0, 12.0, 0.01), true),
             vec![12, 3, 12, 3]
         );
         // A short edge still takes one segment, and that shrinks the pool the
         // long edges draw from (14, not 15).
         assert_eq!(
-            contour_segments(&rect(100.0, 2.0), 0, spec(0.0, 12.0, 0.01), true),
+            segs(&rect(100.0, 2.0), 0, spec(0.0, 12.0, 0.01), true),
             vec![14, 1, 14, 1]
         );
         // Halving $fa doubles the budget.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(0.0, 6.0, 0.01), true),
+            segs(&square(10.0), 0, spec(0.0, 6.0, 0.01), true),
             vec![15, 15, 15, 15]
         );
     }
@@ -1418,22 +1510,22 @@ mod extrude_refinement_tests {
     fn fs_caps_each_edge_and_fn_replaces_the_budget() {
         // $fs=2 over a 10-long edge allows 5, below the $fa budget of 7.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 2.0), true),
+            segs(&square(10.0), 0, spec(0.0, 12.0, 2.0), true),
             vec![5, 5, 5, 5]
         );
         // The cap is a ceiling, so 10/4 = 2.5 rounds up to 3.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(0.0, 12.0, 4.0), true),
+            segs(&square(10.0), 0, spec(0.0, 12.0, 4.0), true),
             vec![3, 3, 3, 3]
         );
         // $fn replaces the budget and disables the $fs cap.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(8.0, 12.0, 4.0), true),
+            segs(&square(10.0), 0, spec(8.0, 12.0, 4.0), true),
             vec![2, 2, 2, 2]
         );
         // A budget below the edge count still leaves one segment per edge.
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(3.0, 12.0, 2.0), true),
+            segs(&square(10.0), 0, spec(3.0, 12.0, 2.0), true),
             vec![1, 1, 1, 1]
         );
     }
@@ -1441,16 +1533,16 @@ mod extrude_refinement_tests {
     #[test]
     fn segments_overrides_everything_and_applies_without_twist() {
         assert_eq!(
-            contour_segments(&square(10.0), 8, spec(40.0, 12.0, 2.0), true),
+            segs(&square(10.0), 8, spec(40.0, 12.0, 2.0), true),
             vec![2, 2, 2, 2]
         );
         // No twist: `segments=` still refines, but `$fn` alone does not.
         assert_eq!(
-            contour_segments(&square(10.0), 8, spec(0.0, 12.0, 2.0), false),
+            segs(&square(10.0), 8, spec(0.0, 12.0, 2.0), false),
             vec![2, 2, 2, 2]
         );
         assert_eq!(
-            contour_segments(&square(10.0), 0, spec(40.0, 12.0, 2.0), false),
+            segs(&square(10.0), 0, spec(40.0, 12.0, 2.0), false),
             vec![1, 1, 1, 1]
         );
     }
@@ -1461,22 +1553,107 @@ mod extrude_refinement_tests {
         let r = 10.0f64.hypot(10.0);
         // $fa=12 caps the twist per slice: ceil(90/12) = 8, tighter than the
         // helix limit of 13.
-        assert_eq!(implicit_slices(90.0, 10.0, r, spec(0.0, 12.0, 2.0)), 8);
+        assert_eq!(
+            implicit_slices(90.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 12.0, 2.0)),
+            8
+        );
         // At $fa=6 the angle limit relaxes to 15 and the helix limit binds.
-        assert_eq!(implicit_slices(90.0, 10.0, r, spec(0.0, 6.0, 2.0)), 13);
-        assert_eq!(implicit_slices(360.0, 10.0, r, spec(0.0, 6.0, 2.0)), 45);
-        assert_eq!(implicit_slices(720.0, 10.0, r, spec(0.0, 6.0, 2.0)), 89);
+        assert_eq!(
+            implicit_slices(90.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 6.0, 2.0)),
+            13
+        );
+        assert_eq!(
+            implicit_slices(360.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 6.0, 2.0)),
+            45
+        );
+        assert_eq!(
+            implicit_slices(720.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 6.0, 2.0)),
+            89
+        );
         // $fn is a flat count per full revolution, rounded up.
-        assert_eq!(implicit_slices(90.0, 10.0, r, spec(40.0, 12.0, 2.0)), 10);
-        assert_eq!(implicit_slices(30.0, 10.0, r, spec(8.0, 12.0, 2.0)), 1);
+        assert_eq!(
+            implicit_slices(90.0, 10.0, r, [1.0, 1.0], 0.0, spec(40.0, 12.0, 2.0)),
+            10
+        );
+        assert_eq!(
+            implicit_slices(30.0, 10.0, r, [1.0, 1.0], 0.0, spec(8.0, 12.0, 2.0)),
+            1
+        );
         // Sign of the twist does not change the count.
-        assert_eq!(implicit_slices(-90.0, 10.0, r, spec(0.0, 12.0, 2.0)), 8);
+        assert_eq!(
+            implicit_slices(-90.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 12.0, 2.0)),
+            8
+        );
         // No twist, no slicing.
-        assert_eq!(implicit_slices(0.0, 10.0, r, spec(0.0, 12.0, 2.0)), 1);
+        assert_eq!(
+            implicit_slices(0.0, 10.0, r, [1.0, 1.0], 0.0, spec(0.0, 12.0, 2.0)),
+            1
+        );
+    }
+
+    /// A non-uniform scale bends the walls the way a twist does, so it refines
+    /// too — measured against OpenSCAD 2024.12.17. The length that earns an edge
+    /// its share is `max(original, scaled)`: under `scale=[1,2]` the y-aligned
+    /// edges stretch to 20 and take twice the share of the x-aligned ones.
+    #[test]
+    fn non_uniform_scale_refines_by_the_stretched_edge_length() {
+        let sq = square(10.0);
+        let stretched: Vec<f64> = vec![10.0, 20.0, 10.0, 20.0];
+        assert_eq!(
+            contour_segments(&stretched, 0, spec(0.0, 12.0, 2.0), true),
+            vec![5, 10, 5, 10]
+        );
+        // A uniform scale keeps the walls planar, so nothing is refined however
+        // far from 1 it is.
+        assert!(!non_uniform([0.5, 0.5]));
+        assert!(!non_uniform([2.0, 2.0]));
+        assert!(non_uniform([1.0, 2.0]));
+        // With no twist and a uniform scale there is nothing to refine.
+        assert_eq!(segs(&sq, 0, spec(0.0, 12.0, 2.0), false), vec![1, 1, 1, 1]);
     }
 
     #[test]
-    fn twisted_walls_pick_the_diagonal_that_matches_the_lean() {
+    fn non_uniform_scale_adds_slices_from_the_travel_distance() {
+        let r = 10.0f64.hypot(10.0);
+        // The far corner travels hypot(10*(1-0.2), 10*(1-2)) = 12.806, and with
+        // height 10 that is a 16.25-long path: ceil(16.25/2) = 9.
+        let travel = (10.0f64 * 0.8).hypot(10.0);
+        assert_eq!(
+            implicit_slices(0.0, 10.0, r, [0.2, 2.0], travel, spec(0.0, 12.0, 2.0)),
+            9
+        );
+        // Height drives it too.
+        assert_eq!(
+            implicit_slices(0.0, 100.0, r, [0.2, 2.0], travel, spec(0.0, 12.0, 2.0)),
+            51
+        );
+        // `$fa` has no angle to bound here, so only `$fs` matters.
+        assert_eq!(
+            implicit_slices(0.0, 10.0, r, [0.2, 2.0], travel, spec(0.0, 6.0, 2.0)),
+            9
+        );
+        // `$fn` replaces the count outright.
+        assert_eq!(
+            implicit_slices(0.0, 10.0, r, [0.2, 2.0], travel, spec(8.0, 12.0, 2.0)),
+            8
+        );
+        // Uniform scale adds none.
+        assert_eq!(
+            implicit_slices(0.0, 10.0, r, [0.5, 0.5], 0.0, spec(0.0, 12.0, 2.0)),
+            1
+        );
+        // Twist and scale each propose a count; the larger wins.
+        assert_eq!(
+            implicit_slices(90.0, 10.0, r, [0.2, 2.0], travel, spec(0.0, 12.0, 2.0)),
+            9
+        );
+    }
+
+    /// The shorter diagonal is not merely a heuristic here: on a 32-gon twisted
+    /// by exactly one vertex step per slice the solid is still a prism, and only
+    /// one diagonal reproduces it. Both twist directions must land on it.
+    #[test]
+    fn twisted_walls_pick_the_shorter_diagonal() {
         // A 32-gon twisted by exactly one vertex step per slice is still a
         // prism; the wrong diagonal shaves ~1.3% off its volume.
         let n = 32;

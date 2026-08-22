@@ -18,35 +18,14 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **Twisted extrudes of off-axis or holed profiles triangulate the walls
-  differently.** A twisted wall quad is non-planar, so its two diagonals enclose
-  different volumes. The split now follows the twist direction and contour
-  winding — exact for profiles that straddle the Z axis, still 0.6% high for a
-  hole and 1.3% for a profile translated off the axis. The vertex positions match
-  OpenSCAD exactly in these cases; only the triangulation differs.
+- **`linear_extrude` combining twist with a non-uniform scale refines the
+  profile differently.** Twist alone and non-uniform scale alone each have a
+  measured, exact rule, but applying both at once weights the profile edges the
+  *other* way round upstream — the edge that shrinks earns more segments, not
+  fewer — which no rule yet explains. The mesh reads 0.8% high in volume.
 
   ```scad
-  linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
-  linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
-  ```
-
-- **Non-uniform `scale` does not refine the profile or add slices.** OpenSCAD
-  treats a non-uniform scale like a twist — it re-tessellates the outline and
-  adds slices. Alone this is volume-neutral and only changes the triangle count;
-  combined with twist it reads 0.8% high. Uniform scale is unaffected.
-
-  ```scad
-  linear_extrude(height=10, scale=[0.2,2]) square(10);        // 596 tris vs 12
-  linear_extrude(height=7, twist=200, scale=[0.4,1.6]) square([8,5]);
-  ```
-
-- **Unsupported export suffixes silently produce binary STL.** `-o out.csg` writes
-  STL bytes named `.csg` and exits 0 rather than serializing a CSG tree, and any
-  unrecognized suffix does the same; OpenSCAD rejects an invalid suffix outright.
-
-  ```sh
-  openrscad -o out.csg model.scad   # binary STL, no warning
-  openrscad -o out.foo model.scad   # binary STL, no warning
+  linear_extrude(height=7, twist=200, scale=[0.4,1.6], center=true) square([8,5]);
   ```
 
 ## Missing or partial compatibility
@@ -75,7 +54,8 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 - **OpenSCAD-style CSG tree export is absent.** OpenRSCAD can export rendered
   mesh and vector formats, but it does not serialize the evaluated model as a
-  `.csg` operation tree.
+  `.csg` operation tree. `-o out.csg` now fails with a format-specific error
+  rather than silently writing STL bytes under that name, so the gap is loud.
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
   505/513 pinned blocks across 15 files. The expected failures are
@@ -116,9 +96,51 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **27/27**, geometry **92/92**, and BOSL2
+The current gates are `corpus/echo` **27/27**, geometry **97/97**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **Non-planar extrude walls are split along the shorter diagonal.** A twisted
+  or non-uniformly scaled wall quad is not planar, so its two diagonals enclose
+  different volumes — on a 32-gon twisted by one vertex step per slice, one
+  reproduces the prism exactly and the other cuts 1.3% off. OpenSCAD picks the
+  shorter one per quad, falling back to the wall's lean (the twist direction,
+  flipped for a hole) only when the two are exactly equal, which is the common
+  case on symmetric profiles. Matched per quad against the oracle over 3142
+  quads. This closed the last three known silent geometry differences at once:
+  holed profiles (was 0.6% high), profiles translated off the Z axis (1.3%), and
+  non-uniformly scaled curved profiles (0.13%).
+
+  ```scad
+  linear_extrude(height=10, twist=90) difference(){ square(10); translate([3,3]) square(4); }
+  linear_extrude(height=10, twist=90, slices=4) translate([20,0]) square(10);
+  ```
+
+- **Non-uniform `scale` refines the profile and adds slices.** OpenSCAD treats
+  a non-uniform scale like a twist: the outline is re-tessellated and extra
+  slices are swept, while a uniform scale keeps every wall planar and refines
+  nothing however far from 1 it is. An edge earns its share of the segment
+  budget by `max(original, scaled)` length, and the slice count comes from how
+  far the worst-placed profile point travels to its scaled position,
+  `ceil(hypot(travel, height) / $fs)`, with `$fn` replacing it outright. This is
+  volume-neutral on its own, so the two corpus cases pin `tris` as well —
+  596 triangles for the scaled square, 12 for the uniform frustum.
+
+  ```scad
+  linear_extrude(height=10, scale=[0.2,2]) square(10);  // 596 triangles, as upstream
+  linear_extrude(height=10, scale=0.5) square(10);      // 12, unrefined
+  ```
+
+- **Unusable export suffixes are rejected.** An unrecognized or missing `-o`
+  suffix now exits non-zero and writes nothing, matching OpenSCAD, instead of
+  silently emitting binary STL under whatever name was asked for. Validation
+  happens before evaluation, so a typo costs nothing on a heavy model, and
+  recognized suffixes match case-insensitively (`out.STL` is an STL).
+
+  ```sh
+  openrscad -o out.foo model.scad   # error: invalid output suffix 'foo'
+  openrscad -o out.csg model.scad   # error: CSG tree export is not supported yet
+  ```
 
 - **Non-positive dimensions yield no geometry.** Zero or negative `cube`/`square`
   components, `sphere`/`circle` radii, `cylinder` height or radii, and

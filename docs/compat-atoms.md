@@ -61,79 +61,63 @@ Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
 These are the release blockers. Each produces a wrong answer with no warning on
 stdout or stderr.
 
-### A-G09 — twisted extrudes of off-axis or holed profiles pick the wrong wall diagonal
+### A-G11 — twist combined with a non-uniform scale refines the profile differently
 
-A twisted wall quad is not planar, so its two diagonals enclose different
-volumes. The split now follows the twist direction and the contour winding,
-which is exact for profiles that straddle the Z axis — but not yet for a profile
-translated away from it, or for a hole.
-
-| repro | OpenSCAD | OpenRSCAD | delta |
-|---|---:|---:|---:|
-| `linear_extrude(height=10,twist=90) difference(){square(10);translate([3,3])square(4);}` | 847.626 | 842.424 | +0.61% |
-| `linear_extrude(height=10,twist=90,slices=4) translate([20,0]) square(10);` | 987.383 | 1000.14 | +1.29% |
-| `linear_extrude(height=10,twist=90,slices=4,segments=8) translate([20,0]) square(10);` | 1006.52 | 1038.41 | +3.17% |
-
-The vertex sets are *identical* to OpenSCAD's in these cases — only the
-triangulation differs — so the segment and slice counts are right and this is
-purely the diagonal rule. No single global rule fits: forcing either diagonal,
-or choosing the shorter one per quad, is worse overall, and on the holed case
-OpenSCAD disagrees with our choice on only half the hole's quads. It evidently
-uses a local criterion that has not been identified.
-
-class S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`. Closes
-when the per-quad criterion is identified, gated by holed and off-axis twisted
-corpus cases.
-
-### A-G10 — non-uniform `scale` does not refine the profile or add slices
-
-Non-uniform scaling makes the walls non-planar in the same way twist does, and
-OpenSCAD refines for it. OpenRSCAD only refines for twist.
+Twist alone and non-uniform scale alone each have an exact, measured rule (A-G07,
+A-G10). Applying both at once follows neither.
 
 | repro | OpenSCAD | OpenRSCAD |
-|---|---|---|
-| `linear_extrude(height=10, scale=[0.2,2]) square(10);` | 596 tris (30 profile segments, 9 slices) | 12 tris (4 segments, 1 slice) |
-| `linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true,$fa=8,$fs=1.5) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
+|---|---:|---:|
+| `$fa=8;$fs=1.5; linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
 
-Scale alone is volume-neutral (the walls stay ruled surfaces, so 833.333 either
-way) and only the triangle count differs; combined with twist it moves the
-volume. Uniform scale correctly refines nothing.
+class S · gap `F-G3` · manifest `module.linear_extrude.twist_scale_refinement`.
+The implementation deliberately keeps the twist-only lengths here rather than
+encoding a guess.
 
-Partially characterised: the slice count is
-`ceil(hypot(max travel of a profile point, height) / $fs)`, verified at four
-heights and `$fs` values. The per-edge refinement uses `max(original, scaled)`
-edge length rather than the twist rule's budget apportionment, and the combined
-twist+scale case does not yet fit either. class S · gap `F-G3` · manifest
-`module.linear_extrude.scale_refinement`.
+**What is now known.** Measuring per-edge counts on `square(10)`, `twist=90`,
+`$fa=12`, `$fs=2` over a 5×5 grid of scale factors (`n_x` = segments on each
+x-aligned edge, `n_y` on each y-aligned):
 
-### A-X01 — `-o out.csg` silently writes binary STL
+| | sy=0.5 | sy=1 | sy=1.5 | sy=2 | sy=3 |
+|---|---|---|---|---|---|
+| **sx=0.5** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
+| **sx=1** | (5,5) | (5,5) | (8,6) | (9,6) | (10,5) |
+| **sx=1.5** | (6,8) | (6,8) | (7,7) | (9,6) | (10,5) |
+| **sx=2** | (6,9) | (6,9) | (6,9) | (7,7) | (9,6) |
+| **sx=3** | (5,10) | (5,10) | (5,10) | (6,9) | (7,7) |
 
-| | |
-|---|---|
-| repro | `openrscad -o out.csg model.scad` where `model.scad` is `cube(3);` |
-| OpenSCAD | writes the CSG tree: `cube(size = [3, 3, 3], center = false);` |
-| OpenRSCAD | writes 684 bytes of **binary STL** named `out.csg`, prints `wrote out.csg`, exits 0 |
-| class | S · gaps `F-I4`, `F-X1` · manifest `export.csg` |
-| closes when | `.csg` either serializes the operation tree or fails with an unsupported-format error; CLI fixture asserts the file is not STL |
+- The table is antisymmetric under swapping the axes, as it must be.
+- **Only `max(sx, sy)` matters**, and which axis attains it. Every entry with
+  `sy=2, sx≤1.5` is identical, so the rule cannot be a function of the resulting
+  edge lengths — `max(original, scaled)` is the same for `sx=1` and `sx=1.5`.
+- **The weighting inverts relative to pure scale.** Under `scale=[1,2]` without
+  twist the stretching y-edge takes 10 segments and the x-edge 5; add twist and
+  it becomes 9 and 6 — the edge that does *not* stretch earns more. Confirmed
+  from raw cap coordinates, so it is not an indexing artifact.
+- Scaling *down* alone changes nothing: `[0.2,1]` and `[1,0.5]` both give the
+  pure-twist `(5,5)`. Only a factor above 1 has any effect.
+- Uniform scale ≥1.5 gives `(7,7)` where pure twist gives `(5,5)`, which pins one
+  sub-rule exactly: the `$fs` cap uses the edge's **longest length over the
+  sweep**, `original × max(1, scale)`. That alone does not explain the
+  non-uniform rows, where `n_x` exceeds any such cap.
 
-The manifest classifies `export.csg` as `missing`, which understates it: the
-format is not merely absent, it is silently substituted. A user asking for a CSG
-tree gets a mesh with the wrong extension.
+Sweeping `sx=1` and reading the quotas back out of the tie-blocking (a total of
+28 instead of 30 means both fractional parts were exactly ½):
 
-### A-X02 — unknown export suffixes fall back to binary STL
+| max scale | 1 | 1.25 | 1.5 | 1.75 | 2 | 2.5 | 3 | 4 | 6 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `(n_x, n_y)` | (5,5) | (7,6) | (8,6) | (9,6) | (9,6) | (10,5) | (10,5) | (10,5) | (10,4) | (11,4) |
+| implied `q_x` | 7.5 | — | 8.5 | 9 | 9 | 10 | 10 | 10 | 10.5 | 11 |
 
-| | |
-|---|---|
-| repro | `openrscad -o out.foo model.scad` |
-| OpenSCAD | `Invalid suffix foo. Either add a valid suffix or specify one using the --export-format option.` |
-| OpenRSCAD | writes binary STL to `out.foo`, exits 0 |
-| class | S · gap `F-X1` · manifest `export.suffix_validation` |
-| closes when | unrecognized suffixes are rejected, or an explicit format flag is required; CLI test asserts a non-zero exit |
+`q_x` grows sublinearly in the maximum scale factor and no closed form tried
+(linear, `m/(m+1)`, logarithmic, powers) reproduces all of it; the `m=1.25` row
+sums to 26, which the tie rule does not explain either, so at least one further
+mechanism is involved.
 
-A-X01 is a consequence of A-X02, but they close differently: A-X02 is CLI
-argument handling, A-X01 additionally needs the tree serializer. Keep both.
-
----
+Closes when that mechanism is identified. The per-quad harness that settled
+A-G09 is the right tool — applied to segment counts rather than diagonals — and
+the base ring must again be taken from the oracle's own output, since OpenSCAD
+re-refines even an explicit `polygon()`.
 
 ## Class W / P — visible differences
 
@@ -247,6 +231,120 @@ golden both exist.
 ---
 
 ## Closed
+
+### A-G09 — non-planar wall quads used the wrong diagonal — **closed**
+
+| repro | OpenSCAD | before | now |
+|---|---:|---:|---|
+| twisted square with a hole | 847.626 | 842.424 (+0.61%) | 847.626 |
+| twisted square, two holes | 3762.287 | 3753.624 (+0.23%) | 3762.287 |
+| twisted square off the axis | 987.383 | 1000.14 (+1.29%) | 987.383 |
+| …with `segments=8` | 1006.52 | 1038.41 (+3.17%) | 1006.52 |
+| `$fn=24` circle, `scale=[0.2,2]` | 646.225 | 647.048 (+0.13%) | 646.225 |
+
+was S · gap `F-G3` · manifest `module.linear_extrude.twist_diagonal`, now
+`verified`. Guarded by `corpus/geom/ext_linear_twist_hole.scad`,
+`ext_linear_twist_offaxis.scad` and `ext_linear_scale_round.scad`, all with
+`tris` pinned.
+
+**The rule: split each quad along its shorter diagonal; when the two are exactly
+equal, fall back to the wall's lean** (the twist direction, flipped for a hole
+because its indices run the other way round).
+
+This atom resisted two earlier attempts, and the reason is worth recording,
+because the failure was one of method rather than of the hypothesis. Both
+attempts guessed a *global* rule and scored it by comparing final volumes — and
+"shorter diagonal" was tried and rejected that way, because it made things
+worse. It was the right rule all along: ties are pervasive (any profile
+symmetric about the sweep leaves the two diagonals exactly equal — the plain
+twisted square is 160 quads, *all* ties), and resolving them arbitrarily
+corrupted the majority of quads while the minority that actually differ were
+being fixed.
+
+What broke it open was measuring the *dependent variable directly* instead of a
+downstream aggregate: reconstructing the ring/index structure and reading which
+diagonal OpenSCAD used **per quad**, then scoring candidate predicates against
+3142 individual choices spanning positive and negative twist, off-axis profiles,
+pure scale, and a 720° sweep. With that signal the pattern was immediate — the
+choice is identical across layers and varies only by profile edge — and the
+composite rule scored 3142/3142 on the first try.
+
+Two details the per-quad data settled that volume comparisons never could:
+
+- the base ring must be taken from the *oracle's own output*, not assumed:
+  OpenSCAD re-refines even an explicit `polygon()`, so a hand-built profile
+  silently desynchronises the index mapping and every "measurement" after that
+  is noise;
+- the tie-break needs the winding term, so a hole leans opposite its outer.
+
+### A-G10 — non-uniform `scale` did not refine the profile — **closed**
+
+| repro | OpenSCAD | before | now |
+|---|---|---|---|
+| `linear_extrude(height=10, scale=[0.2,2]) square(10);` | 596 tris (30 segments, 9 slices) | 12 tris (4 segments, 1 slice) | 596 tris |
+| `linear_extrude(height=10, scale=[2,1]) square([10,3]);` | 428 tris | 12 tris | 428 tris |
+| `linear_extrude(height=10, scale=0.5) square(10);` (uniform) | 12 tris | 12 tris | 12 tris |
+
+was S · gap `F-G3` · manifest `module.linear_extrude.scale_refinement`, now
+`verified`. Guarded by `corpus/geom/ext_linear_scale_nonuniform.scad` and
+`ext_linear_scale_uniform_tris.scad`.
+
+A non-uniform scale bends the walls exactly as a twist does, and upstream
+refines for it; a *uniform* scale keeps every wall planar — a frustum's faces
+are flat — so it refines nothing however far from 1 it is. The rules, measured
+the same way as the twist family:
+
+- **Refinement** reuses the twist machinery, but an edge earns its share of the
+  budget by `max(original, scaled)` length: under `scale=[1,2]` the y-aligned
+  edges stretch to 20 and take twice the share of the x-aligned ones. The `$fs`
+  cap uses the same stretched length, which is why raising `$fs` from 2 to 1
+  changes nothing on a square — the budget, not `$fs`, is binding.
+- **Slices** come from how far the worst-placed profile point travels to its
+  scaled position: `ceil(hypot(travel, height) / $fs)`, matched at four heights
+  and `$fs` values. `$fa` plays no part — there is no angle to bound — and `$fn`
+  replaces the count outright. Twist and scale each propose a count and the
+  larger wins.
+
+**This is volume-neutral**, because the walls stay ruled surfaces: the scaled
+square is 833.333 either way. Only the tessellation changes, so both corpus
+cases pin `tris` — the first use of the `// oracle: tris` directive. Blessing
+them turned up a wrinkle worth recording: a case must hold **one** top-level
+object, because several are unioned and the kernel merges the coplanar wall
+facets straight back together, collapsing 596 triangles to 12 and hiding the
+very thing the case exists to check.
+
+What did *not* close: a non-uniformly scaled **curved** profile is still 0.13%
+off. Its cap points, slices and triangle count all match, so that residue is the
+wall-diagonal rule and now sits under A-G09.
+
+### A-X01, A-X02 — unusable export suffixes silently wrote binary STL — **closed**
+
+| id | repro | OpenSCAD | before | now |
+|---|---|---|---|---|
+| A-X02 | `openrscad -o out.foo m.scad` | `Invalid suffix foo`, exit 1, no file | binary STL, exit 0 | error, exit 1, no file |
+| A-X01 | `openrscad -o out.csg m.scad` | writes a CSG tree, exit 0 | binary STL named `.csg`, exit 0 | error, exit 1, no file |
+
+was S · gap `F-X1` · manifest `export.suffix_validation` (now `implemented`) and
+`export.csg`. Guarded by unit tests in `crates/openrscad-cli/src/main.rs`.
+
+Suffix classification is now one function, checked against the 2024.12 binary
+across eleven suffixes: recognized ones match case-insensitively (`out.STL`),
+and anything else — including no suffix at all — is refused. Validation runs
+*before* evaluation, so a typo on a heavy model fails in milliseconds instead of
+after the render.
+
+**A-X02 is fully closed; A-X01 is downgraded, not closed.** We still cannot
+serialize a CSG operation tree, so `.csg` now fails with a format-specific error
+rather than a generic "invalid suffix" — it is a real OpenSCAD format, not a
+typo. That converts A-X01 from a *silent* wrong answer into a *loud* missing
+feature, which is the property that matters for trust; the feature itself
+remains open as `F-I4`.
+
+The manifest keeps `export.suffix_validation` at `implemented` rather than
+`verified`, matching every other `export.*` entry: `verified` there means a
+committed `.scad`-level oracle case, and a CLI argument behaviour has none. The
+atom is closed because it is fixed and guarded by a test — the two documents
+mean different things by their labels, deliberately.
 
 ### A-G01…A-G04 — invalid dimensions built solids instead of nothing — **closed**
 
@@ -417,12 +515,12 @@ invocation each one compares against.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 4 | A-G09, A-G10, A-X01, A-X02 |
+| S — silent | 1 | A-G11 |
 | W — warned | 1 | A-G08 |
 | P — permanent | 1 | A-L02 |
-| M — missing | 15 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02 |
+| M — missing | 16 | A-L03…A-L06, A-I01…A-I09, A-T01, A-T02, A-X01 (CSG tree export) |
 | U — unproven | 50 | manifest `implemented` entries |
-| closed | 9 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-L08 |
+| closed | 12 | A-L01, A-G01…A-G04, A-G05, A-G06, A-G07, A-G09, A-G10, A-L08, A-X02 |
 
 Six of the open atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, and A-G09/A-G10/A-L08 while closing the
