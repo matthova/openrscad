@@ -41,7 +41,8 @@ pub enum Op {
     Bin(BinOp),
     /// Pop index, pop base, push `base[index]`.
     Index,
-    /// Pop base, push `base.<x|y|z>` (0/1/2); any other field pushes `undef`.
+    /// Pop base, push `base.<x|y|z>` (0/1/2). Named fields (object lookups) are
+    /// never compiled — the compiler bails to the tree-walk — so `k` is always <3.
     Member(u8),
     /// Pop `n` values, push them as a vector.
     MakeVector(u32),
@@ -350,13 +351,18 @@ impl Compiler<'_> {
                 self.emit(Op::Index);
             }
             Expr::Member { base, field } => {
-                self.compile_expr(base);
                 let k = match field.as_str() {
                     "x" => 0,
                     "y" => 1,
                     "z" => 2,
-                    _ => 255,
+                    // A named field can only mean an object lookup, which needs
+                    // the tree-walk (objects never reach the VM's Op::Member).
+                    _ => {
+                        self.bail();
+                        return;
+                    }
                 };
+                self.compile_expr(base);
                 self.emit(Op::Member(k));
             }
             Expr::Let { bindings, body } => {

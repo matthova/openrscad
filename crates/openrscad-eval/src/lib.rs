@@ -1773,6 +1773,105 @@ impl Interp<'_> {
         })
     }
 
+    /// `textmetrics(text, size, font, …)` → an object with `position`, `size`,
+    /// `ascent`, `descent`, `offset`, and `advance` fields (OpenSCAD's
+    /// experimental text-measurement builtin). Reads the same arguments and
+    /// defaults as `text()`.
+    fn b_textmetrics(&mut self, args: &[Arg]) -> EResult<Value> {
+        let m = self.bind_named(
+            &[
+                "text",
+                "size",
+                "font",
+                "direction",
+                "language",
+                "script",
+                "halign",
+                "valign",
+                "spacing",
+            ],
+            args,
+        )?;
+        let text = m.get("text").map(Value::to_str).unwrap_or_default();
+        let size = m.get("size").and_then(Value::as_number).unwrap_or(10.0);
+        let font = m.get("font").map(Value::to_str).unwrap_or_default();
+        let sopt = |k: &str, d: &str| m.get(k).map(Value::to_str).unwrap_or_else(|| d.to_string());
+        let halign = sopt("halign", "left");
+        let valign = sopt("valign", "baseline");
+        let spacing = m.get("spacing").and_then(Value::as_number).unwrap_or(1.0);
+        let direction = sopt("direction", "ltr");
+        let script = sopt("script", "Latn");
+        let language = sopt("language", "en");
+
+        let (tm, family_known) = text::text_metrics(
+            &font,
+            &text::TextParams {
+                text: &text,
+                size,
+                halign: &halign,
+                valign: &valign,
+                spacing,
+                direction: &direction,
+                script: &script,
+                language: &language,
+                // Metrics use exact glyph extents, so curve flattening is moot.
+                segments: 4,
+            },
+        );
+        if !font.is_empty() && !family_known {
+            self.warn(format!(
+                "textmetrics(): font {font:?} not available; using the bundled Liberation Sans"
+            ));
+        }
+        let vec2 = |v: [f64; 2]| value::vector(vec![Value::Number(v[0]), Value::Number(v[1])]);
+        Ok(value::object(vec![
+            ("position".to_string(), vec2(tm.position)),
+            ("size".to_string(), vec2(tm.size)),
+            ("ascent".to_string(), Value::Number(tm.ascent)),
+            ("descent".to_string(), Value::Number(tm.descent)),
+            ("offset".to_string(), vec2(tm.offset)),
+            ("advance".to_string(), vec2(tm.advance)),
+        ]))
+    }
+
+    /// `fontmetrics(size, font)` → an object with `nominal`/`max` ascent-descent
+    /// sub-objects, `interline`, and a `font` sub-object (`family`/`style`).
+    fn b_fontmetrics(&mut self, args: &[Arg]) -> EResult<Value> {
+        let m = self.bind_named(&["size", "font"], args)?;
+        let size = m.get("size").and_then(Value::as_number).unwrap_or(10.0);
+        let font = m.get("font").map(Value::to_str).unwrap_or_default();
+        let (fm, family_known) = text::font_metrics(&font, size);
+        if !font.is_empty() && !family_known {
+            self.warn(format!(
+                "fontmetrics(): font {font:?} not available; using the bundled Liberation Sans"
+            ));
+        }
+        let ascent_descent = |a: f64, d: f64| {
+            value::object(vec![
+                ("ascent".to_string(), Value::Number(a)),
+                ("descent".to_string(), Value::Number(d)),
+            ])
+        };
+        Ok(value::object(vec![
+            (
+                "nominal".to_string(),
+                ascent_descent(fm.nominal_ascent, fm.nominal_descent),
+            ),
+            (
+                "max".to_string(),
+                ascent_descent(fm.max_ascent, fm.max_descent),
+            ),
+            ("interline".to_string(), Value::Number(fm.interline)),
+            (
+                "font".to_string(),
+                value::object(vec![
+                    ("family".to_string(), Value::Str(fm.family)),
+                    ("style".to_string(), Value::Str(fm.style)),
+                ]),
+            ),
+        ]))
+    }
+
     fn b_polygon(&mut self, args: &[Arg]) -> EResult<Node> {
         let m = self.bind_named(&["points", "paths"], args)?;
         let points: Vec<[f64; 2]> = match m.get("points") {
@@ -2330,13 +2429,7 @@ impl Interp<'_> {
             }
             Expr::Member { base, field } => {
                 let b = self.eval_expr(base)?;
-                let idx = match field.as_str() {
-                    "x" => 0,
-                    "y" => 1,
-                    "z" => 2,
-                    _ => return Ok(Value::Undef),
-                };
-                Ok(index_value(&b, &Value::Number(idx as f64)))
+                Ok(member_value(&b, field))
             }
             Expr::Let { bindings, body } => {
                 self.push_scope();
@@ -2719,6 +2812,13 @@ impl Interp<'_> {
         if matches!(name, "dxf_dim" | "dxf_cross") {
             return self.b_dxf_query(name, args);
         }
+        // textmetrics/fontmetrics also read named arguments and return an object.
+        if name == "textmetrics" {
+            return self.b_textmetrics(args);
+        }
+        if name == "fontmetrics" {
+            return self.b_fontmetrics(args);
+        }
         // Builtins.
         let vals: Vec<Value> = args
             .iter()
@@ -3086,7 +3186,31 @@ fn index_value(base: &Value, index: &Value) -> Value {
             2 => Value::Number(*end),
             _ => Value::Undef,
         },
+        // An object indexes by field name: `tm["size"]`, the string-key form of
+        // `tm.size` (both are how OpenSCAD reads textmetrics/fontmetrics fields).
+        (Value::Object(m), Value::Str(k)) => m
+            .iter()
+            .find(|(name, _)| name == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(Value::Undef),
         _ => Value::Undef,
+    }
+}
+
+/// Read `base.field`: an object looks the field up by name; anything else
+/// supports only the `.x`/`.y`/`.z` vector-component aliases (index 0/1/2).
+fn member_value(base: &Value, field: &str) -> Value {
+    match base {
+        Value::Object(_) => index_value(base, &Value::Str(field.to_string())),
+        _ => {
+            let idx = match field {
+                "x" => 0.0,
+                "y" => 1.0,
+                "z" => 2.0,
+                _ => return Value::Undef,
+            };
+            index_value(base, &Value::Number(idx))
+        }
     }
 }
 
