@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- [#109](https://github.com/matthova/openrscad/pull/109) [`9f0af65`](https://github.com/matthova/openrscad/commit/9f0af655de1e3d3361224976c3c62d95b0fcc35a) Thanks [@matthova](https://github.com/matthova)! - add textmetrics() and fontmetrics() for measuring text and fonts, returning objects read with .field or ["field"]
+
+- [#108](https://github.com/matthova/openrscad/pull/108) [`7467202`](https://github.com/matthova/openrscad/commit/74672026c2a83eb1ca9e119d7c35eaf3e18b3c5c) Thanks [@matthova](https://github.com/matthova)! - The playground editor now autocompletes the names of other files in your workspace. Inside `include <…>` / `use <…>` it offers your sibling `.scad` files, and inside `import("…")` / `surface("…")` (including the `file="…"` form) it offers your imported assets (STL, SVG, DXF, 3MF, …) — so a second file added to a project is one keystroke away from being referenced in the main file.
+
+### Patch Changes
+
+- [#110](https://github.com/matthova/openrscad/pull/110) [`9ef9593`](https://github.com/matthova/openrscad/commit/9ef959382ddfa61354ff4f6648bf0c32c0ae631e) Thanks [@matthova](https://github.com/matthova)! - desktop: import binary STL (and 3MF) files via the menu, file dialog, or drag-and-drop — they were previously skipped as unsupported
+
 ## 0.11.0
 
 ### Minor Changes
