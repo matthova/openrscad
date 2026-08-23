@@ -158,8 +158,11 @@ impl FileResolver for DiskResolver {
 
 /// The playground's in-memory files (open tabs) take precedence; anything not
 /// found there falls back to disk (relative paths and `OPENSCADPATH` libraries).
+/// `bins` carries imported binary meshes (binary STL/3MF) that were pulled into a
+/// tab and so have no resolvable disk path — mirrors the wasm engine's byte map.
 struct CombinedResolver {
     files: HashMap<String, String>,
+    bins: HashMap<String, Vec<u8>>,
     disk: DiskResolver,
 }
 
@@ -187,13 +190,17 @@ impl FileResolver for CombinedResolver {
     }
 
     fn load_bytes(&self, path: &str, from_dir: &str) -> Option<Vec<u8>> {
-        // In-memory tabs first (text profiles like DXF/SVG), then disk.
+        // In-memory tabs first: binary meshes (STL/3MF) from the byte channel,
+        // then text profiles like DXF/SVG, then disk.
         let joined = if from_dir.is_empty() || from_dir == "." {
             path.to_string()
         } else {
             format!("{from_dir}/{path}")
         };
         for key in [path, joined.as_str()] {
+            if let Some(bytes) = self.bins.get(key) {
+                return Some(bytes.clone());
+            }
             if let Some(source) = self.files.get(key) {
                 return Some(source.clone().into_bytes());
             }
@@ -213,8 +220,71 @@ fn overrides(names: &[String], values: &[String]) -> Vec<(String, openrscad_eval
         .collect()
 }
 
+/// Build the `import()` byte map from parallel `names`/base64 arrays (binary
+/// meshes pulled into a tab). Entries that don't decode are dropped.
+fn bins_from_b64(names: &[String], b64: &[String]) -> HashMap<String, Vec<u8>> {
+    use base64::Engine as _;
+    names
+        .iter()
+        .zip(b64)
+        .filter_map(|(name, data)| {
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .ok()
+                .map(|bytes| (name.clone(), bytes))
+        })
+        .collect()
+}
+
+/// True if a `.stl` file's bytes are binary rather than ASCII. Mirrors the
+/// browser sniff (`stlIsBinary`): a valid binary STL is an 80-byte header + a
+/// little-endian triangle count + 50 bytes per triangle; anything that isn't the
+/// ASCII "solid" token is also treated as binary so it rides the byte channel
+/// instead of being UTF-8-mangled.
+fn stl_is_binary(bytes: &[u8]) -> bool {
+    if bytes.len() >= 84 {
+        let count = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
+        if bytes.len() == 84 + count * 50 {
+            return true;
+        }
+    }
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(6)]);
+    !head.trim_start().to_ascii_lowercase().starts_with("solid")
+}
+
+/// Route an imported file's bytes by extension: binary meshes (binary STL, 3MF)
+/// go through the byte channel; everything else is read as UTF-8 text.
+fn is_binary_import(ext: &str, bytes: &[u8]) -> bool {
+    match ext {
+        "3mf" => true,
+        "stl" => stl_is_binary(bytes),
+        _ => false,
+    }
+}
+
+/// Editor placeholder shown for an imported binary asset — its real bytes ride
+/// the byte channel, keeping them out of the text buffer. Mirrors the browser's
+/// `binaryPlaceholder`.
+fn binary_placeholder(name: &str, size: usize) -> String {
+    let kb = if size < 10240 {
+        format!("{:.1}", size as f64 / 1024.0)
+    } else {
+        format!("{}", (size as f64 / 1024.0).round() as u64)
+    };
+    let ext = name
+        .rsplit('.')
+        .next()
+        .filter(|e| !e.is_empty() && *e != name)
+        .unwrap_or("binary")
+        .to_ascii_uppercase();
+    format!(
+        "// {name}\n\
+         // Binary {ext} asset ({kb} KB) — imported for import(\"{name}\").\n\
+         // Its bytes are stored separately; this text is only a placeholder.\n"
+    )
+}
+
 /// Parse → eval → render, returning the mesh plus console output.
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn eval_and_render(
     cache: &Arc<Mutex<openrscad_geom::GeomCache>>,
@@ -224,6 +294,8 @@ fn eval_and_render(
     values: &[String],
     file_names: &[String],
     file_contents: &[String],
+    bin_names: &[String],
+    bin_data: &[String],
     preview: bool,
 ) -> Result<
     (
@@ -253,6 +325,7 @@ fn eval_and_render(
             .cloned()
             .zip(file_contents.iter().cloned())
             .collect(),
+        bins: bins_from_b64(bin_names, bin_data),
         disk: DiskResolver::new(),
     };
     // The fast preview is F5-style, so `$preview` is true there and false for
@@ -305,11 +378,17 @@ fn render(
     param_values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    // Imported binary meshes (binary STL/3MF) as parallel name/base64 arrays.
+    // Optional so older frontend callers (and tests) can omit the byte channel.
+    bin_names: Option<Vec<String>>,
+    bin_data: Option<Vec<String>>,
     preview: Option<bool>,
 ) -> RenderResult {
     let cache = state.cache.clone();
     let dir = dir.unwrap_or_else(|| ".".to_string());
     let preview = preview.unwrap_or(false);
+    let bin_names = bin_names.unwrap_or_default();
+    let bin_data = bin_data.unwrap_or_default();
     let work = move || {
         let params = openrscad_syntax::customizer::extract(&source).to_json();
         match eval_and_render(
@@ -320,6 +399,8 @@ fn render(
             &param_values,
             &file_names,
             &file_contents,
+            &bin_names,
+            &bin_data,
             preview,
         ) {
             Ok((mesh, out, is_2d, diag)) => {
@@ -414,9 +495,14 @@ fn save_model(
     param_values: Vec<String>,
     file_names: Vec<String>,
     file_contents: Vec<String>,
+    // Imported binary meshes (binary STL/3MF) as parallel name/base64 arrays.
+    bin_names: Option<Vec<String>>,
+    bin_data: Option<Vec<String>>,
 ) -> Result<(), String> {
     let cache = state.cache.clone();
     let dir = dir.unwrap_or_else(|| ".".to_string());
+    let bin_names = bin_names.unwrap_or_default();
+    let bin_data = bin_data.unwrap_or_default();
     let work = move || -> Result<(), String> {
         // 2D vector formats need the exact contours, not the flat mesh.
         if format == "dxf" || format == "svg" {
@@ -432,6 +518,7 @@ fn save_model(
                     .cloned()
                     .zip(file_contents.iter().cloned())
                     .collect(),
+                bins: bins_from_b64(&bin_names, &bin_data),
                 disk: DiskResolver::new(),
             };
             let out = openrscad_eval::eval_program_with_params(
@@ -464,6 +551,8 @@ fn save_model(
             &param_values,
             &file_names,
             &file_contents,
+            &bin_names,
+            &bin_data,
             false,
         )
         .map_err(|e| e.message)?;
@@ -665,28 +754,32 @@ fn open_file(
     })
 }
 
-/// One imported file: its base name and UTF-8 text content.
+/// One imported file: its base name and content. Text profiles (SVG/DXF, ASCII
+/// meshes) carry their UTF-8 `content` with `bytes: None`; binary meshes (binary
+/// STL/3MF) carry a placeholder `content` plus their raw bytes as base64.
 #[derive(Serialize)]
 struct ImportedFile {
     name: String,
     content: String,
+    bytes: Option<String>,
 }
 
-/// Result of importing a set of files: the ones read as UTF-8 text (2D profiles
-/// like SVG/DXF and text meshes), plus the names skipped because they weren't
-/// valid UTF-8 (binary STL/3MF, images). Text profiles resolve through the
-/// in-memory tab channel; binary assets on the native engine aren't supported,
-/// so they're reported rather than silently mangled.
+/// Result of importing a set of files: the ones read (as UTF-8 text or, for
+/// binary meshes, as base64 bytes), plus the names skipped because they were
+/// neither valid UTF-8 nor an importable binary mesh (images, unreadable files).
 #[derive(Serialize)]
 struct ImportResult {
     files: Vec<ImportedFile>,
     skipped: Vec<String>,
 }
 
-/// Read files chosen for `import()` (native dialog or a Tauri file drop) as text.
-/// Reused by both entry points; binary-only formats are surfaced in `skipped`.
+/// Read files chosen for `import()` (native dialog or a Tauri file drop). Text
+/// profiles are read as UTF-8; binary meshes (binary STL/3MF) are carried as
+/// base64 through the engine's byte channel. Anything else is surfaced in
+/// `skipped` rather than silently mangled.
 #[tauri::command]
 fn import_files(paths: Vec<String>) -> ImportResult {
+    use base64::Engine as _;
     let mut files = Vec::new();
     let mut skipped = Vec::new();
     for path in paths {
@@ -695,12 +788,30 @@ fn import_files(paths: Vec<String>) -> ImportResult {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.clone());
-        match std::fs::read(&path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(content) => files.push(ImportedFile { name, content }),
-                Err(_) => skipped.push(name),
-            },
-            Err(_) => skipped.push(name),
+        let ext = pb
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let Ok(bytes) = std::fs::read(&path) else {
+            skipped.push(name);
+            continue;
+        };
+        if is_binary_import(&ext, &bytes) {
+            let placeholder = binary_placeholder(&name, bytes.len());
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            files.push(ImportedFile {
+                name,
+                content: placeholder,
+                bytes: Some(b64),
+            });
+        } else if let Ok(content) = String::from_utf8(bytes) {
+            files.push(ImportedFile {
+                name,
+                content,
+                bytes: None,
+            });
+        } else {
+            skipped.push(name);
         }
     }
     ImportResult { files, skipped }
@@ -1214,12 +1325,24 @@ mod tests {
     fn engine_error_carries_span_for_parse_only() {
         let cache = Arc::new(Mutex::new(openrscad_geom::GeomCache::new()));
         // Parse error → the diagnostic carries a byte span.
-        let e = eval_and_render(&cache, "cube(", ".", &[], &[], &[], &[], false).unwrap_err();
+        let e =
+            eval_and_render(&cache, "cube(", ".", &[], &[], &[], &[], &[], &[], false).unwrap_err();
         assert!(e.message.starts_with("parse error"));
         assert!(e.diagnostic.start >= 0 && e.diagnostic.end >= e.diagnostic.start);
         // Eval error (assert) → still surfaced, with the offending statement span.
-        let e =
-            eval_and_render(&cache, "assert(false);", ".", &[], &[], &[], &[], false).unwrap_err();
+        let e = eval_and_render(
+            &cache,
+            "assert(false);",
+            ".",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            false,
+        )
+        .unwrap_err();
         assert!(e.message.starts_with("evaluation error"));
         assert!(
             e.diagnostic.start >= 0,
@@ -1230,8 +1353,19 @@ mod tests {
     #[test]
     fn native_render_command_logic() {
         let cache = Arc::new(Mutex::new(openrscad_geom::GeomCache::new()));
-        let (mesh, _, _, _) =
-            eval_and_render(&cache, "cube([2,3,4]);", ".", &[], &[], &[], &[], false).unwrap();
+        let (mesh, _, _, _) = eval_and_render(
+            &cache,
+            "cube([2,3,4]);",
+            ".",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            false,
+        )
+        .unwrap();
         assert!((mesh.volume() - 24.0).abs() < 1e-6);
 
         // Overrides apply, like the customizer.
@@ -1241,6 +1375,8 @@ mod tests {
             ".",
             &["w".into()],
             &["5".into()],
+            &[],
+            &[],
             &[],
             &[],
             false,
@@ -1258,6 +1394,8 @@ mod tests {
             &[],
             &["lib.scad".into()],
             &["function side() = 3;".into()],
+            &[],
+            &[],
             false,
         )
         .unwrap();
@@ -1273,7 +1411,7 @@ mod tests {
         for src in ["cube(2); translate([5,0,0]) sphere(2);", "square(4);"] {
             let cache = Arc::new(Mutex::new(openrscad_geom::GeomCache::new()));
             let (mesh, out, _, _) =
-                eval_and_render(&cache, src, ".", &[], &[], &[], &[], false).unwrap();
+                eval_and_render(&cache, src, ".", &[], &[], &[], &[], &[], &[], false).unwrap();
             assert!(!mesh.tris.is_empty(), "{src} produced no geometry");
             let kernel = openrscad_geom::ManifoldKernel::new();
             let groups = {
@@ -1480,26 +1618,100 @@ mod tests {
         assert!(ext_seen, "watcher did not report the later external change");
     }
 
+    /// A one-triangle binary STL: 80-byte header, u32 count, then a 50-byte
+    /// facet (normal + three vertices + attribute). Enough to exercise the
+    /// binary path without hand-building a closed solid.
+    fn one_triangle_binary_stl() -> Vec<u8> {
+        let mut b = vec![0u8; 80];
+        b.extend_from_slice(&1u32.to_le_bytes()); // triangle count
+        for f in [
+            0.0f32, 0.0, 1.0, // normal
+            0.0, 0.0, 0.0, // v0
+            1.0, 0.0, 0.0, // v1
+            0.0, 1.0, 0.0, // v2
+        ] {
+            b.extend_from_slice(&f.to_le_bytes());
+        }
+        b.extend_from_slice(&0u16.to_le_bytes()); // attribute byte count
+        b
+    }
+
     #[test]
-    fn import_files_reads_text_and_skips_binary() {
+    fn import_files_reads_text_carries_binary_and_skips_others() {
         let dir = std::env::temp_dir().join("openrscad_import_test");
         std::fs::create_dir_all(&dir).unwrap();
         let svg = dir.join("star.svg");
         std::fs::write(&svg, "<svg><rect width='1' height='1'/></svg>").unwrap();
-        // Invalid UTF-8 stands in for a binary asset.
-        let bin = dir.join("mesh.stl");
-        std::fs::write(&bin, [0xff, 0xfe, 0x00, 0x01]).unwrap();
+        // A real binary STL rides the byte channel.
+        let stl = dir.join("mesh.stl");
+        std::fs::write(&stl, one_triangle_binary_stl()).unwrap();
+        // A non-UTF-8, non-mesh asset is still skipped.
+        let png = dir.join("logo.png");
+        std::fs::write(&png, [0x89, b'P', b'N', b'G', 0x00, 0xff]).unwrap();
 
         let r = import_files(vec![
             svg.to_string_lossy().into_owned(),
-            bin.to_string_lossy().into_owned(),
+            stl.to_string_lossy().into_owned(),
+            png.to_string_lossy().into_owned(),
         ]);
         std::fs::remove_dir_all(&dir).ok();
 
+        assert_eq!(r.files.len(), 2);
+        let svg_file = r.files.iter().find(|f| f.name == "star.svg").unwrap();
+        assert!(svg_file.content.contains("<rect"));
+        assert!(svg_file.bytes.is_none(), "text profile has no byte channel");
+        let stl_file = r.files.iter().find(|f| f.name == "mesh.stl").unwrap();
+        assert!(
+            stl_file.bytes.is_some(),
+            "binary STL should ride the byte channel"
+        );
+        assert!(stl_file.content.contains("placeholder"));
+        assert_eq!(r.skipped, vec!["logo.png".to_string()]);
+    }
+
+    #[test]
+    fn ascii_stl_is_read_as_text() {
+        let dir = std::env::temp_dir().join("openrscad_ascii_stl_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let stl = dir.join("ascii.stl");
+        std::fs::write(
+            &stl,
+            "solid s\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n\
+             \n  endloop\n endfacet\nendsolid s\n",
+        )
+        .unwrap();
+
+        let r = import_files(vec![stl.to_string_lossy().into_owned()]);
+        std::fs::remove_dir_all(&dir).ok();
+
         assert_eq!(r.files.len(), 1);
-        assert_eq!(r.files[0].name, "star.svg");
-        assert!(r.files[0].content.contains("<rect"));
-        assert_eq!(r.skipped, vec!["mesh.stl".to_string()]);
+        assert!(r.files[0].bytes.is_none(), "ASCII STL is text, not bytes");
+        assert!(r.files[0].content.contains("solid"));
+    }
+
+    #[test]
+    fn imported_binary_stl_renders_through_the_byte_channel() {
+        // The end-to-end desktop path for a binary mesh: it lives as a tab whose
+        // bytes ride the base64 byte channel and `import("mesh.stl")` resolves it
+        // through the combined resolver's `bins` map.
+        use base64::Engine as _;
+        let cache = Arc::new(Mutex::new(openrscad_geom::GeomCache::new()));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(one_triangle_binary_stl());
+        let (mesh, _, _, _) = eval_and_render(
+            &cache,
+            "import(\"mesh.stl\");",
+            ".",
+            &[],
+            &[],
+            &[],
+            &[],
+            &["mesh.stl".into()],
+            &[b64],
+            false,
+        )
+        .unwrap();
+        assert_eq!(mesh.tris.len(), 1, "the imported triangle should survive");
+        assert_eq!(mesh.verts.len(), 3);
     }
 
     #[test]
@@ -1518,6 +1730,8 @@ mod tests {
             &[],
             &["star.svg".into()],
             &[svg.into()],
+            &[],
+            &[],
             false,
         )
         .unwrap();

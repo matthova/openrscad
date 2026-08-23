@@ -780,10 +780,10 @@ export function App() {
       // Snapshot the source this render will reflect (for renderedSource).
       renderedSourceRef.current = fs[0].content;
       if (engineRef.current instanceof DesktopEngine) {
-        // Native engine resolves include/use (and binary imports) from disk
-        // (OPENSCADPATH) + the in-memory text tabs; no CDN fetch needed. Only the
-        // native engine can read disk — the OpenSCAD wasm engine (even on
-        // desktop) takes the closure path below.
+        // Native engine resolves include/use from disk (OPENSCADPATH) + the
+        // in-memory text tabs; no CDN fetch needed. Binary imports resolve from
+        // disk when present there, else from the base64 byte channel (a tab
+        // pulled in via drag-drop / Import File…), mirroring the browser.
         engineRef.current.render(
           fs[0].content,
           names,
@@ -791,6 +791,8 @@ export function App() {
           textLibs.map((f) => f.name),
           textLibs.map((f) => f.content),
           fastPreviewRef.current,
+          binNames,
+          binData,
         );
       } else {
         // Wasm engine (OpenRSCAD or OpenSCAD, in browser or desktop): resolve the
@@ -1230,18 +1232,18 @@ export function App() {
   }
 
   /** Add files read from disk (native dialog or Tauri file drop) as tabs, and
-   *  warn about any binary asset the native engine can't take through the tab
-   *  channel. Mirrors the browser `importFiles` messaging. */
+   *  warn about any asset the engine can't read at all. Binary meshes (binary
+   *  STL/3MF) come back with base64 `bytes` and ride the byte channel. Mirrors
+   *  the browser `importFiles` messaging. */
   function applyImportResult(r: {
-    files: { name: string; content: string }[];
+    files: { name: string; content: string; bytes?: string }[];
     skipped: string[];
   }) {
     const msgs: string[] = [];
     if (r.skipped.length) {
       msgs.push(
-        `Can't import ${r.skipped.join(", ")} — binary meshes (binary STL, 3MF) ` +
-          `aren't supported by the desktop engine; use a text profile (SVG, DXF) ` +
-          `or an ASCII/text mesh (OFF, OBJ, AMF).`,
+        `Can't import ${r.skipped.join(", ")} — only meshes (STL, 3MF, OFF, OBJ, ` +
+          `AMF) and 2D profiles (DXF, SVG) can be imported.`,
       );
     }
     if (r.files.length) {
@@ -2157,6 +2159,8 @@ export function App() {
         values,
         textLibs.map((f) => f.name),
         textLibs.map((f) => f.content),
+        binNames,
+        binData,
       );
       return;
     }
