@@ -2814,6 +2814,7 @@ dependencies = [
 name = "openrscad-desktop"
 version = "0.11.0"
 dependencies = [
+ "base64 0.22.1",
  "notify",
  "openrscad-eval",
  "openrscad-geom",

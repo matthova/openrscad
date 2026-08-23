@@ -35,6 +35,9 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "6"
+# Carries imported binary meshes (binary STL/3MF) between the frontend and the
+# native engine as standard base64 — matching the browser's byte channel.
+base64 = "0.22"
 
 openrscad-syntax = { path = "../../crates/openrscad-syntax" }
 openrscad-eval = { path = "../../crates/openrscad-eval" }

@@ -106,8 +106,10 @@ export class DesktopEngine {
     fileNames: string[] = [],
     fileContents: string[] = [],
     preview = false,
-    // Binary imports (STL/3MF) resolve from disk on the native engine, so it
-    // takes no in-memory byte channel — callers pass only text libs here.
+    // Imported binary meshes (binary STL/3MF) pulled into a tab ride this base64
+    // byte channel; on-disk imports still resolve straight from disk.
+    binNames: string[] = [],
+    binData: string[] = [],
   ) {
     const seq = ++this.seq;
     this.setBusy(true);
@@ -126,6 +128,8 @@ export class DesktopEngine {
           paramValues: values,
           fileNames,
           fileContents,
+          binNames,
+          binData,
           preview,
         }),
       )
@@ -442,9 +446,9 @@ export async function openScadFile(): Promise<OpenedFile | null> {
   return invoke<OpenedFile>("open_file", { path });
 }
 
-/** Importable file formats (2D profiles + text meshes) for `import()`. Binary
- *  STL/3MF aren't listed: the native engine can't take them through the tab
- *  channel, so offering them in the picker would only disappoint. */
+/** Importable file formats for `import()`: 2D profiles, text meshes, and binary
+ *  meshes (binary STL/3MF) — the latter ride a base64 byte channel into the
+ *  native engine, just like the browser build. */
 export const IMPORT_EXTENSIONS = [
   "svg",
   "dxf",
@@ -453,21 +457,26 @@ export const IMPORT_EXTENSIONS = [
   "obj",
   "amf",
   "stl",
+  "3mf",
   "csv",
   "dat",
   "txt",
   "json",
 ];
 
-/** One imported file read as text; parallels the browser import path. */
+/** One imported file; parallels the browser import path. Text profiles carry
+ *  their UTF-8 `content` with no `bytes`; binary meshes (binary STL/3MF) carry a
+ *  placeholder `content` plus their raw bytes as base64. */
 export interface ImportedFile {
   name: string;
   content: string;
+  bytes?: string;
 }
 
 export interface ImportResult {
   files: ImportedFile[];
-  /** Names skipped because they weren't UTF-8 text (binary assets). */
+  /** Names skipped because they were neither UTF-8 text nor an importable
+   *  binary mesh (images, unreadable files). */
   skipped: string[];
 }
 
@@ -619,6 +628,8 @@ export async function saveModelNative(
   values: string[],
   fileNames: string[],
   fileContents: string[],
+  binNames: string[] = [],
+  binData: string[] = [],
 ): Promise<void> {
   const { save } = await import("@tauri-apps/plugin-dialog");
   const { invoke } = await import("@tauri-apps/api/core");
@@ -636,5 +647,7 @@ export async function saveModelNative(
     paramValues: values,
     fileNames,
     fileContents,
+    binNames,
+    binData,
   });
 }
