@@ -665,6 +665,47 @@ fn open_file(
     })
 }
 
+/// One imported file: its base name and UTF-8 text content.
+#[derive(Serialize)]
+struct ImportedFile {
+    name: String,
+    content: String,
+}
+
+/// Result of importing a set of files: the ones read as UTF-8 text (2D profiles
+/// like SVG/DXF and text meshes), plus the names skipped because they weren't
+/// valid UTF-8 (binary STL/3MF, images). Text profiles resolve through the
+/// in-memory tab channel; binary assets on the native engine aren't supported,
+/// so they're reported rather than silently mangled.
+#[derive(Serialize)]
+struct ImportResult {
+    files: Vec<ImportedFile>,
+    skipped: Vec<String>,
+}
+
+/// Read files chosen for `import()` (native dialog or a Tauri file drop) as text.
+/// Reused by both entry points; binary-only formats are surfaced in `skipped`.
+#[tauri::command]
+fn import_files(paths: Vec<String>) -> ImportResult {
+    let mut files = Vec::new();
+    let mut skipped = Vec::new();
+    for path in paths {
+        let pb = PathBuf::from(&path);
+        let name = pb
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        match std::fs::read(&path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => files.push(ImportedFile { name, content }),
+                Err(_) => skipped.push(name),
+            },
+            Err(_) => skipped.push(name),
+        }
+    }
+    ImportResult { files, skipped }
+}
+
 /// Write UTF-8 source text to `path` (⌘S / Save As). Records a self-write marker
 /// first so the file watcher swallows the resulting change instead of reloading.
 #[tauri::command]
@@ -1050,6 +1091,9 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     let open = MenuItemBuilder::with_id("open", "Open…")
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
+    let import = MenuItemBuilder::with_id("import", "Import File…")
+        .accelerator("CmdOrCtrl+I")
+        .build(app)?;
     let save = MenuItemBuilder::with_id("save", "Save")
         .accelerator("CmdOrCtrl+S")
         .build(app)?;
@@ -1062,6 +1106,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     let file = SubmenuBuilder::new(app, "File")
         .item(&new_item)
         .item(&open)
+        .item(&import)
         .separator()
         .item(&save)
         .item(&save_as)
@@ -1110,7 +1155,14 @@ pub fn run() {
             let id = event.id().as_ref();
             if matches!(
                 id,
-                "new" | "open" | "save" | "save-as" | "export" | "reset-view" | "check-updates"
+                "new"
+                    | "open"
+                    | "import"
+                    | "save"
+                    | "save-as"
+                    | "export"
+                    | "reset-view"
+                    | "check-updates"
             ) {
                 let _ = app.emit("menu-action", id.to_string());
             }
@@ -1125,6 +1177,7 @@ pub fn run() {
             take_pending_open,
             parameters,
             open_file,
+            import_files,
             engine_version,
             list_fonts
         ])
@@ -1425,5 +1478,54 @@ mod tests {
             "watcher wrongly reported the self-write as an external edit"
         );
         assert!(ext_seen, "watcher did not report the later external change");
+    }
+
+    #[test]
+    fn import_files_reads_text_and_skips_binary() {
+        let dir = std::env::temp_dir().join("openrscad_import_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("star.svg");
+        std::fs::write(&svg, "<svg><rect width='1' height='1'/></svg>").unwrap();
+        // Invalid UTF-8 stands in for a binary asset.
+        let bin = dir.join("mesh.stl");
+        std::fs::write(&bin, [0xff, 0xfe, 0x00, 0x01]).unwrap();
+
+        let r = import_files(vec![
+            svg.to_string_lossy().into_owned(),
+            bin.to_string_lossy().into_owned(),
+        ]);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(r.files.len(), 1);
+        assert_eq!(r.files[0].name, "star.svg");
+        assert!(r.files[0].content.contains("<rect"));
+        assert_eq!(r.skipped, vec!["mesh.stl".to_string()]);
+    }
+
+    #[test]
+    fn imported_svg_renders_through_the_native_resolver() {
+        // The end-to-end desktop path: an imported SVG lives as an in-memory tab
+        // and `import("star.svg")` resolves it via the combined resolver's
+        // load_bytes, then extrudes to a real solid.
+        let cache = Arc::new(Mutex::new(openrscad_geom::GeomCache::new()));
+        let svg = "<svg width=\"100\" height=\"100\">\
+                   <rect x=\"0\" y=\"0\" width=\"40\" height=\"30\"/></svg>";
+        let (mesh, _, _, _) = eval_and_render(
+            &cache,
+            "linear_extrude(height=5) import(\"star.svg\");",
+            ".",
+            &[],
+            &[],
+            &["star.svg".into()],
+            &[svg.into()],
+            false,
+        )
+        .unwrap();
+        // 40 × 30 profile extruded 5mm.
+        assert!(
+            (mesh.volume() - 6000.0).abs() < 1e-3,
+            "vol = {}",
+            mesh.volume()
+        );
     }
 }

@@ -109,6 +109,9 @@ import {
   saveBytesNative,
   openScadFile,
   openScadPath,
+  importFilesNative,
+  readImports,
+  listenFileDrop,
   takePendingOpen,
   onFileChanged,
   saveSource,
@@ -974,6 +977,9 @@ export function App() {
           case "open":
             void openNative();
             break;
+          case "import":
+            void importNative();
+            break;
           case "save":
             saveActiveRef.current();
             break;
@@ -1011,6 +1017,19 @@ export function App() {
         .then((p) => {
           if (p) void openByPath(p);
         })
+        .catch(() => {});
+
+      // Native file drops: Tauri intercepts OS drops so the webview's HTML5
+      // `onDrop` never fires on desktop. Read the dropped paths as text tabs.
+      listenFileDrop({
+        onHover: (active) => setDragActive(active),
+        onDrop: (paths) => {
+          void readImports(paths)
+            .then(applyImportResult)
+            .catch(() => {});
+        },
+      })
+        .then((u) => unlisteners.push(u))
         .catch(() => {});
 
       // Silent update check on launch: shows the banner only if an update is
@@ -1205,6 +1224,42 @@ export function App() {
         setMainFile(f.name, f.content, f.dir, f.path);
         void watchFiles([f.path]);
       }
+    } catch {
+      /* dialog cancelled / unavailable */
+    }
+  }
+
+  /** Add files read from disk (native dialog or Tauri file drop) as tabs, and
+   *  warn about any binary asset the native engine can't take through the tab
+   *  channel. Mirrors the browser `importFiles` messaging. */
+  function applyImportResult(r: {
+    files: { name: string; content: string }[];
+    skipped: string[];
+  }) {
+    const msgs: string[] = [];
+    if (r.skipped.length) {
+      msgs.push(
+        `Can't import ${r.skipped.join(", ")} — binary meshes (binary STL, 3MF) ` +
+          `aren't supported by the desktop engine; use a text profile (SVG, DXF) ` +
+          `or an ASCII/text mesh (OFF, OBJ, AMF).`,
+      );
+    }
+    if (r.files.length) {
+      const first = r.files[0].name;
+      msgs.push(
+        `Imported ${r.files.map((f) => f.name).join(", ")} — reference ` +
+          `${r.files.length > 1 ? "them" : "it"} with import("${first}");`,
+      );
+    }
+    setImportMsg(msgs.join(" "));
+    addReadFiles(r.files);
+  }
+
+  /** Desktop "Import file…": pick importable files and add them as tabs. */
+  async function importNative() {
+    try {
+      const r = await importFilesNative();
+      if (r) applyImportResult(r);
     } catch {
       /* dialog cancelled / unavailable */
     }
@@ -1665,7 +1720,16 @@ export function App() {
       );
     }
     setImportMsg(msgs.join(" "));
-    const read = [...readText, ...readBin];
+    addReadFiles([...readText, ...readBin]);
+  }
+
+  /** Add already-read files to the project as tabs. A .scad dropped onto the
+   *  pristine default project replaces main so it renders immediately;
+   *  everything else is appended. Shared by browser import (drag / file input)
+   *  and desktop import (native dialog / Tauri file drop). */
+  function addReadFiles(
+    read: { name: string; content: string; bytes?: string }[],
+  ) {
     if (read.length === 0) return;
     let next = filesRef.current.slice();
     const isPristine = next[0]?.content === DEFAULT_FILES[0].content;
@@ -2287,6 +2351,9 @@ export function App() {
               </PopoverAction>
             )}
             {TAURI && <PopoverAction onClick={openNative}>Open…</PopoverAction>}
+            {TAURI && (
+              <PopoverAction onClick={importNative}>Import file…</PopoverAction>
+            )}
             {TAURI && (
               <PopoverAction onClick={() => saveActiveRef.current()}>
                 Save
