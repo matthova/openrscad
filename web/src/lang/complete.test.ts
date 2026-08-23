@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { openscad } from "./openscad";
 import { openscadCompletion } from "./complete";
+import { setWorkspaceFiles } from "./workspaceFiles";
 
 /** Build an OpenSCAD editor state, force a full parse, and run the completion
  *  source at `pos` (end of doc by default). `explicit` mimics Ctrl-Space. */
@@ -102,5 +103,75 @@ describe("openscadCompletion", () => {
   it("does not offer fonts once the string is closed", () => {
     const l = labels('text(font="Liberation Sans", size=5)');
     expect(l).not.toContain("Liberation Serif");
+  });
+});
+
+describe("workspace file completion", () => {
+  beforeEach(() => {
+    setWorkspaceFiles(["gears.scad", "logo.svg", "part.dxf", "mesh.stl"]);
+  });
+  afterEach(() => setWorkspaceFiles([]));
+
+  it("offers sibling .scad files inside `include <…>`", () => {
+    const doc = "include <";
+    const r = complete(doc);
+    expect(r).not.toBeNull();
+    expect(r!.from).toBe(doc.length); // just after the `<`
+    const l = r!.options.map((o) => o.label);
+    expect(l).toContain("gears.scad");
+    // include/use is source-only: no assets, no builtins.
+    expect(l).not.toContain("logo.svg");
+    expect(l).not.toContain("cube");
+  });
+
+  it("offers .scad files inside `use <…>` and replaces the typed prefix", () => {
+    const doc = "use <gea";
+    const r = complete(doc);
+    expect(r).not.toBeNull();
+    expect(r!.from).toBe(doc.indexOf("<") + 1);
+    expect(r!.options.map((o) => o.label)).toContain("gears.scad");
+  });
+
+  it('offers non-.scad assets inside `import("…")`', () => {
+    const doc = 'import("';
+    const r = complete(doc);
+    expect(r).not.toBeNull();
+    expect(r!.from).toBe(doc.length);
+    const l = r!.options.map((o) => o.label);
+    expect(l).toContain("mesh.stl");
+    expect(l).toContain("logo.svg");
+    expect(l).toContain("part.dxf");
+    // import can't take a .scad, and no builtins in a path string.
+    expect(l).not.toContain("gears.scad");
+    expect(l).not.toContain("cube");
+  });
+
+  it('offers assets inside the named `import(file="…")` form', () => {
+    const doc = 'import(file="me';
+    const r = complete(doc);
+    expect(r).not.toBeNull();
+    expect(r!.from).toBe(doc.lastIndexOf('"') + 1);
+    expect(r!.options.map((o) => o.label)).toContain("mesh.stl");
+  });
+
+  it('offers assets inside `surface("…")`', () => {
+    const doc = 'surface("';
+    const l = complete(doc)?.options.map((o) => o.label) ?? [];
+    expect(l).toContain("mesh.stl");
+  });
+
+  it("does not trigger file completion on a non-first string argument", () => {
+    const doc = 'import("mesh.stl", layer="';
+    const r = complete(doc);
+    // Falls through to the ordinary word source (or null), never a file list.
+    const l = r?.options.map((o) => o.label) ?? [];
+    expect(l).not.toContain("mesh.stl");
+  });
+
+  it("offers nothing (but not builtins) when no siblings match", () => {
+    setWorkspaceFiles(["logo.svg"]); // no .scad sibling
+    const r = complete("include <");
+    expect(r).not.toBeNull();
+    expect(r!.options).toHaveLength(0);
   });
 });

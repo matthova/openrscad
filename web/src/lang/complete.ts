@@ -9,6 +9,7 @@ import type {
 import { syntaxTree } from "@codemirror/language";
 import { BUILTINS } from "./builtins";
 import { systemFontCompletions, fontInfo } from "../systemFonts";
+import { scadFileCompletions, assetFileCompletions } from "./workspaceFiles";
 
 // The `font=` values offered inside a `text(font="…")` string. Mirrors the
 // bundled Liberation family in crates/openrscad-eval/src/text.rs (and its
@@ -101,6 +102,29 @@ export function openscadCompletion(
     for (const c of FONT_COMPLETIONS) byLabel.set(c.label, c);
     for (const c of systemFontCompletions()) byLabel.set(c.label, c);
     return { from, options: [...byLabel.values()], validFor: /^[^"]*$/ };
+  }
+
+  // Inside an `include <…>` or `use <…>` path, offer sibling `.scad` files.
+  // `from` is placed just after the `<` so the bare filename replaces what's
+  // typed, and the value can't cross `>` or a newline (mirrors the IncludePath
+  // grammar token). Returned even when empty so builtins don't leak into a path.
+  const incPath = ctx.matchBefore(/\b(?:include|use)\s*<[^>\n]*/);
+  if (incPath) {
+    const from = incPath.from + incPath.text.indexOf("<") + 1;
+    return { from, options: scadFileCompletions(), validFor: /^[^>\n]*$/ };
+  }
+
+  // Inside an `import("…")` / `surface("…")` path string — including the named
+  // `file="…"` form — offer sibling asset files. Like `font=`, `from` sits just
+  // after the opening quote and the match can't cross the closing quote. The
+  // leading `\s*` after `(` only admits the first string argument, so a later
+  // string arg (e.g. import's `layer=`) doesn't trigger file completion.
+  const filePath = ctx.matchBefore(
+    /\b(?:import|surface)\s*\(\s*(?:file\s*=\s*)?"[^"\n]*/,
+  );
+  if (filePath) {
+    const from = filePath.from + filePath.text.indexOf('"') + 1;
+    return { from, options: assetFileCompletions(), validFor: /^[^"\n]*$/ };
   }
 
   const word = ctx.matchBefore(/\$?[\w]*/);
