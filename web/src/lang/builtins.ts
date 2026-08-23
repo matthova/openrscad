@@ -387,6 +387,19 @@ export const BUILTINS: Builtin[] = [
     doc: "Find matches in a list/string.",
   },
   {
+    name: "textmetrics",
+    isModule: false,
+    signature:
+      "textmetrics(text, size=10, font, halign, valign, spacing, direction, language, script)",
+    doc: "Measure text; returns an object with position, size, ascent, descent, offset, advance.",
+  },
+  {
+    name: "fontmetrics",
+    isModule: false,
+    signature: "fontmetrics(size=10, font)",
+    doc: "Measure a font; returns an object with nominal, max, interline, font.",
+  },
+  {
     name: "parent_module",
     isModule: false,
     signature: "parent_module(i=1)",
