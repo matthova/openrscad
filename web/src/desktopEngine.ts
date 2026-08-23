@@ -442,6 +442,76 @@ export async function openScadFile(): Promise<OpenedFile | null> {
   return invoke<OpenedFile>("open_file", { path });
 }
 
+/** Importable file formats (2D profiles + text meshes) for `import()`. Binary
+ *  STL/3MF aren't listed: the native engine can't take them through the tab
+ *  channel, so offering them in the picker would only disappoint. */
+export const IMPORT_EXTENSIONS = [
+  "svg",
+  "dxf",
+  "scad",
+  "off",
+  "obj",
+  "amf",
+  "stl",
+  "csv",
+  "dat",
+  "txt",
+  "json",
+];
+
+/** One imported file read as text; parallels the browser import path. */
+export interface ImportedFile {
+  name: string;
+  content: string;
+}
+
+export interface ImportResult {
+  files: ImportedFile[];
+  /** Names skipped because they weren't UTF-8 text (binary assets). */
+  skipped: string[];
+}
+
+/** Read a set of on-disk paths for `import()` as text tabs (native). */
+export async function readImports(paths: string[]): Promise<ImportResult> {
+  if (paths.length === 0) return { files: [], skipped: [] };
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ImportResult>("import_files", { paths });
+}
+
+/** Show a native open dialog for importable files and read the chosen ones as
+ *  text tabs (native only). Returns null if the dialog was cancelled. */
+export async function importFilesNative(): Promise<ImportResult | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    multiple: true,
+    filters: [{ name: "Importable", extensions: IMPORT_EXTENSIONS }],
+  });
+  if (!picked) return null;
+  const paths = (Array.isArray(picked) ? picked : [picked]).filter(
+    (p): p is string => typeof p === "string",
+  );
+  return readImports(paths);
+}
+
+/** Register a listener for native (Tauri) file drops, which the webview's HTML5
+ *  drop event never sees. `onDrop` gets the dropped paths; `onHover` toggles the
+ *  drop-overlay highlight. Returns an unlisten function. */
+export async function listenFileDrop(handlers: {
+  onDrop: (paths: string[]) => void;
+  onHover: (active: boolean) => void;
+}): Promise<() => void> {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const p = event.payload;
+    if (p.type === "over" || p.type === "enter") handlers.onHover(true);
+    else if (p.type === "leave") handlers.onHover(false);
+    else if (p.type === "drop") {
+      handlers.onHover(false);
+      if (p.paths.length) handlers.onDrop(p.paths);
+    }
+  });
+}
+
 /** Load a `.scad` file by known path (open-with / double-click). */
 export async function openScadPath(path: string): Promise<OpenedFile> {
   const { invoke } = await import("@tauri-apps/api/core");
