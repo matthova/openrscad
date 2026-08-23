@@ -22,6 +22,11 @@ pub enum Value {
     /// A function value: parameters, body, and the lexical environment it
     /// closed over at definition time.
     Function(Rc<crate::FnClosure>),
+    /// A key→value object with insertion order preserved. OpenSCAD calls this an
+    /// `ObjectType`; it cannot be constructed in source, only returned by the
+    /// `textmetrics()` / `fontmetrics()` builtins, and its fields are read with
+    /// `.name` or `["name"]`. `Rc`-backed for O(1) clone like [`Value::Vector`].
+    Object(Rc<Vec<(String, Value)>>),
 }
 
 // Manual impls: `Function` captures a scope chain (with reference cycles), so
@@ -36,6 +41,10 @@ impl std::fmt::Debug for Value {
             Value::Vector(v) => f.debug_list().entries(v.iter()).finish(),
             Value::Range { start, step, end } => write!(f, "[{start}:{step}:{end}]"),
             Value::Function(_) => write!(f, "<function>"),
+            Value::Object(m) => f
+                .debug_map()
+                .entries(m.iter().map(|(k, v)| (k, v)))
+                .finish(),
         }
     }
 }
@@ -51,6 +60,11 @@ pub fn vector(v: Vec<Value>) -> Value {
     Value::Vector(Rc::new(v))
 }
 
+/// Construct an object value from ordered key→value entries.
+pub fn object(entries: Vec<(String, Value)>) -> Value {
+    Value::Object(Rc::new(entries))
+}
+
 impl Value {
     /// OpenSCAD truthiness.
     pub fn truthy(&self) -> bool {
@@ -63,6 +77,7 @@ impl Value {
             Value::Vector(v) => !v.is_empty(),
             Value::Range { .. } => true,
             Value::Function(_) => true,
+            Value::Object(m) => !m.is_empty(),
         }
     }
 
@@ -109,6 +124,16 @@ impl Value {
                 format_number(*end)
             ),
             Value::Function(f) => format_function(&f.params, &f.body),
+            // OpenSCAD prints an object as `{ key = value; … }` — a space after
+            // `{`, each entry closed with `; ` (including the last), then `}`.
+            Value::Object(m) => {
+                let mut s = String::from("{ ");
+                for (k, v) in m.iter() {
+                    s.push_str(&format!("{k} = {}; ", v.repr()));
+                }
+                s.push('}');
+                s
+            }
         }
     }
 

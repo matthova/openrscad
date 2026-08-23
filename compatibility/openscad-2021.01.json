@@ -2342,6 +2342,57 @@
       ]
     },
     {
+      "id": "function.textmetrics",
+      "category": "function",
+      "surface": "textmetrics(text, size, font, halign, valign, spacing, direction, language, script)",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Returns an object with position, size, ascent, descent, offset, and advance for a text run, shaped with the same rustybuzz path as text(). The ink box is derived from exact glyph extents, so it matches the oracle to <0.01mm; OpenSCAD's FreeType fixed-point outline scaling is not replicated (documented in COMPAT.md).",
+      "notes": "Experimental in OpenSCAD (requires --enable=textmetrics). Field values and alignment behaviour are covered by crates/openrscad-eval/tests/textmetrics.rs against the 2024.12 oracle."
+    },
+    {
+      "id": "function.fontmetrics",
+      "category": "function",
+      "surface": "fontmetrics(size, font)",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "Returns an object with nominal (hhea) and max (glyph-bbox) ascent/descent, interline advance, and the resolved font family/style. Values are a straight scaling of the face's tables and match the oracle to <1e-3.",
+      "notes": "Experimental in OpenSCAD (requires --enable=textmetrics)."
+    },
+    {
+      "id": "value.object",
+      "category": "value",
+      "surface": "object.field / object[\"field\"]",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "The ObjectType value returned by textmetrics()/fontmetrics(): an ordered key->value map read with .field or [\"field\"], echoed as `{ key = value; ... }`. Cannot be constructed in source, matching upstream.",
+      "notes": "Introduced to carry textmetrics/fontmetrics results; see COMPAT.md."
+    },
+    {
       "id": "module.linear_extrude.core",
       "category": "module",
       "surface": "linear_extrude(height, center, twist, scale, slices)",

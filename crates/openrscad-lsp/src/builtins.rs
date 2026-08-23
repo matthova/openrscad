@@ -343,6 +343,18 @@ pub static BUILTINS: &[Builtin] = &[
         "Find matches in a list/string."
     ),
     b!(
+        "textmetrics",
+        function,
+        "textmetrics(text, size=10, font, halign, valign, spacing, direction, language, script)",
+        "Measure text; returns an object with position, size, ascent, descent, offset, advance."
+    ),
+    b!(
+        "fontmetrics",
+        function,
+        "fontmetrics(size=10, font)",
+        "Measure a font; returns an object with nominal, max, interline, font."
+    ),
+    b!(
         "parent_module",
         function,
         "parent_module(i=1)",

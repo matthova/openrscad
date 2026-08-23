@@ -141,13 +141,24 @@ fn parse_font(font: &str) -> (String, Weight, Style) {
     (family, weight, slant)
 }
 
+/// The resolved-face facts a caller may want alongside the [`Face`] itself.
+pub struct FaceMeta {
+    /// Whether the requested *family* exists (see [`with_face`]); `false` means
+    /// the caller fell back to Liberation Sans and should warn.
+    pub known: bool,
+    /// The resolved face's family name, e.g. `Liberation Sans`.
+    pub family: String,
+    /// The resolved face's OpenSCAD `:style=` bucket, e.g. `Regular`, `Bold`.
+    pub style: String,
+}
+
 /// Resolve a `font` string against the shared database and run `f` with the
-/// matched [`Face`] and whether the requested *family* exists. An unknown family
-/// falls back to Liberation Sans and reports `false` so the caller can warn; an
+/// matched [`Face`] and its [`FaceMeta`]. An unknown family falls back to
+/// Liberation Sans and reports `known=false` so the caller can warn; an
 /// unavailable *style* within a known family silently uses the closest face
 /// fontdb offers. The bundled Liberation Sans is always present, so a face is
 /// always produced.
-fn with_face<T>(font: &str, f: impl FnOnce(&Face, bool) -> T) -> T {
+fn with_face<T>(font: &str, f: impl FnOnce(&Face, &FaceMeta) -> T) -> T {
     let (family, weight, slant) = parse_font(font);
     let db = db().read().expect("font db lock");
 
@@ -175,11 +186,24 @@ fn with_face<T>(font: &str, f: impl FnOnce(&Face, bool) -> T) -> T {
         .or_else(|| query(DEFAULT_FAMILY))
         .expect("bundled Liberation Sans is always available");
 
+    // Report the *resolved* face's own family and style (what fontconfig would
+    // report to OpenSCAD's `fontmetrics().font`), not the requested string.
+    let info = db.face(id).expect("resolved font id is valid");
+    let meta = FaceMeta {
+        known,
+        family: info
+            .families
+            .first()
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| DEFAULT_FAMILY.to_string()),
+        style: style_label(info.weight, info.style).to_string(),
+    };
+
     db.with_face_data(id, |data, index| {
         // A `rustybuzz::Face` derefs to the `ttf_parser::Face` the outliner
         // wants, so one face serves both shaping and glyph outlines.
         let face = Face::from_slice(data, index).expect("registered font parses");
-        f(&face, known)
+        f(&face, &meta)
     })
     .expect("resolved font id is valid")
 }
@@ -258,7 +282,7 @@ pub struct TextParams<'a> {
 /// `known` is whether the requested family exists (see [`with_face`]); `false`
 /// means the caller should warn that it fell back to Liberation Sans.
 pub fn render_text(font: &str, params: &TextParams) -> (Vec<[f64; 2]>, Vec<Vec<u32>>, bool) {
-    with_face(font, |face, known| {
+    with_face(font, |face, meta| {
         let (points, paths) = text_contours(&TextOpts {
             text: params.text,
             face,
@@ -271,7 +295,160 @@ pub fn render_text(font: &str, params: &TextParams) -> (Vec<[f64; 2]>, Vec<Vec<u
             language: params.language,
             segments: params.segments,
         });
-        (points, paths, known)
+        (points, paths, meta.known)
+    })
+}
+
+/// What `textmetrics()` reports, all in mm. `position`/`size` are the ink
+/// bounding box *after* alignment; `ascent`/`descent` are the ink top/bottom
+/// relative to the baseline (unaffected by `valign`); `offset` is the alignment
+/// shift applied; `advance` is the total pen travel.
+pub struct TextMetrics {
+    pub position: [f64; 2],
+    pub size: [f64; 2],
+    pub ascent: f64,
+    pub descent: f64,
+    pub offset: [f64; 2],
+    pub advance: [f64; 2],
+}
+
+/// Measure `text(font=…, …)` for `textmetrics()`. The ink box comes from exact
+/// glyph extents (so it is independent of `$fn`); the alignment offset and
+/// advance are computed exactly as [`text_contours`] lays the run out. Returns
+/// all-zero for empty/blank text, matching upstream. `known` is whether the
+/// requested family exists (the caller warns on a fallback, as for `text()`).
+pub fn text_metrics(font: &str, params: &TextParams) -> (TextMetrics, bool) {
+    with_face(font, |face, meta| (measure_text(face, params), meta.known))
+}
+
+fn measure_text(face: &Face, params: &TextParams) -> TextMetrics {
+    let zero = TextMetrics {
+        position: [0.0, 0.0],
+        size: [0.0, 0.0],
+        ascent: 0.0,
+        descent: 0.0,
+        offset: [0.0, 0.0],
+        advance: [0.0, 0.0],
+    };
+    let Some(run) = shape_run(
+        face,
+        params.text,
+        params.size,
+        params.direction,
+        params.script,
+        params.language,
+    ) else {
+        return zero;
+    };
+    let scale = run.scale;
+    let vertical = run.vertical;
+    let infos = run.buffer.glyph_infos();
+    let positions = run.buffer.glyph_positions();
+
+    let adv = |v: i32| v as f64 * scale * params.spacing;
+    let v_advance = vertical_line_advance(face, scale, params.spacing);
+
+    // Lay the run out at the origin (no alignment) and accumulate the ink box
+    // from each glyph's exact bounding box, using the same per-glyph offsets as
+    // `text_contours`. Alignment is then applied analytically below.
+    let (mut pen_x, mut pen_y) = (0.0, 0.0);
+    let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
+    let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
+    let mut any = false;
+    for (info, pos) in infos.iter().zip(positions.iter()) {
+        let gid = ttf_parser::GlyphId(info.glyph_id as u16);
+        if let Some(bb) = face.glyph_bounding_box(gid) {
+            let (ox, oy) = if vertical {
+                let h_adv = face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale;
+                let mid = (bb.y_max as f64 + bb.y_min as f64) / 2.0 * scale;
+                (-h_adv / 2.0, -v_advance / 2.0 - mid)
+            } else {
+                (adv(pos.x_offset), adv(pos.y_offset))
+            };
+            min_x = min_x.min(pen_x + ox + bb.x_min as f64 * scale);
+            max_x = max_x.max(pen_x + ox + bb.x_max as f64 * scale);
+            min_y = min_y.min(pen_y + oy + bb.y_min as f64 * scale);
+            max_y = max_y.max(pen_y + oy + bb.y_max as f64 * scale);
+            any = true;
+        }
+        if vertical {
+            pen_y -= v_advance;
+        } else {
+            pen_x += adv(pos.x_advance);
+            pen_y += adv(pos.y_advance);
+        }
+    }
+    if !any {
+        return zero;
+    }
+
+    let run_w: f64 = positions.iter().map(|p| adv(p.x_advance)).sum();
+    // A vertical run ignores `halign` (it starts at the column origin).
+    let x_off = if vertical {
+        0.0
+    } else {
+        match params.halign {
+            "center" => -run_w / 2.0,
+            "right" => -run_w,
+            _ => 0.0,
+        }
+    };
+    // `valign` shifts against the ink box, matching `text_contours`.
+    let y_off = match params.valign {
+        "top" => -max_y,
+        "bottom" => -min_y,
+        "center" => -(min_y + max_y) / 2.0,
+        _ => 0.0,
+    };
+    TextMetrics {
+        position: [min_x + x_off, min_y + y_off],
+        size: [max_x - min_x, max_y - min_y],
+        ascent: max_y,
+        descent: min_y,
+        offset: [x_off, y_off],
+        advance: if vertical {
+            [0.0, pen_y]
+        } else {
+            [pen_x, pen_y]
+        },
+    }
+}
+
+/// What `fontmetrics()` reports, all in mm (except the font names). `nominal`
+/// ascent/descent are the font's hhea metrics; `max` ascent/descent are its
+/// global glyph-bbox extremes; `interline` is the line-to-line advance.
+pub struct FontMetrics {
+    pub nominal_ascent: f64,
+    pub nominal_descent: f64,
+    pub max_ascent: f64,
+    pub max_descent: f64,
+    pub interline: f64,
+    pub family: String,
+    pub style: String,
+}
+
+/// Measure the face `font` resolves to at `size`, for `fontmetrics()`.
+pub fn font_metrics(font: &str, size: f64) -> (FontMetrics, bool) {
+    with_face(font, |face, meta| {
+        let upem = face.units_per_em() as f64;
+        let scale = if upem > 0.0 {
+            size / upem * (100.0 / 72.0)
+        } else {
+            0.0
+        };
+        let bbox = face.global_bounding_box();
+        let m = FontMetrics {
+            nominal_ascent: face.ascender() as f64 * scale,
+            nominal_descent: face.descender() as f64 * scale,
+            max_ascent: bbox.y_max as f64 * scale,
+            max_descent: bbox.y_min as f64 * scale,
+            // Line-to-line advance = ascent − descent + line gap. `Face::height`
+            // omits the line gap, so add it back explicitly.
+            interline: (face.ascender() - face.descender() + face.line_gap()) as f64 * scale,
+            family: meta.family.clone(),
+            style: meta.style.clone(),
+        };
+        (m, meta.known)
     })
 }
 
@@ -364,26 +541,41 @@ impl ttf_parser::OutlineBuilder for Outliner {
     }
 }
 
-/// Build the glyph contours for `opts` as `(points, paths)` suitable for a
-/// `Node::Polygon`. Coordinates are in mm; the baseline is at y=0 for
-/// `valign="baseline"`.
-fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
-    let face = opts.face;
+/// A shaped run plus the values [`text_contours`] and [`measure_text`] both
+/// derive from it: the mm-per-font-unit scale and whether the run is vertical.
+struct ShapedRun {
+    buffer: rustybuzz::GlyphBuffer,
+    /// Millimetres per font unit.
+    scale: f64,
+    /// True for a top-to-bottom / bottom-to-top run.
+    vertical: bool,
+}
+
+/// Shape `text` with `face` and the OpenSCAD `direction`/`script`/`language`
+/// hints, returning the shaped buffer and derived scale. `None` if the face has
+/// no usable em square. Kept as one function so glyph layout and measurement
+/// shape identically (per-glyph shaping would lose kerning, ligatures, and
+/// complex scripts, where visible glyphs are not the codepoints).
+fn shape_run(
+    face: &Face,
+    text: &str,
+    size: f64,
+    direction: &str,
+    script: &str,
+    language: &str,
+) -> Option<ShapedRun> {
     let upem = face.units_per_em() as f64;
     if upem <= 0.0 {
-        return (Vec::new(), Vec::new());
+        return None;
     }
     // OpenSCAD renders glyphs 100/72 larger than the nominal `size` (a FreeType
     // 72-DPI vs 100-unit-per-point convention); match it so text is the same
     // size as OpenSCAD's.
-    let scale = opts.size / upem * (100.0 / 72.0);
+    let scale = size / upem * (100.0 / 72.0);
 
-    // Shape the whole run at once. Doing this glyph by glyph is what loses
-    // kerning ("AV" comes out 1mm too wide), ligatures ("ffl"), and every
-    // complex script, where the visible glyphs are not the codepoints.
     let mut buffer = UnicodeBuffer::new();
-    buffer.push_str(opts.text);
-    if let Some(dir) = match opts.direction {
+    buffer.push_str(text);
+    if let Some(dir) = match direction {
         "ltr" => Some(Direction::LeftToRight),
         "rtl" => Some(Direction::RightToLeft),
         "ttb" => Some(Direction::TopToBottom),
@@ -393,15 +585,15 @@ fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
     } {
         buffer.set_direction(dir);
     }
-    if !opts.script.is_empty() {
+    if !script.is_empty() {
         if let Some(script) = rustybuzz::Script::from_iso15924_tag(
-            ttf_parser::Tag::from_bytes_lossy(script_tag(opts.script).as_bytes()),
+            ttf_parser::Tag::from_bytes_lossy(script_tag(script).as_bytes()),
         ) {
             buffer.set_script(script);
         }
     }
-    if !opts.language.is_empty() {
-        if let Ok(lang) = opts.language.parse::<rustybuzz::Language>() {
+    if !language.is_empty() {
+        if let Ok(lang) = language.parse::<rustybuzz::Language>() {
             buffer.set_language(lang);
         }
     }
@@ -411,10 +603,48 @@ fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
         buffer.direction(),
         Direction::TopToBottom | Direction::BottomToTop
     );
+    let buffer = rustybuzz::shape(face, &[], buffer);
+    Some(ShapedRun {
+        buffer,
+        scale,
+        vertical,
+    })
+}
 
-    let shaped = rustybuzz::shape(face, &[], buffer);
-    let infos = shaped.glyph_infos();
-    let positions = shaped.glyph_positions();
+/// The vertical line advance for a `ttb`/`btt` run, in mm. A font with no
+/// vertical metrics leaves the shaper to invent them, and its guess is not
+/// upstream's. Measured against 2024.12 on Liberation Sans: the line advance is
+/// the OS/2 typographic ascent-to-descent span (falling back to hhea), each
+/// glyph *centred* in that slot rather than sat on a baseline. Shared so
+/// [`text_contours`] and [`measure_text`] place vertical runs identically.
+fn vertical_line_advance(face: &Face, scale: f64, spacing: f64) -> f64 {
+    let (ta, td) = (face.typographic_ascender(), face.typographic_descender());
+    let span = match (ta, td) {
+        (Some(a), Some(d)) if a - d > 0 => (a - d) as f64,
+        _ => (face.ascender() - face.descender()) as f64,
+    };
+    span * scale * spacing
+}
+
+/// Build the glyph contours for `opts` as `(points, paths)` suitable for a
+/// `Node::Polygon`. Coordinates are in mm; the baseline is at y=0 for
+/// `valign="baseline"`.
+fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
+    let face = opts.face;
+    let Some(run) = shape_run(
+        face,
+        opts.text,
+        opts.size,
+        opts.direction,
+        opts.script,
+        opts.language,
+    ) else {
+        return (Vec::new(), Vec::new());
+    };
+    let scale = run.scale;
+    let vertical = run.vertical;
+    let infos = run.buffer.glyph_infos();
+    let positions = run.buffer.glyph_positions();
 
     // `spacing` stretches the advances, as upstream.
     let adv = |v: i32| v as f64 * scale * opts.spacing;
@@ -433,19 +663,7 @@ fn text_contours(opts: &TextOpts) -> (Vec<[f64; 2]>, Vec<Vec<u32>>) {
     // A vertical run starts at the origin and grows downwards.
     let (x0, y0) = if vertical { (0.0, 0.0) } else { (x0, 0.0) };
 
-    // A font with no vertical metrics leaves the shaper to invent them, and its
-    // guess is not upstream's. Measured against 2024.12 on Liberation Sans: the
-    // line advance is the OS/2 typographic ascent-to-descent span, each glyph is
-    // *centred* in that slot rather than sat on a baseline, and it is centred
-    // horizontally on the column too.
-    let v_advance = {
-        let (ta, td) = (face.typographic_ascender(), face.typographic_descender());
-        let span = match (ta, td) {
-            (Some(a), Some(d)) if a - d > 0 => (a - d) as f64,
-            _ => (face.ascender() - face.descender()) as f64,
-        };
-        span * scale * opts.spacing
-    };
+    let v_advance = vertical_line_advance(face, scale, opts.spacing);
 
     let mut points: Vec<[f64; 2]> = Vec::new();
     let mut paths: Vec<Vec<u32>> = Vec::new();
@@ -538,7 +756,7 @@ mod tests {
     }
     /// Whether the requested family exists in the (bundled-only, in tests) db.
     fn known(font: &str) -> bool {
-        with_face(font, |_, k| k)
+        with_face(font, |_, meta| meta.known)
     }
 
     #[test]

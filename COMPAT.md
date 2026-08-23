@@ -28,6 +28,21 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   linear_extrude(height=7, twist=200, scale=[0.4,1.6], center=true) square([8,5]);
   ```
 
+- **`textmetrics()` reports the ink box from exact glyph extents, not OpenSCAD's
+  FreeType-scaled outline.** OpenSCAD loads each glyph through FreeType at a tiny
+  pixel em (`size·100/72`) and reads the metrics off the 26.6 fixed-point
+  outline, so its ink extremes are pushed out by the quantization. We compute the
+  box from the font's exact glyph bounding boxes instead, which is deterministic,
+  `$fn`-independent, and consistent with the geometry `text()` actually emits. The
+  `position`/`size`/`ascent`/`descent` fields therefore differ by up to ~0.01mm;
+  `advance`, `offset`, and every alignment relationship are exact. `fontmetrics()`
+  is a straight scaling of the face's own tables and matches the oracle to <1e-3.
+  Both are experimental in OpenSCAD (they require `--enable=textmetrics`).
+
+  ```scad
+  echo(textmetrics("Hello", size=10).descent); // -0.135634 here, -0.1408 upstream
+  ```
+
 ## Missing or partial compatibility
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
