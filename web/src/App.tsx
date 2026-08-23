@@ -7,6 +7,7 @@ import { basicSetup } from "codemirror";
 import { autocompletion } from "@codemirror/autocomplete";
 import { indentWithTab } from "@codemirror/commands";
 import { openscad } from "./lang/openscad";
+import { setWorkspaceFiles } from "./lang/workspaceFiles";
 import {
   darkTheme,
   lightTheme,
@@ -461,6 +462,12 @@ export function App() {
 
   const [files, setFiles] = useState<File[]>(filesRef.current);
   const [active, setActive] = useState(activeRef.current);
+  // Feed the editor's path autocomplete (include/use/import/surface) the names of
+  // every *other* file in the workspace, so a sibling `.scad`/asset completes by
+  // name. Excludes the active file — nothing should offer to include itself.
+  useEffect(() => {
+    setWorkspaceFiles(files.filter((_, i) => i !== active).map((f) => f.name));
+  }, [files, active]);
   // The nine fields a completed render replaces, in one state so onResult can
   // fold them through the pure `reduce` (see renderState.ts) reading `prev` from
   // inside the []-deps mount effect. Reads use the destructured names below, so
