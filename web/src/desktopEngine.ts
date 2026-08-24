@@ -620,9 +620,15 @@ export async function saveBytesNative(
   await invoke("save_bytes", { path, bytes: Array.from(bytes) });
 }
 
-/** Native save via a Tauri save dialog + the `save_model` command. */
-export async function saveModelNative(
-  format: "stl" | "off" | "obj" | "3mf" | "amf" | "dxf" | "svg",
+/** Model export format shared by the native save/open-with paths. */
+export type NativeExportFmt =
+  "stl" | "off" | "obj" | "3mf" | "amf" | "dxf" | "svg";
+
+/** Re-render exact geometry and write it to a known disk path (no dialog). Backs
+ *  both the Save dialog flow and "Open in <app>", which writes to a temp file. */
+export async function saveModelToPath(
+  path: string,
+  format: NativeExportFmt,
   source: string,
   names: string[],
   values: string[],
@@ -631,13 +637,7 @@ export async function saveModelNative(
   binNames: string[] = [],
   binData: string[] = [],
 ): Promise<void> {
-  const { save } = await import("@tauri-apps/plugin-dialog");
   const { invoke } = await import("@tauri-apps/api/core");
-  const path = await save({
-    defaultPath: `openrscad.${format}`,
-    filters: [{ name: format.toUpperCase(), extensions: [format] }],
-  });
-  if (!path) return; // cancelled
   await invoke("save_model", {
     path,
     format,
@@ -650,4 +650,68 @@ export async function saveModelNative(
     binNames,
     binData,
   });
+}
+
+/** Native save via a Tauri save dialog + the `save_model` command. */
+export async function saveModelNative(
+  format: NativeExportFmt,
+  source: string,
+  names: string[],
+  values: string[],
+  fileNames: string[],
+  fileContents: string[],
+  binNames: string[] = [],
+  binData: string[] = [],
+): Promise<void> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const path = await save({
+    defaultPath: `openrscad.${format}`,
+    filters: [{ name: format.toUpperCase(), extensions: [format] }],
+  });
+  if (!path) return; // cancelled
+  await saveModelToPath(
+    path,
+    format,
+    source,
+    names,
+    values,
+    fileNames,
+    fileContents,
+    binNames,
+    binData,
+  );
+}
+
+/** An installed application that can open a given file type. */
+export interface AppEntry {
+  name: string;
+  path: string;
+}
+
+/** Apps the OS associates with an export extension, default handler first. Empty
+ *  off macOS (where the "Open in" menu is hidden) or when nothing is installed. */
+export async function appsForExtension(extension: string): Promise<AppEntry[]> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AppEntry[]>("list_apps_for_extension", { extension });
+}
+
+/** A fresh temp-file path for an export bound for "Open in <app>". */
+export async function tempExportPath(format: string): Promise<string> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("temp_export_path", { format });
+}
+
+/** Write already-built bytes to a known disk path (no dialog). */
+export async function writeBytesToPath(
+  path: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("save_bytes", { path, bytes: Array.from(bytes) });
+}
+
+/** Launch a file in a specific application (its bundle path). */
+export async function openPathWith(path: string, app: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("open_path_with", { path, app });
 }

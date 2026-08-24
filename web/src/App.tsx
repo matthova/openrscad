@@ -107,7 +107,13 @@ import {
   DesktopEngine,
   DesktopOpenscadEngine,
   saveModelNative,
+  saveModelToPath,
   saveBytesNative,
+  writeBytesToPath,
+  tempExportPath,
+  openPathWith,
+  appsForExtension,
+  type AppEntry,
   openScadFile,
   openScadPath,
   importFilesNative,
@@ -487,6 +493,20 @@ export function App() {
     overrides,
     diagCounts,
   } = renderState;
+  // Applications that can open the current export format, for the Export
+  // popover's "Open in" section. Desktop-only and enumerated per format; empty
+  // in the browser and on any OS without app enumeration (all but macOS today).
+  const [openWithApps, setOpenWithApps] = useState<AppEntry[]>([]);
+  useEffect(() => {
+    if (!TAURI) return;
+    let live = true;
+    appsForExtension(exportFmt)
+      .then((apps) => live && setOpenWithApps(apps))
+      .catch(() => live && setOpenWithApps([]));
+    return () => {
+      live = false;
+    };
+  }, [exportFmt]);
   const setStatus = (u: Status | ((s: Status) => Status)) =>
     setRenderState((p) => ({
       ...p,
@@ -2132,7 +2152,9 @@ export function App() {
     }
   }
 
-  async function onDownload(format: ExportFmt) {
+  // `openWith` set → export to a temp file and hand it to that application
+  // ("Open in <app>") instead of prompting for a save location.
+  async function onDownload(format: ExportFmt, openWith?: AppEntry) {
     if (status.triangleCount === 0) return;
     const fs = filesRef.current;
     const ov = overridesRef.current;
@@ -2145,30 +2167,60 @@ export function App() {
     const binNames = binLibs.map((f) => f.name);
     const binData = binLibs.map((f) => f.bytes as string);
 
-    // On desktop, write bytes we build client-side via a native save dialog;
-    // in the browser, trigger an anchor download. Used by the wasm-engine export
-    // paths below (the native engine has its own `save_model` re-render path).
-    const saveExport = (data: Uint8Array, ext: string) =>
-      TAURI
-        ? void saveBytesNative(data, ext)
-        : downloadBlob(data, `openrscad.${ext}`);
+    // Deliver client-built bytes: to a chosen app (write a temp file, then open
+    // it), to a native save dialog on desktop, or an anchor download in the
+    // browser. Used by the wasm-engine export paths below (the native engine has
+    // its own `save_model` re-render path).
+    const saveExport = async (data: Uint8Array, ext: string) => {
+      if (openWith) {
+        const path = await tempExportPath(ext);
+        await writeBytesToPath(path, data);
+        await openPathWith(path, openWith.path);
+      } else if (TAURI) {
+        await saveBytesNative(data, ext);
+      } else {
+        downloadBlob(data, `openrscad.${ext}`);
+      }
+    };
 
     // The native re-render export applies only when the native engine produced
     // what's on screen. With the OpenSCAD wasm engine active (even on desktop),
     // fall through to the client-side build paths so the file matches the view.
     if (engineRef.current instanceof DesktopEngine) {
-      // Native: re-render on the native engine and write via a save dialog, so
-      // the exported model is welded/exact (not derived from the render soup).
-      void saveModelNative(
-        format,
-        fs[0].content,
-        names,
-        values,
-        textLibs.map((f) => f.name),
-        textLibs.map((f) => f.content),
-        binNames,
-        binData,
-      );
+      // Native: re-render on the native engine so the exported model is
+      // welded/exact (not derived from the render soup). Either hand it to a
+      // chosen app via a temp file, or write it through a save dialog.
+      try {
+        if (openWith) {
+          const path = await tempExportPath(format);
+          await saveModelToPath(
+            path,
+            format,
+            fs[0].content,
+            names,
+            values,
+            textLibs.map((f) => f.name),
+            textLibs.map((f) => f.content),
+            binNames,
+            binData,
+          );
+          await openPathWith(path, openWith.path);
+        } else {
+          await saveModelNative(
+            format,
+            fs[0].content,
+            names,
+            values,
+            textLibs.map((f) => f.name),
+            textLibs.map((f) => f.content),
+            binNames,
+            binData,
+          );
+        }
+      } catch (err) {
+        setStatus((s) => ({ ...s, error: `export failed: ${String(err)}` }));
+        setConsoleOpen(true);
+      }
       return;
     }
 
@@ -2193,7 +2245,7 @@ export function App() {
           fontBlobs,
           format,
         });
-        saveExport(new TextEncoder().encode(text), format);
+        await saveExport(new TextEncoder().encode(text), format);
       } catch (err) {
         setStatus((s) => ({ ...s, error: `export failed: ${String(err)}` }));
         setConsoleOpen(true);
@@ -2230,26 +2282,31 @@ export function App() {
         return;
       }
     }
-    // Colored 3MF: one object per non-`%` color group (falls back to fused 3MF).
-    if (format === "3mf") {
-      const { positions, groups } = lastPreview.current;
-      const exportable = groups.filter((g) => g.mode !== "background");
+    try {
+      // Colored 3MF: one object per non-`%` color group (falls back to fused 3MF).
+      if (format === "3mf") {
+        const { positions, groups } = lastPreview.current;
+        const exportable = groups.filter((g) => g.mode !== "background");
+        const data =
+          exportable.length > 0
+            ? build3MFColored(positions, exportable)
+            : build3MF(pos);
+        await saveExport(data, "3mf");
+        return;
+      }
       const data =
-        exportable.length > 0
-          ? build3MFColored(positions, exportable)
-          : build3MF(pos);
-      saveExport(data, "3mf");
-      return;
+        format === "off"
+          ? buildOFF(pos)
+          : format === "obj"
+            ? buildOBJ(pos)
+            : format === "amf"
+              ? buildAMF(pos)
+              : buildBinarySTL(pos);
+      await saveExport(data, format);
+    } catch (err) {
+      setStatus((s) => ({ ...s, error: `export failed: ${String(err)}` }));
+      setConsoleOpen(true);
     }
-    const data =
-      format === "off"
-        ? buildOFF(pos)
-        : format === "obj"
-          ? buildOBJ(pos)
-          : format === "amf"
-            ? buildAMF(pos)
-            : buildBinarySTL(pos);
-    saveExport(data, format);
   }
 
   // Keep the imperative refs (editor keymap, native menu) pointing at the latest
@@ -2628,6 +2685,23 @@ export function App() {
               >
                 Frames (zip)
               </PopoverAction>
+              {openWithApps.length > 0 && (
+                <>
+                  <div className="popover-section-label">
+                    Open {exportFmt.toUpperCase()} in
+                  </div>
+                  {openWithApps.map((app) => (
+                    <PopoverAction
+                      key={app.path}
+                      disabled={status.triangleCount === 0}
+                      onClick={() => void onDownload(exportFmt, app)}
+                      title={`Export ${exportFmt.toUpperCase()} and open it in ${app.name}`}
+                    >
+                      {app.name}
+                    </PopoverAction>
+                  ))}
+                </>
+              )}
             </Popover>
           </div>
           <button

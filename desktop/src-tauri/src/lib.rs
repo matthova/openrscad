@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
+mod openwith;
+
 /// Rendering runs on a worker thread with a large stack: recursive libraries
 /// (e.g. BOSL2's attachment system) nest the evaluator deeply.
 const RENDER_STACK: usize = 256 << 20;
@@ -839,6 +841,35 @@ fn save_bytes(path: String, bytes: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, bytes).map_err(|e| format!("write {path}: {e}"))
 }
 
+/// Apps the OS knows can open the given file extension (no leading dot), for the
+/// Export popover's "Open in" section. Empty on platforms without enumeration
+/// support (everything but macOS today), which hides the section in the UI.
+#[tauri::command]
+fn list_apps_for_extension(extension: String) -> Vec<openwith::AppEntry> {
+    openwith::apps_for_extension(&extension)
+}
+
+/// Launch a file in a specific application (its bundle path), used after writing
+/// an export to a temp file for "Open in <app>".
+#[tauri::command]
+fn open_path_with(path: String, app: String) -> Result<(), String> {
+    openwith::open_path_with(&path, &app)
+}
+
+/// A fresh temp-file path for an export bound for "Open in <app>". The caller
+/// writes the model here (via `save_model`/`save_bytes`) then opens it; a
+/// per-launch counter keeps names distinct so a file an app still has open is
+/// never clobbered by the next export.
+#[tauri::command]
+fn temp_export_path(format: String) -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let ext = format.trim().trim_start_matches('.');
+    let mut path = std::env::temp_dir();
+    path.push(format!("openrscad-export-{}-{n}.{ext}", std::process::id()));
+    path.to_string_lossy().into_owned()
+}
+
 /// Watch a set of project files (every tab with a disk path) for external edits.
 /// Replaces the current watcher set.
 #[tauri::command]
@@ -1284,6 +1315,9 @@ pub fn run() {
             save_model,
             save_source,
             save_bytes,
+            list_apps_for_extension,
+            open_path_with,
+            temp_export_path,
             watch_files,
             take_pending_open,
             parameters,
