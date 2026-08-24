@@ -43,6 +43,25 @@ openrscad-syntax = { path = "../../crates/openrscad-syntax" }
 openrscad-eval = { path = "../../crates/openrscad-eval" }
 openrscad-geom = { path = "../../crates/openrscad-geom" }
 
+# macOS "Open in application": enumerate the apps Launch Services associates
+# with a file type (NSWorkspace + UTType). Other platforms use no native APIs.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSWorkspace",
+    "objc2-uniform-type-identifiers",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSString",
+    "NSArray",
+    "NSURL",
+] }
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = [
+    "std",
+    "UTType",
+] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

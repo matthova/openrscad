@@ -6,6 +6,7 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev --config src-tauri/tauri.conf.json",
+    "dev:no-watch": "tauri dev --no-watch --config src-tauri/tauri.conf.json",
     "build": "tauri build --config src-tauri/tauri.conf.json"
   },
   "devDependencies": {
