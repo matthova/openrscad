@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- [#114](https://github.com/matthova/openrscad/pull/114) [`eed53c8`](https://github.com/matthova/openrscad/commit/eed53c8969e810284a30ee7171d722be69857a99) Thanks [@matthova](https://github.com/matthova)! - desktop: add "Open in" to the Export menu — send the current model straight into any installed app that opens the selected format (e.g. a slicer for STL/3MF), macOS only
+
+### Patch Changes
+
+- [#112](https://github.com/matthova/openrscad/pull/112) [`03f408e`](https://github.com/matthova/openrscad/commit/03f408ed5d8caf702e7af9748a5b354152be99a7) Thanks [@matthova](https://github.com/matthova)! - fix(web): prevent the outermost page container from scrolling
+
 ## 0.12.0
 
 ### Minor Changes
