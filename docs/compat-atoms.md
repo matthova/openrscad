@@ -58,56 +58,47 @@ Measurements below were taken at `e011f3f` against OpenSCAD 2024.12.17.
 
 ## Class S — silent differences
 
-These are the release blockers. Each produces a wrong answer with no warning on
-stdout or stderr.
+These are the release blockers — a wrong answer with no warning on stdout or
+stderr. The class is now empty; the closure below is retained for its record.
 
-### A-G11 — twist combined with a non-uniform scale refines the profile differently
+### A-G11 — twist combined with a non-uniform scale — **closed**
 
-Twist alone and non-uniform scale alone each have an exact, measured rule (A-G07,
-A-G10). Applying both at once follows neither.
-
-| repro | OpenSCAD | OpenRSCAD |
+| repro | OpenSCAD | OpenRSCAD (before → after) |
 |---|---:|---:|
-| `$fa=8;$fs=1.5; linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) — **+0.77%** |
+| `$fa=8;$fs=1.5; linear_extrude(height=7,twist=200,scale=[0.4,1.6],center=true) square([8,5]);` | 246.444 (1244 tris) | 248.329 (956 tris) → **246.445 (1244 tris)** |
 
 class S · gap `F-G3` · manifest `module.linear_extrude.twist_scale_refinement`.
-The implementation deliberately keeps the twist-only lengths here rather than
-encoding a guess.
+Two independent black-box rules were identified (OpenSCAD 2026.06.12, which
+reproduces the 2024.12.17 numbers exactly) and both now hold. Gated by
+`corpus/geom/ext_linear_twist_scale{,_neg,_hole}.scad`.
 
-**What is now known.** The refinement is a segment *budget* apportioned across
-the profile edges, capped per edge by `$fs`. Both parts have been isolated by
-measurement — set `$fa` low and the budget never binds, leaving the cap; set
-`$fs` low and the cap never binds, leaving the apportionment. Because the cap is
-exactly `ceil(L / $fs)`, an effective length `L` can be read straight off a
-count.
+**Refinement (the segment budget).** An edge is budgeted by the *peak stretch*
+its direction reaches over the sweep, sampled at the `slices+1` layers actually
+emitted:
 
-*The cap.* For the edge whose own axis does **not** stretch,
-`L = length × max(1, s_perpendicular)` — the scale factor *across* the edge, not
-along it. Every cap-limited measurement fits: with `scale=[1,2]` on a square the
-x-aligned edge gets `L = 20` though it never changes length, and `[1,0.5]`,
-`[0.5,0.5]` and `[2,2]` all land on `length × max(1, s_perp)` too. For the edge
-that *does* stretch, the effective length is neither its own nor its scaled
-length: `[1,2]` gives 12.75 where its own is 10 and its scaled length 20.
+```
+L = max over t in {0, 1/slices, …, 1} of | diag(sx(t), sy(t)) · Rot(t·twist) · d |
+```
 
-*The apportionment.* With `sx = 1` and the budget binding, the x-share is 0.5,
-0.5694, 0.6111 and 0.6361 for `sy` of 1, 1.5, 2 and 2.5. Four shapes were fitted
-against it and all fail: `s_perp/(s_perp + s_own)` (0.6, 0.667, 0.714), the mean
-edge length over the sweep `2/(1 + sy)`, its RMS, and `1/sy`. The measured curve
-sits below the first and crosses the second, so it is not a simple function of
-the swept length.
+where `d` is the edge vector and `sx(t) = 1+(sx-1)t`. Measured per-edge segment
+counts fit this across a `twist × sy` grid to within the `$fs` quantization
+(mean error 0.04 seg). It **unifies** the two previously-closed regimes rather
+than sitting beside them: with no scale `Rot` is isometric and every slice gives
+`|d|` (A-G07's own-length rule); with no twist the max lands at the extreme slice
+giving `max(|d|, |scaled|)` (A-G10, including a shrink keeping the original
+length). The doc's earlier "`length × max(1, s_perp)`" cap was the T=90° special
+case of this max, which is why it did not generalize. Because the max is over the
+discrete slices, a coarse `slices=` shortens `L` — verified at `slices=3`, where
+the stretched edge reads 12.6 not the continuum's 12.8.
 
-*What this is worth.* Implementing the perpendicular-axis rule as far as it is
-known was tried and reverted. It makes the **triangle counts match exactly** on
-three of five cases — so the totals and the slice count are right and only the
-split between edges is wrong — and improves volume on four, but regresses the
-fifth (0.01% → 0.07%) and leaves the headline cases at 0.6–1.1%. A partial
-heuristic that cannot be oracle-gated is worse than a documented gap, so the
-implementation keeps the twist-only lengths.
-
-Closes when that mechanism is identified. The per-quad harness that settled
-A-G09 is the right tool — applied to segment counts rather than diagonals — and
-the base ring must again be taken from the oracle's own output, since OpenSCAD
-re-refines even an explicit `polygon()`.
+**Sweep (the layer transform).** The per-layer point map is
+**rotate-then-scale**, `p ↦ diag(sx(t), sy(t)) · Rot(-t·twist) · p`, applying the
+non-uniform scale in the fixed frame. The old scale-then-rotate could never
+exceed the profile's own radius, but a corner swung toward the y-axis and then
+scaled by `sy=1.6` reaches r≈13 — exactly the oracle's `y=-12.98` excursion, and
+every one of the 24 corner-path vertices matches under this order. Uniform scale
+commutes with the rotation and pure twist leaves the scale at 1, so the two
+closed regimes are untouched; only the combined case moved.
 
 ## Class W / P — visible differences
 
@@ -655,16 +646,16 @@ placement exact. `invert` on a `.dat` heightfield is a no-op in both engines.
 
 | class | atoms | meaning |
 |---|---:|---|
-| S — silent | 1 | A-G11 |
+| S — silent | 0 | — |
 | W — warned | 1 | A-G08 |
 | P — permanent | 3 | A-L02, plus `version()` and 3MF `<build>` assembly |
 | M — missing | 0 | — |
 | U — unproven | 11 | manifest `implemented` entries, all structurally unoracleable |
-| closed | 30 | A-L01, A-G01…A-G07, A-G09, A-G10, A-G12, A-L03…A-L06, A-L08, A-I01…A-I10, A-T01, A-T02, A-X01, A-X02 |
+| closed | 31 | A-L01, A-G01…A-G07, A-G09, A-G10, A-G11, A-G12, A-L03…A-L06, A-L08, A-I01…A-I10, A-T01, A-T02, A-X01, A-X02 |
 
-**Class M is empty**: every missing surface is closed. One silent atom remains
-(A-G11); the eleven `unproven` entries are the residue that no `.scad` oracle can
-reach, not measurement work still owed.
+**Class M and Class S are both empty**: every missing surface and every silent
+difference is closed. The eleven `unproven` entries are the residue that no
+`.scad` oracle can reach, not measurement work still owed.
 
 Eight of the atoms were found by measuring rather than by reading docs:
 A-X01/A-X02 while writing this register, A-G09/A-G10/A-L08 while closing the

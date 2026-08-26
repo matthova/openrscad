@@ -18,16 +18,6 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Known silent differences
 
-- **`linear_extrude` combining twist with a non-uniform scale refines the
-  profile differently.** Twist alone and non-uniform scale alone each have a
-  measured, exact rule, but applying both at once weights the profile edges the
-  *other* way round upstream — the edge that shrinks earns more segments, not
-  fewer — which no rule yet explains. The mesh reads 0.8% high in volume.
-
-  ```scad
-  linear_extrude(height=7, twist=200, scale=[0.4,1.6], center=true) square([8,5]);
-  ```
-
 - **`textmetrics()` reports the ink box from exact glyph extents, not OpenSCAD's
   FreeType-scaled outline.** OpenSCAD loads each glyph through FreeType at a tiny
   pixel em (`size·100/72`) and reads the metrics off the 26.6 fixed-point
@@ -113,6 +103,26 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 The current gates are `corpus/echo` **34/34**, geometry **122/122**, and BOSL2
 **505/513** with eight explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
+
+- **`linear_extrude` combining twist with a non-uniform scale.** This was the
+  last known silent geometry difference (0.8% high in volume). Two rules were
+  identified black-box against the oracle and both now hold. **Refinement:** each
+  profile edge is budgeted by the *peak stretch* its direction reaches over the
+  swept slices — `max_t |diag(sx(t), sy(t)) · Rot(t·twist) · d|` sampled at the
+  `slices+1` layers actually emitted (a coarse `slices=` shortens it). This one
+  rule subsumes the two already-closed regimes: pure twist gives the edge's own
+  length (rotation is isometric) and pure non-uniform scale gives
+  `max(original, scaled)`. **Sweep:** the layer transform is
+  *rotate-then-scale*, applying the non-uniform scale in the fixed frame, so a
+  corner swung toward an axis picks up that axis's factor (the r≈13 excursion the
+  old rotate-of-a-scaled-profile could never reach). Uniform scale commutes with
+  the rotation and pure twist leaves the scale at 1, so only the combined case
+  moved. Gated by `corpus/geom/ext_linear_twist_scale*.scad` (positive/negative
+  twist, shrink, and a holed profile) against the STL oracle.
+
+  ```scad
+  linear_extrude(height=7, twist=200, scale=[0.4,1.6], center=true) square([8,5]);
+  ```
 
 - **An inside-out `polyhedron` adds instead of subtracting.** OpenSCAD winds a
   face clockwise seen from outside; the opposite winding makes the solid
