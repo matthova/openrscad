@@ -1,4 +1,5 @@
 1	test_num_true
+2	test_typeof
 3	test_is_type
 4	test_is_def
 5	test_segs

@@ -1,0 +1,10 @@
+ECHO: "range_str", undef
+ECHO: "range_list", undef
+ECHO: "range_bool", undef
+ECHO: "range_num", false
+ECHO: "range_self_eq", true, false
+ECHO: "each_string", ["a", "b", "c"]
+ECHO: "each_mixed", ["a", "b", "c", "d"]
+ECHO: "search_listkey", [1]
+ECHO: "search_wholerow", [0]
+ECHO: "search_chars", [0, 1]

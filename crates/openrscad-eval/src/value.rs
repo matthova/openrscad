@@ -581,6 +581,12 @@ fn zip_map(a: &[Value], b: &[Value], op: BinOp) -> Vec<Value> {
         .collect()
 }
 
+/// Numeric equality where two nans count as equal — used for range identity, so
+/// a range with a nan bound/step still equals itself.
+fn num_eq(a: f64, b: f64) -> bool {
+    a == b || (a.is_nan() && b.is_nan())
+}
+
 pub fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => x == y,
@@ -601,7 +607,10 @@ pub fn value_eq(a: &Value, b: &Value) -> bool {
                 step: e,
                 end: f,
             },
-        ) => a == d && b == e && c == f,
+            // A range is equal to itself even with a nan bound/step — OpenSCAD
+            // compares the range as an object, so `[0:0/0:1] == [0:0/0:1]`, and
+            // BOSL2's `is_nan(x) = x!=x` must be false for a range.
+        ) => num_eq(*a, *d) && num_eq(*b, *e) && num_eq(*c, *f),
         (Value::Function(x), Value::Function(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }

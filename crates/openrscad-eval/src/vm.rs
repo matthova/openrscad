@@ -503,44 +503,34 @@ pub fn run(
                 let items = stack.split_off(start);
                 stack.push(value::vector(items));
             }
+            // A non-numeric bound or step makes the whole range literal `undef`,
+            // matching the tree-walk evaluator and OpenSCAD.
             Op::MakeRange2 => {
-                let e = stack
-                    .pop()
-                    .unwrap_or(Value::Undef)
-                    .as_number()
-                    .unwrap_or(f64::NAN);
-                let s = stack
-                    .pop()
-                    .unwrap_or(Value::Undef)
-                    .as_number()
-                    .unwrap_or(f64::NAN);
-                let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
-                stack.push(Value::Range {
-                    start: lo,
-                    step: 1.0,
-                    end: hi,
+                let e = stack.pop().unwrap_or(Value::Undef).as_number();
+                let s = stack.pop().unwrap_or(Value::Undef).as_number();
+                stack.push(match (s, e) {
+                    (Some(s), Some(e)) => {
+                        let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
+                        Value::Range {
+                            start: lo,
+                            step: 1.0,
+                            end: hi,
+                        }
+                    }
+                    _ => Value::Undef,
                 });
             }
             Op::MakeRange3 => {
-                let e = stack
-                    .pop()
-                    .unwrap_or(Value::Undef)
-                    .as_number()
-                    .unwrap_or(f64::NAN);
-                let st = stack
-                    .pop()
-                    .unwrap_or(Value::Undef)
-                    .as_number()
-                    .unwrap_or(1.0);
-                let s = stack
-                    .pop()
-                    .unwrap_or(Value::Undef)
-                    .as_number()
-                    .unwrap_or(f64::NAN);
-                stack.push(Value::Range {
-                    start: s,
-                    step: st,
-                    end: e,
+                let e = stack.pop().unwrap_or(Value::Undef).as_number();
+                let st = stack.pop().unwrap_or(Value::Undef).as_number();
+                let s = stack.pop().unwrap_or(Value::Undef).as_number();
+                stack.push(match (s, st, e) {
+                    (Some(s), Some(st), Some(e)) => Value::Range {
+                        start: s,
+                        step: st,
+                        end: e,
+                    },
+                    _ => Value::Undef,
                 });
             }
             Op::PushBool(b) => stack.push(Value::Bool(*b)),

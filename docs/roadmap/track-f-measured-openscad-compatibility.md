@@ -55,9 +55,9 @@ Each manifest entry has exactly one status:
 
 | evidence | current result | what it establishes | what it does not establish |
 |---|---:|---|---|
-| `xtask echo` | 34/34 | selected expression, scope, comprehension, builtin, and file-resolution behavior | complete syntax/builtin/diagnostic coverage |
-| `xtask geom` | 122/122 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
-| `xtask bosl2` | 505/513 blocks | broad real-library function behavior | all BOSL2 modules or the eight expected failures |
+| `xtask echo` | 35/35 | selected expression, scope, comprehension, builtin, and file-resolution behavior | complete syntax/builtin/diagnostic coverage |
+| `xtask geom` | 125/125 | selected mesh metrics vs OpenSCAD 2024.12 | every parameter, all vector output, both kernels, or byte-identical meshes |
+| `xtask bosl2` | 511/513 blocks | broad real-library function behavior | all BOSL2 modules or the two expected failures |
 | Rust workspace tests | 265 tests | local invariants and host integration | upstream equivalence |
 
 The executable manifest currently classifies 190 surfaces: 174 `verified`, 11
@@ -210,7 +210,7 @@ M10 is complete only when all of the following are CI-enforced:
 - `COMPAT.md`, completion metadata, and the manifest cannot drift without a CI
   failure.
 
-Passing 122/122 or 505/513 remains useful evidence, but completion is defined by
+Passing 125/125 or 511/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
 
 **Where this stands:** the first criterion is met apart from the F-G7 decision;

@@ -5,6 +5,7 @@
 5	test_ends_with
 6	test_format_int
 7	test_format_fixed
+8	test_format_float
 9	test_is_digit
 10	test_is_hexdigit
 11	test_is_letter
@@ -16,9 +17,11 @@
 17	test_parse_int
 18	test_str_join
 19	test_str_split
+20	test_str_strip
 21	test_substr
 22	test_suffix
 23	test_str_find
+24	test_format
 25	test_echofmt
 26	test_str_pad
 27	test_str_replace_char

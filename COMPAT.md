@@ -36,10 +36,14 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 ## Missing or partial compatibility
 
 - **BOSL2 function-suite coverage is partial and gated.** `xtask bosl2` passes
-  505/513 pinned blocks across 15 files. The expected failures are
-  `test_gaussian_rands`, `test_format`, `test_format_float`, `test_str_strip`,
-  `test_hstack`, `test_typeof`, `test_f_acos`, and `test_struct_val`. This is
-  broad library evidence, not the complete BOSL2 module suite.
+  511/513 pinned blocks across 15 files. The two expected failures are
+  `test_gaussian_rands` (needs OpenSCAD's exact PRNG, an intentional divergence
+  shared with `rands()`) and `test_f_acos` (asserts trig results *exactly* —
+  `acos(0.5) == 60` — where our `x.acos().to_degrees()` carries a ~1e-15 error
+  and OpenSCAD returns the exact value; matching it means reproducing OpenSCAD's
+  trig-result cleanup across every inverse/forward trig, a broader numerical-
+  parity change left to its own pass). This is broad library evidence, not the
+  complete BOSL2 module suite.
 
 ## Warned divergences
 
@@ -100,8 +104,8 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
 
 ## Closed since M0
 
-The current gates are `corpus/echo` **34/34**, geometry **122/122**, and BOSL2
-**505/513** with eight explicit expected failures. Individual closures below state
+The current gates are `corpus/echo` **35/35**, geometry **125/125**, and BOSL2
+**511/513** with two explicit expected failures. Individual closures below state
 their oracle or regression evidence where relevant:
 
 - **`linear_extrude` combining twist with a non-uniform scale.** This was the

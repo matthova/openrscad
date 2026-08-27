@@ -2358,29 +2358,38 @@ impl Interp<'_> {
                 Ok(value::vector(out))
             }
             Expr::Range { start, step, end } => {
-                let s = self.eval_expr(start)?.as_number().unwrap_or(f64::NAN);
-                let e = self.eval_expr(end)?.as_number().unwrap_or(f64::NAN);
+                // A non-numeric bound or step makes the whole literal `undef` in
+                // OpenSCAD (`[0:"a":10]`, `[true:1:10]`), so every part must be a
+                // number — nan/inf included, which stay as a degenerate range.
+                let sv = self.eval_expr(start)?;
+                let ev = self.eval_expr(end)?;
                 match step {
                     // 3-arg range: kept as written (empty if step direction
                     // contradicts start/end).
                     Some(x) => {
-                        let st = self.eval_expr(x)?.as_number().unwrap_or(1.0);
-                        Ok(Value::Range {
-                            start: s,
-                            step: st,
-                            end: e,
-                        })
+                        let stv = self.eval_expr(x)?;
+                        match (sv.as_number(), stv.as_number(), ev.as_number()) {
+                            (Some(s), Some(st), Some(e)) => Ok(Value::Range {
+                                start: s,
+                                step: st,
+                                end: e,
+                            }),
+                            _ => Ok(Value::Undef),
+                        }
                     }
                     // 2-arg range: OpenSCAD normalizes to ascending, step 1
                     // (so `[5:2]` becomes `[2:1:5]`).
-                    None => {
-                        let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
-                        Ok(Value::Range {
-                            start: lo,
-                            step: 1.0,
-                            end: hi,
-                        })
-                    }
+                    None => match (sv.as_number(), ev.as_number()) {
+                        (Some(s), Some(e)) => {
+                            let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
+                            Ok(Value::Range {
+                                start: lo,
+                                step: 1.0,
+                                end: hi,
+                            })
+                        }
+                        _ => Ok(Value::Undef),
+                    },
                 }
             }
             Expr::Unary { op, expr } => {
@@ -2716,6 +2725,9 @@ impl Interp<'_> {
                     match v {
                         Value::Vector(xs) => out.extend(xs.iter().cloned()),
                         r @ Value::Range { .. } => out.extend(iter_values(&r)?),
+                        // `each` over a string spreads its characters, as
+                        // OpenSCAD does (`[each "ab"]` is `["a", "b"]`).
+                        Value::Str(s) => out.extend(s.chars().map(|c| Value::Str(c.to_string()))),
                         Value::Undef => {}
                         other => out.push(other),
                     }
@@ -3608,15 +3620,17 @@ fn search(args: &[Value]) -> Value {
         }
     };
     let match_indices = |needle: &Value| -> Vec<usize> {
-        // OpenSCAD: with no explicit `index_col_num`, a *list* needle is matched
-        // against the whole row (finding a vector in a list of vectors), while a
-        // scalar needle matches against column 0. An explicit index always
-        // matches against that column.
-        let whole_row = !index_given && matches!(needle, Value::Vector(_));
+        // OpenSCAD matches a needle against the search column (column 0 by
+        // default, or an explicit `index_col_num`). With no explicit index a
+        // *list* needle also matches a whole row that equals it — so a list key
+        // is found whether the table stores it in column 0 (`[[5,4],3]`) or as a
+        // bare row (`[1,2]` in a list of vectors), column 0 winning within a row.
+        let allow_whole_row = !index_given && matches!(needle, Value::Vector(_));
         let mut out = Vec::new();
         for (i, e) in entries.iter().enumerate() {
-            let target = if whole_row { e.clone() } else { compare_val(e) };
-            if value::value_eq(&target, needle) {
+            let hit = value::value_eq(&compare_val(e), needle)
+                || (allow_whole_row && value::value_eq(e, needle));
+            if hit {
                 out.push(i);
                 if num_returns != 0 && out.len() >= num_returns {
                     break;
