@@ -2499,7 +2499,7 @@
       "category": "module_parameter",
       "surface": "linear_extrude(twist=, scale=) combined refinement",
       "tier": "core_2021_01",
-      "status": "missing",
+      "status": "verified",
       "hosts": [
         "cli",
         "desktop",
@@ -2508,9 +2508,11 @@
         "npm",
         "lsp"
       ],
-      "summary": "Twist alone and non-uniform scale alone each follow an exact measured rule, but combining them weights the profile edges the opposite way upstream (the edge that shrinks earns more segments); the mesh reads 0.8% high in volume.",
-      "gap_ids": [
-        "F-G3"
+      "summary": "Combined twist and non-uniform scale now match the oracle. Each edge is refined by the peak stretch its direction reaches over the swept slices (max_t |diag(sx(t),sy(t))·Rot(t·twist)·d|), which subsumes the pure-twist own-length and pure-scale max(original,scaled) rules, and the layer sweep rotates then scales in the fixed frame. The headline case moved from +0.77% (956 tris) to exact (246.445, 1244 tris).",
+      "tests": [
+        "geom:ext_linear_twist_scale",
+        "geom:ext_linear_twist_scale_neg",
+        "geom:ext_linear_twist_scale_hole"
       ]
     },
     {

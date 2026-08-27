@@ -1012,24 +1012,47 @@ fn non_uniform(scale: Point2) -> bool {
     scale[0] != scale[1]
 }
 
-/// Resample every contour so each edge carries its [`contour_segments`] count.
+/// The length an edge is refined by: the peak stretch its direction attains
+/// across the sweep. A material edge vector `d` at slice `t` is scaled and
+/// twisted to `diag(sx(t), sy(t)) · Rot(t·twist) · d`, and OpenSCAD budgets an
+/// edge by the **largest** of those lengths over the `slices+1` layers it
+/// actually emits — sampling the discrete slices, not a continuum, so a coarse
+/// `slices=` shortens the effective length. This one rule reproduces all three
+/// regimes measured against the oracle (`docs/compat-atoms.md` A-G11):
 ///
-/// The length an edge is measured by depends on what is bending the wall, and
-/// only two of the three cases are known:
-///
-/// * twisting — the edge's own length, verified against the oracle;
-/// * non-uniform scale alone — `max(original, scaled)`, likewise verified: the
-///   edge that stretches earns proportionally more segments;
-/// * both at once — upstream weights the edges the *other* way round (the edge
-///   that shrinks gets more), which no measured rule yet explains, so this keeps
-///   the twist-only lengths rather than guessing. See A-G10 in
-///   `docs/compat-atoms.md`.
+/// * pure twist — `Rot` is length-preserving, so every slice gives `|d|`: the
+///   edge's own length;
+/// * pure scale — the max lands at the extreme slice, giving `max(|d|, |scaled|)`
+///   (a shrink keeps the original length, a stretch takes the scaled one);
+/// * twist and non-uniform scale at once — an edge whose direction rotates *into*
+///   the stretched axis mid-sweep peaks there, which is why the split flips with
+///   twist magnitude.
+fn edge_refine_len(a: Point2, b: Point2, twist: f64, scale: Point2, slices: u32) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let mut best = 0.0f64;
+    for layer in 0..=slices.max(1) {
+        let t = layer as f64 / slices.max(1) as f64;
+        let ang = (twist * t).to_radians();
+        let (s, c) = (ang.sin(), ang.cos());
+        // Rot(t·twist) · d, then the per-slice scale on each axis.
+        let rx = c * dx - s * dy;
+        let ry = s * dx + c * dy;
+        let sx = 1.0 + (scale[0] - 1.0) * t;
+        let sy = 1.0 + (scale[1] - 1.0) * t;
+        best = best.max((sx * rx).hypot(sy * ry));
+    }
+    best
+}
+
+/// Resample every contour so each edge carries its [`contour_segments`] count,
+/// each edge budgeted by [`edge_refine_len`] over the `slices` about to be swept.
 fn refine_contours(
     contours: &[Contour],
     segments: u32,
     frags: FragmentSpec,
     twist: f64,
     scale: Point2,
+    slices: u32,
 ) -> Vec<Contour> {
     let twisting = twist != 0.0;
     let refining = twisting || non_uniform(scale);
@@ -1043,13 +1066,7 @@ fn refine_contours(
             let lens: Vec<f64> = (0..n)
                 .map(|i| {
                     let (a, b) = (c[i], c[(i + 1) % n]);
-                    let plain = (b[0] - a[0]).hypot(b[1] - a[1]);
-                    if twisting {
-                        plain
-                    } else {
-                        let scaled = ((b[0] - a[0]) * scale[0]).hypot((b[1] - a[1]) * scale[1]);
-                        plain.max(scaled)
-                    }
+                    edge_refine_len(a, b, twist, scale, slices)
                 })
                 .collect();
             let counts = contour_segments(&lens, segments, frags, refining);
@@ -1145,23 +1162,28 @@ pub fn linear_extrude(
     segments: u32,
     frags: FragmentSpec,
 ) -> Mesh {
-    // Twisting bends the walls, so the profile is resampled before the caps are
-    // triangulated — OpenSCAD's caps carry the refined points too.
-    let refined = refine_contours(contours, segments, frags, twist, scale);
+    // The slice count is fixed first: an edge's refinement budget is the peak
+    // stretch it reaches over the layers actually swept, so the profile is
+    // resampled against that count. `rmax`/`travel` are convex over each edge, so
+    // the original contours give the same slice count the refined ones would.
     let slices = slices.unwrap_or_else(|| {
-        let rmax = refined
+        let rmax = contours
             .iter()
             .flatten()
             .map(|p| p[0].hypot(p[1]))
             .fold(0.0f64, f64::max);
         // How far the worst-placed profile point travels to its scaled position.
-        let travel = refined
+        let travel = contours
             .iter()
             .flatten()
             .map(|p| (p[0] * (scale[0] - 1.0)).hypot(p[1] * (scale[1] - 1.0)))
             .fold(0.0f64, f64::max);
         implicit_slices(twist, height, rmax, scale, travel, frags)
     });
+    // Twisting or non-uniform scaling bends the walls, so the profile is
+    // resampled before the caps are triangulated — OpenSCAD's caps carry the
+    // refined points too.
+    let refined = refine_contours(contours, segments, frags, twist, scale, slices.max(1));
     let (points, ranges, cap_tris) = prepare(&refined);
     let mut mesh = Mesh::new();
     if points.is_empty() {
@@ -1171,7 +1193,12 @@ pub fn linear_extrude(
     let slices = slices.max(1);
     let z0 = if center { -height / 2.0 } else { 0.0 };
 
-    // `slices+1` rings of all points, twisted/scaled per layer.
+    // `slices+1` rings of all points, twisted/scaled per layer. The point is
+    // **rotated first, then scaled** — OpenSCAD applies the non-uniform scale in
+    // the fixed frame, so a point twisted toward an axis picks up that axis's
+    // factor (a corner swung onto +y under `scale=[.,1.6]` reaches 1.6× its
+    // radius). Uniform scale commutes with the rotation and pure twist leaves the
+    // scale at 1, so only combined twist + non-uniform scale sees the difference.
     for layer in 0..=slices {
         let t = layer as f64 / slices as f64;
         let ang = (-twist * t).to_radians();
@@ -1180,8 +1207,8 @@ pub fn linear_extrude(
         let sy = 1.0 + (scale[1] - 1.0) * t;
         let z = z0 + height * t;
         for p in &points {
-            let (x, y) = (p[0] * sx, p[1] * sy);
-            mesh.verts.push([x * c - y * s, x * s + y * c, z]);
+            let (rx, ry) = (p[0] * c - p[1] * s, p[0] * s + p[1] * c);
+            mesh.verts.push([rx * sx, ry * sy, z]);
         }
     }
     let ring = |layer: u32, i: usize| layer * n as u32 + i as u32;

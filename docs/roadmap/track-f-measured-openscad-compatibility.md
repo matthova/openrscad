@@ -91,9 +91,15 @@ OpenSCAD 2024.12.17 unless marked as an audit/coverage item.
 
 ### P0 — silent program or geometry changes
 
-| id | gap | current effect | first fix |
-|---|---|---|---|
-| F-G3 | `linear_extrude` twist combined with a non-uniform scale. | The twist rules, the non-uniform-scale rules, and the non-planar wall diagonal are all closed and oracle-gated. What remains is only their combination, which weights the profile edges the opposite way upstream (+0.8% volume). | Identify the combined weighting with the per-quad harness that settled the diagonal, applied to segment counts. |
+_All P0 silent geometry gaps are now closed and oracle-gated._
+
+- ~~F-G3 `linear_extrude` twist combined with a non-uniform scale.~~ **Closed.**
+  Each edge is refined by the peak stretch its direction reaches over the swept
+  slices (`max_t |diag(sx(t),sy(t))·Rot(t·twist)·d|`) — a rule that subsumes the
+  pure-twist and pure-scale ones — and the layer sweep rotates then scales in the
+  fixed frame. The headline case is exact (246.445, 1244 tris; was +0.77%). Gated
+  by `corpus/geom/ext_linear_twist_scale{,_neg,_hole}.scad`; see A-G11 in
+  `docs/compat-atoms.md`.
 
 ### P1 — missing core surface or broad fidelity work
 
@@ -147,9 +153,10 @@ Land one behavior family per commit, each with a black-box oracle repro:
 
 ### F2 — close geometry operations
 
-1. ~~F-G3 `linear_extrude` refinement.~~ The twist rules (`segments=`, implicit
-   `slices`, and profile re-tessellation) are complete and oracle-gated; the
-   wall-diagonal and non-uniform-scale remainders are re-scoped above.
+1. ~~F-G3 `linear_extrude` refinement.~~ Complete. The twist rules (`segments=`,
+   implicit `slices`, profile re-tessellation), the non-uniform scale, the
+   wall diagonal, and the twist + non-uniform-scale combination are all
+   oracle-gated.
 2. ~~F-G4 `rotate_extrude` side/sweep rules.~~ Complete.
 3. ~~F-G6 kernel-aware vector projection export.~~ Complete across CLI, wasm/npm,
    LSP, and desktop.
@@ -206,10 +213,10 @@ M10 is complete only when all of the following are CI-enforced:
 Passing 122/122 or 505/513 remains useful evidence, but completion is defined by
 the classified surface, not by freezing those counts.
 
-**Where this stands:** the first criterion is met apart from F-G3 (the one
-remaining `missing` entry) and the F-G7 decision; there are no other silent
-differences, and every remaining `implemented` entry has a stated structural
-reason. The open items are the two below, not a backlog of unmeasured surface.
+**Where this stands:** the first criterion is met apart from the F-G7 decision;
+there are zero `missing` entries and no known silent differences, and every
+remaining `implemented` entry has a stated structural reason. The open item is
+F-G7, not a backlog of unmeasured surface.
 
 ## Completed during the initial Track F pass
 
