@@ -1,5 +1,6 @@
 1	test_struct_set
 2	test_struct_remove
+3	test_struct_val
 4	test_struct_keys
 5	test_echo_struct
 6	test_is_struct

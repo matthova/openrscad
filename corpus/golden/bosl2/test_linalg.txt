@@ -13,6 +13,7 @@
 13	test_outer_product
 14	test_column
 15	test_submatrix
+16	test_hstack
 17	test_block_matrix
 18	test_diagonal_matrix
 19	test_submatrix_set
