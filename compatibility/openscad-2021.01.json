@@ -2508,11 +2508,37 @@
         "npm",
         "lsp"
       ],
-      "summary": "Combined twist and non-uniform scale now match the oracle. Each edge is refined by the peak stretch its direction reaches over the swept slices (max_t |diag(sx(t),sy(t))·Rot(t·twist)·d|), which subsumes the pure-twist own-length and pure-scale max(original,scaled) rules, and the layer sweep rotates then scales in the fixed frame. The headline case moved from +0.77% (956 tris) to exact (246.445, 1244 tris).",
+      "summary": "Combined twist and non-uniform scale now match the oracle. Each edge is refined by the peak stretch its direction reaches over the swept slices (max_t |diag(sx(t),sy(t))\u00b7Rot(t\u00b7twist)\u00b7d|), which subsumes the pure-twist own-length and pure-scale max(original,scaled) rules, and the layer sweep rotates then scales in the fixed frame. The headline case moved from +0.77% (956 tris) to exact (246.445, 1244 tris).",
       "tests": [
         "geom:ext_linear_twist_scale",
         "geom:ext_linear_twist_scale_neg",
         "geom:ext_linear_twist_scale_hole"
+      ]
+    },
+    {
+      "id": "module.roof",
+      "category": "module_parameter",
+      "surface": "roof() straight-skeleton roof of a 2D profile",
+      "tier": "current_stable",
+      "status": "warned_divergence",
+      "hosts": [
+        "cli",
+        "desktop",
+        "web",
+        "wasm",
+        "npm",
+        "lsp"
+      ],
+      "summary": "A convex profile is lifted to its straight skeleton exactly (volume, bounds, and centroid match the oracle for squares, rectangles, triangles, and regular polygons). A concave profile or one with holes needs split events and is warned and skipped rather than mis-roofed. Experimental upstream (--enable=roof).",
+      "tests": [
+        "geom:roof_square",
+        "geom:roof_rect",
+        "geom:roof_triangle",
+        "geom:roof_pentagon",
+        "geom:roof_hexagon"
+      ],
+      "repros": [
+        "compat:roof-concave-skip"
       ]
     },
     {

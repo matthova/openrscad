@@ -1302,6 +1302,9 @@ fn bless_geom(cases: &Path, goldens: &Path) {
             .arg("-o")
             .arg(&tmp)
             .args(["--export-format", "binstl"])
+            // `roof()` is still gated behind an experimental flag upstream; it is
+            // inert for every other case, so enabling it unconditionally is safe.
+            .arg("--enable=roof")
             .arg(&case)
             .output()
             .expect("failed to run openscad — is it installed and on PATH?");

@@ -276,6 +276,13 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
             depth,
             out,
         ),
+        Node::Roof { child } => parent(
+            "roof",
+            "method = \"voronoi\", convexity = 1".to_string(),
+            &[child],
+            depth,
+            out,
+        ),
         Node::Offset {
             r,
             delta,

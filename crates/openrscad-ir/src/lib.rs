@@ -101,6 +101,11 @@ pub enum Node {
         frags: FragmentSpec,
         child: Box<Node>,
     },
+    /// `roof()`: lift a 2D profile to its straight-skeleton roof (every point
+    /// rises at unit slope to the ridge; apex height = distance to nearest edge).
+    Roof {
+        child: Box<Node>,
+    },
     /// 2D offset. `r` (rounded) or `delta` (mitred/chamfered) grows (>0) or
     /// shrinks (<0) the child's contours.
     Offset {
