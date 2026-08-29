@@ -40,12 +40,32 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   `test_gaussian_rands` (needs OpenSCAD's exact PRNG, an intentional divergence
   shared with `rands()`) and `test_f_acos` (asserts trig results *exactly* —
   `acos(0.5) == 60` — where our `x.acos().to_degrees()` carries a ~1e-15 error
-  and OpenSCAD returns the exact value; matching it means reproducing OpenSCAD's
-  trig-result cleanup across every inverse/forward trig, a broader numerical-
-  parity change left to its own pass). This is broad library evidence, not the
-  complete BOSL2 module suite.
+  and OpenSCAD returns the exact value). Measurement shows this is **not** a
+  digit-rounding step: OpenSCAD keeps full libm precision for most angles
+  (`cos(1) == 0.9998476951563913`) yet nails the special ones (`cos(60) == 0.5`,
+  `cos(45)` raw but `cos(30)` cleaned), so matching it means reproducing
+  OpenSCAD's specific floating-point **argument-reduction** algorithm across
+  every trig entry point — a broader numerical-parity change, left to its own
+  pass. This is broad library evidence, not the complete BOSL2 module suite.
 
 ## Warned divergences
+
+- **`roof()` is exact for a convex profile; a concave profile or one with holes
+  is warned and skipped.** A convex outline's straight skeleton needs only *edge
+  events* (an edge marches inward until it vanishes), which is simulated exactly:
+  squares, rectangles, triangles, and regular polygons match the oracle in
+  volume, bounds, and centroid (`corpus/geom/roof_*.scad`), and `roof()` is a
+  manifold solid usable in booleans. A concave outline introduces *split events*
+  (a reflex vertex slicing the wavefront), and holes an inner wavefront; both
+  need the general straight-skeleton algorithm and are out of scope, so they warn
+  and produce nothing rather than a wrong roof. `roof()` is experimental upstream
+  (`--enable=roof`); OpenRSCAD enables it unconditionally.
+
+  ```scad
+  roof() square(10);                 // exact: a pyramid, apex (5,5,5)
+  roof() circle(6, $fn=6);           // exact: hexagon to a central apex
+  roof() polygon([[0,0],[20,0],[20,8],[8,8],[8,20],[0,20]]);  // warned + skipped
+  ```
 
 - **3D `minkowski()` is exact for convex operands and unions of them; a concave
   *leaf* mesh is a convex approximation (warned).** The convex-convex sum is the

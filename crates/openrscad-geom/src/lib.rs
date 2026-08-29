@@ -4,6 +4,7 @@
 mod hull;
 mod kernel;
 mod mesh;
+mod roof;
 mod shape2d;
 mod tessellate;
 mod vector2d;
@@ -385,6 +386,7 @@ pub fn has_display_attrs(node: &Node) -> bool {
         | Resize { child, .. }
         | LinearExtrude { child, .. }
         | RotateExtrude { child, .. }
+        | Roof { child, .. }
         | Offset { child, .. }
         | Projection { child, .. }
         | Provenance { child, .. } => has_display_attrs(child),
@@ -892,6 +894,7 @@ pub fn is_2d(node: &Node) -> bool {
         | Polyhedron { .. }
         | LinearExtrude { .. }
         | RotateExtrude { .. }
+        | Roof { .. }
         | Empty => false,
         Translate { child, .. }
         | Rotate { child, .. }
@@ -1142,6 +1145,16 @@ fn render_uncached(node: &Node, ctx: &mut Ctx) -> Result<Mesh, GeomError> {
             &|cs| shape2d::rotate_extrude(cs, *angle, *frags),
             ctx,
         ),
+        Node::Roof { child } => {
+            // The profile is fully flattened first (its own 2D booleans and
+            // projections resolved), then lifted to its straight-skeleton roof.
+            let contours = render2d_lowered(child, ctx)?;
+            let (mesh, warn) = roof::roof(&contours);
+            if let Some(w) = warn {
+                ctx.warnings.push(w);
+            }
+            Ok(mesh)
+        }
         Node::Projection { cut, child } => {
             // Contour extraction assumes clean geometry; a preview-concatenated
             // child (overlapping internal walls) would spawn spurious contours,
@@ -1358,6 +1371,9 @@ fn hash_all(node: &Node, out: &mut HashMap<*const Node, u64>) -> u64 {
         } => {
             bits(angle, &mut h);
             frags(f, &mut h);
+            hash_all(child, out).hash(&mut h);
+        }
+        Node::Roof { child } => {
             hash_all(child, out).hash(&mut h);
         }
         Node::Offset {

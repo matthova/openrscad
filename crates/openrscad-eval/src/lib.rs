@@ -1185,6 +1185,7 @@ impl Interp<'_> {
             "text" => self.b_text(args),
             "linear_extrude" => self.b_linear_extrude(args, children),
             "rotate_extrude" => self.b_rotate_extrude(args, children),
+            "roof" => self.b_roof(children),
             "offset" => self.b_offset(args, children),
             "projection" => {
                 let m = self.bind_named(&["cut"], args)?;
@@ -2027,6 +2028,19 @@ impl Interp<'_> {
             chamfer,
             frags: self.frag_spec(&m),
             child,
+        })
+    }
+
+    fn b_roof(&mut self, children: &[Spanned<Stmt>]) -> EResult<Node> {
+        // `roof()` lifts its 2D child to a straight-skeleton roof. OpenSCAD's
+        // `method=`/`convexity=` do not change the geometry we produce (the
+        // straight skeleton), so they are accepted and ignored.
+        let child = Node::group(self.eval_children(children)?);
+        if matches!(child, Node::Empty) {
+            return Ok(Node::Empty);
+        }
+        Ok(Node::Roof {
+            child: Box::new(child),
         })
     }
 
