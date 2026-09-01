@@ -293,6 +293,107 @@ fn params_file_without_set_is_tolerated() {
 }
 
 #[test]
+fn script_viewport_drives_the_camera() {
+    // A script that sets its own `$vp*` must render from that camera. Proven by
+    // equality with the equivalent explicit `--camera` gimbal (matching fov).
+    let model = "\
+        $vpt = [0,0,0];\n\
+        $vpr = [60,0,30];\n\
+        $vpd = 120;\n\
+        $vpf = 45;\n\
+        cube(10, center=true);\n";
+    let src = scad(model);
+
+    let from_script = tmp("vp_script.png");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&from_script)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+
+    let from_camera = tmp("vp_cam.png");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&from_camera)
+        .args(["--camera", "0,0,0,60,0,30,120", "-q"])
+        .status()
+        .unwrap()
+        .success());
+
+    let a = std::fs::read(&from_script).unwrap();
+    let b = std::fs::read(&from_camera).unwrap();
+    assert_eq!(
+        a, b,
+        "a script-set $vp* camera must match the equivalent --camera"
+    );
+
+    // A model with no $vp* auto-frames instead, so it must NOT match the fixed
+    // 120-unit gimbal above.
+    let plain = scad("cube(10, center=true);");
+    let auto = tmp("auto.png");
+    assert!(bin()
+        .arg(&plain)
+        .arg("-o")
+        .arg(&auto)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+    assert_ne!(
+        std::fs::read(&auto).unwrap(),
+        a,
+        "a model without $vp* should auto-frame, not use the script camera"
+    );
+}
+
+#[test]
+fn colorscheme_rejects_unknown_and_accepts_known() {
+    let src = scad("cube(3);");
+    let png = tmp("cs.png");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&png)
+        .args(["--colorscheme", "Tomorrow", "-q"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(!bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&png)
+        .args(["--colorscheme", "Nope", "-q"])
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
+fn animate_sharding_renders_a_subset() {
+    let src = scad("cube($t * 10 + 1);");
+    let base = tmp("shard.png");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&base)
+        .args(["--animate", "4", "--animate_sharding", "0/2", "-q"])
+        .status()
+        .unwrap()
+        .success());
+    // Frames 0 and 2 of 0..4 belong to shard 0/2; 1 and 3 do not.
+    let dir = base.parent().unwrap();
+    let stem = base.file_stem().unwrap().to_string_lossy();
+    assert!(dir.join(format!("{stem}00000.png")).exists());
+    assert!(dir.join(format!("{stem}00002.png")).exists());
+    assert!(!dir.join(format!("{stem}00001.png")).exists());
+    assert!(!dir.join(format!("{stem}00003.png")).exists());
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");

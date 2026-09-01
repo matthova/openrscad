@@ -184,6 +184,17 @@ struct Cli {
     #[arg(long)]
     autocenter: bool,
 
+    /// PNG viewport color scheme (background). OpenSCAD names:
+    /// Cornfield, Metallic, Sunset, Starnight, BeforeDawn, Nature, DeepOcean,
+    /// Tomorrow, Tomorrow Night, Monotone.
+    #[arg(long, value_name = "NAME")]
+    colorscheme: Option<String>,
+
+    /// PNG: render only animation frames `i` where `frame ≡ i (mod n)`, given as
+    /// `i/n`. Shards a long `--animate` run across parallel invocations.
+    #[arg(long = "animate_sharding", value_name = "i/n")]
+    animate_sharding: Option<String>,
+
     /// Force `$preview = false` (F6 semantics). Geometry export already implies
     /// this; use it to render a PNG the way an exact export would.
     #[arg(long, conflicts_with = "preview")]
@@ -369,28 +380,96 @@ fn parse_camera(s: &str) -> Result<raster::Camera> {
     }
 }
 
+/// A script-set viewport (`$vpr`/`$vpt`/`$vpd`/`$vpf`) as a gimbal camera plus
+/// its field of view, or `None` when the script assigned no `$vp*` variable.
+///
+/// The `$vp*` globals are *always* populated with defaults after evaluation, so
+/// their mere presence cannot tell us the script chose a camera. We therefore
+/// key off the source actually mentioning a `$vp` assignment — mirroring the
+/// intent of the flag: honor a camera the script deliberately set, otherwise
+/// keep auto-framing the model.
+fn viewport_camera(src: &str, vp: &openrscad_eval::Viewport) -> Option<(raster::Camera, f64)> {
+    let assigns_viewport = ["$vpr", "$vpt", "$vpd", "$vpf"]
+        .iter()
+        .any(|name| src.contains(name));
+    if !assigns_viewport {
+        return None;
+    }
+    let (Some(rot), Some(target), Some(dist)) = (vp.vpr, vp.vpt, vp.vpd) else {
+        return None;
+    };
+    let fov = vp.vpf.unwrap_or(22.5);
+    Some((raster::Camera::Gimbal { target, rot, dist }, fov))
+}
+
+/// Map an OpenSCAD `--colorscheme` name to a background color. These are
+/// clean-room approximations of the schemes' clear color (representative flat
+/// backgrounds, reconstructed from observation — we render no gradient). An
+/// unknown name is an error so a typo is not silently ignored.
+fn colorscheme_background(name: &str) -> Result<[u8; 3]> {
+    let bg = match name
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '_', '-'], "")
+        .as_str()
+    {
+        "cornfield" => [0xda, 0xe1, 0xe8],
+        "metallic" => [0xa0, 0xa0, 0xb0],
+        "sunset" => [0x60, 0x50, 0x60],
+        "starnight" => [0x00, 0x00, 0x10],
+        "beforedawn" => [0x1a, 0x1a, 0x2a],
+        "nature" => [0xc8, 0xdc, 0xc8],
+        "deepocean" => [0x10, 0x20, 0x30],
+        "tomorrow" => [0xff, 0xff, 0xff],
+        "tomorrownight" => [0x1d, 0x1f, 0x21],
+        "monotone" => [0x80, 0x80, 0x80],
+        other => anyhow::bail!(
+            "unknown --colorscheme '{other}'; expected one of: Cornfield, Metallic, \
+             Sunset, Starnight, BeforeDawn, Nature, DeepOcean, Tomorrow, \
+             Tomorrow Night, Monotone"
+        ),
+    };
+    Ok(bg)
+}
+
 /// Build the PNG render options from the CLI flags (`--imgsize`/`--camera`/…).
-fn build_render_opts(cli: &Cli) -> Result<raster::RenderOpts> {
+/// When `--camera` is absent, a script-set viewport (`vp_cam`) drives the
+/// camera and field of view.
+fn build_render_opts(
+    cli: &Cli,
+    vp_cam: Option<(raster::Camera, f64)>,
+) -> Result<raster::RenderOpts> {
     let (width, height) = match &cli.imgsize {
         Some(s) => parse_imgsize(s)?,
         None => (512, 512),
     };
-    let camera = match &cli.camera {
-        Some(s) => parse_camera(s)?,
-        None => raster::Camera::Auto,
+    // An explicit `--camera` always wins; otherwise a script-set `$vp*` camera;
+    // otherwise auto-frame.
+    let (camera, vp_fov) = match &cli.camera {
+        Some(s) => (parse_camera(s)?, None),
+        None => match vp_cam {
+            Some((cam, fov)) => (cam, Some(fov)),
+            None => (raster::Camera::Auto, None),
+        },
     };
     let projection = match cli.projection {
-        Proj::Perspective => raster::Projection::Perspective { fov_deg: 45.0 },
+        Proj::Perspective => raster::Projection::Perspective {
+            fov_deg: vp_fov.unwrap_or(45.0),
+        },
         Proj::Ortho => raster::Projection::Ortho,
+    };
+    let background = match &cli.colorscheme {
+        Some(name) => colorscheme_background(name)?,
+        None => raster::RenderOpts::default().background,
     };
     Ok(raster::RenderOpts {
         width,
         height,
         camera,
         projection,
+        background,
         viewall: cli.viewall,
         autocenter: cli.autocenter,
-        ..Default::default()
     })
 }
 
@@ -406,12 +485,26 @@ fn render_frame_png(node: &openrscad_ir::Node, opts: &raster::RenderOpts) -> Res
 }
 
 /// `--animate N`: render `N` frames with `$t` swept 0→1, written as numbered PNGs.
+/// Parse `--animate_sharding i/n` into `(i, n)`, validating `0 <= i < n`.
+fn parse_sharding(s: &str) -> Result<(u32, u32)> {
+    let (i, n) = s
+        .split_once('/')
+        .context("--animate_sharding expects i/n (e.g. 0/4)")?;
+    let i: u32 = i.trim().parse().context("--animate_sharding i")?;
+    let n: u32 = n.trim().parse().context("--animate_sharding n")?;
+    if n == 0 || i >= n {
+        anyhow::bail!("--animate_sharding needs 0 <= i < n, got {i}/{n}");
+    }
+    Ok((i, n))
+}
+
 fn run_animation(
     program: &openrscad_syntax::Program,
     resolver: &DiskResolver,
     base_dir: &str,
     base_overrides: &[(String, openrscad_eval::Value)],
     cli: &Cli,
+    src: &str,
     n: u32,
 ) -> Result<()> {
     let path = cli
@@ -429,12 +522,23 @@ fn run_animation(
     if n == 0 {
         anyhow::bail!("--animate N must be >= 1");
     }
-    let opts = build_render_opts(cli)?;
+    // `--animate_sharding i/n`: render only the frames this shard owns.
+    let shard = cli
+        .animate_sharding
+        .as_deref()
+        .map(parse_sharding)
+        .transpose()?;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     // Zero-pad to at least 5 digits (matching OpenSCAD), more if needed.
     let pad = 5.max((n - 1).to_string().len());
+    let mut written = 0u32;
     for i in 0..n {
+        if let Some((si, sn)) = shard {
+            if i % sn != si {
+                continue;
+            }
+        }
         let t = i as f64 / n as f64;
         let mut ov = base_overrides.to_vec();
         ov.push((
@@ -449,11 +553,13 @@ fn run_animation(
             cli.render_mode(),
         )
         .map_err(|e| anyhow::anyhow!("frame {i}: {}", e.message))?;
+        let opts = build_render_opts(cli, viewport_camera(src, &out.viewport))?;
         let bytes = render_frame_png(&out.node, &opts)?;
         let fname = format!("{stem}{i:0pad$}.png");
         std::fs::write(dir.join(&fname), bytes)?;
+        written += 1;
     }
-    eprintln!("wrote {n} frames to {}", dir.display());
+    eprintln!("wrote {written} frame(s) to {}", dir.display());
     Ok(())
 }
 
@@ -686,7 +792,7 @@ fn run() -> Result<()> {
 
     // Animation: re-eval per frame with a swept `$t` and write numbered PNGs.
     if let Some(n) = cli.animate {
-        return run_animation(&program, &resolver, &base_dir, &overrides, &cli, n);
+        return run_animation(&program, &resolver, &base_dir, &overrides, &cli, &src, n);
     }
 
     let out = openrscad_eval::eval_program_with_mode(
@@ -839,7 +945,7 @@ fn run() -> Result<()> {
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.
             OutputFormat::Png => {
-                let opts = build_render_opts(&cli)?;
+                let opts = build_render_opts(&cli, viewport_camera(&src, &out.viewport))?;
                 std::fs::write(path, render_frame_png(&out.node, &opts)?)?;
             }
             OutputFormat::Stl if matches!(stl_format, StlFormat::Ascii) => {
