@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.0
+
+### Minor Changes
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add `--check-parameters` and `--check-parameter-ranges` to validate a `-p`/`-P` set against the customizer schema; `-p` without `-P` is now tolerated (matching OpenSCAD)
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - `-D name=<expr>` now accepts arbitrary expressions (e.g. `-D 'm=[[1,2],[3,4]]'`, `-D 'r=sqrt(2)*2'`), matching OpenSCAD, via the new `openrscad_eval::eval_const_expr`
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add `-d/--deps_file` and `-m/--make` to emit a Makefile dependency rule listing every file the render read (`include`/`use`/`import`/`surface`/DXF/SVG)
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add `--export-format` to select the export format explicitly (OpenSCAD spellings incl. `binstl`/`asciistl`/`echo`), overriding the `-o` suffix
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - CLI PNG rendering now honors a script-set `$vpr`/`$vpt`/`$vpd`/`$vpf` viewport as the camera (fixes rendering from the wrong angle), and adds `--colorscheme` (background) and `--animate_sharding i/n`
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - `-o -` writes the export to stdout (requires `--export-format`), suppressing echoes so they cannot corrupt the byte stream — enabling `openrscad model.scad -o - --export-format binstl | …`
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add `--summary` and `--summary-file` reporting render facets/vertices/volume/area/bounding-box/time as OpenSCAD-style text or JSON
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add CLI workflow flags for OpenSCAD parity: `--enable` (accepted, always-on), `--csglimit` (accepted, ignored), `-q/--quiet`, `--hardwarnings`, and `--info`
+
+- [#118](https://github.com/matthova/openrscad/pull/118) [`2bb1a27`](https://github.com/matthova/openrscad/commit/2bb1a27197cab6d9b33e01ccffedeca583da02bf) Thanks [@matthova](https://github.com/matthova)! - add `roof()` for convex profiles — lifts a 2D outline to its straight-skeleton roof (every point rises at unit slope to the ridge). Squares, rectangles, triangles, and regular polygons match OpenSCAD exactly and produce a manifold solid usable in booleans. Concave profiles and profiles with holes need split events and are warned and skipped for now. Like OpenSCAD's experimental `roof()`, but enabled unconditionally.
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - add VRML2 (`.wrl`) and PDF (`.pdf`) export formats
+
+### Patch Changes
+
+- [#117](https://github.com/matthova/openrscad/pull/117) [`b944029`](https://github.com/matthova/openrscad/commit/b944029c694a87fa5b2487d4deff898d9ff53464) Thanks [@matthova](https://github.com/matthova)! - fix three builtin behaviors that OpenSCAD gets right, closing six BOSL2 test blocks (505→511/513): `each` over a string now spreads its characters (`[each "ab"]` is `["a","b"]`); a range literal with a non-numeric bound or step is now `undef` (a nan/inf bound still makes a range, which equals itself); and `search` now matches a list-valued key against column 0 or a whole row.
+
+- [#119](https://github.com/matthova/openrscad/pull/119) [`d3c5c0f`](https://github.com/matthova/openrscad/commit/d3c5c0f6992c398a314fd1c6486ec766e5f185e6) Thanks [@matthova](https://github.com/matthova)! - accept OpenSCAD `--projection` aliases (`o`/`ortho`/`orthogonal`/`p`); inventory the new CLI workflow surface in the compatibility manifest
+
+- [#115](https://github.com/matthova/openrscad/pull/115) [`8ce3db4`](https://github.com/matthova/openrscad/commit/8ce3db4da25c29f56ac69df05e796f53090c6c7d) Thanks [@matthova](https://github.com/matthova)! - fix `linear_extrude` combining twist with a non-uniform scale — the last silent geometry difference. Each edge is now refined by the peak stretch its direction reaches across the swept slices, and the layer sweep rotates then scales in the fixed frame, so the headline case is exact (was 0.8% high in volume).
+
 ## 0.13.0
 
 ### Minor Changes
