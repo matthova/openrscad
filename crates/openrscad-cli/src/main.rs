@@ -10,8 +10,32 @@ mod raster;
 
 /// Resolves `include`/`use` paths from disk: relative to the including file,
 /// then each `OPENSCADPATH` library directory.
+///
+/// Every successfully resolved path is recorded in `deps` (both text `load` and
+/// binary `load_bytes`, so `import()`, `surface()`, and DXF/SVG fixtures land in
+/// the dependency list too, not just `include`/`use`). `RefCell` is sufficient:
+/// the resolver is used single-threaded inside the render worker, through the
+/// `&self` trait methods.
 struct DiskResolver {
     libs: Vec<PathBuf>,
+    deps: std::cell::RefCell<Vec<PathBuf>>,
+}
+
+impl DiskResolver {
+    fn new(libs: Vec<PathBuf>) -> Self {
+        DiskResolver {
+            libs,
+            deps: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    fn record(&self, path: &Path) {
+        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut deps = self.deps.borrow_mut();
+        if !deps.contains(&canon) {
+            deps.push(canon);
+        }
+    }
 }
 
 impl FileResolver for DiskResolver {
@@ -20,6 +44,7 @@ impl FileResolver for DiskResolver {
             .chain(self.libs.iter().map(|l| l.join(path)));
         for c in candidates {
             if let Ok(source) = std::fs::read_to_string(&c) {
+                self.record(&c);
                 let key = std::fs::canonicalize(&c)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| c.to_string_lossy().into_owned());
@@ -36,7 +61,13 @@ impl FileResolver for DiskResolver {
     fn load_bytes(&self, path: &str, from_dir: &str) -> Option<Vec<u8>> {
         let candidates = std::iter::once(Path::new(from_dir).join(path))
             .chain(self.libs.iter().map(|l| l.join(path)));
-        candidates.into_iter().find_map(|c| std::fs::read(&c).ok())
+        for c in candidates {
+            if let Ok(bytes) = std::fs::read(&c) {
+                self.record(&c);
+                return Some(bytes);
+            }
+        }
+        None
     }
 }
 
@@ -90,6 +121,17 @@ struct Cli {
     /// exit.
     #[arg(long)]
     info: bool,
+
+    /// Write a Makefile dependency rule (`<output>: <input> <deps>…`) to FILE,
+    /// listing every file the model read (`include`/`use`/`import`/`surface`/…).
+    /// Requires `-o`.
+    #[arg(short = 'd', long = "deps_file", value_name = "FILE")]
+    deps_file: Option<PathBuf>,
+
+    /// The command written into the dependency rule to rebuild a missing
+    /// dependency (`-m` in `make`'s sense). Only meaningful with `-d`.
+    #[arg(short = 'm', long = "make", value_name = "CMD")]
+    make: Option<String>,
 
     /// Override a top-level parameter, e.g. `-D width=20` or `-D label="hi"`.
     /// Repeatable. Values are literals (number/bool/string/vector), matching
@@ -425,6 +467,35 @@ fn print_info(_cli: &Cli) {
     );
 }
 
+/// `-d/--deps_file`: write a Makefile rule listing every file the render read.
+/// Called once, after all loading (eval + geometry) is done. A no-op when `-d`
+/// was not given.
+fn write_deps(cli: &Cli, input: &Path, resolver: &DiskResolver) -> Result<()> {
+    let Some(deps_path) = &cli.deps_file else {
+        return Ok(());
+    };
+    let Some(output) = &cli.output else {
+        anyhow::bail!("-d/--deps_file requires -o <output>");
+    };
+    // Make-escape spaces in a path, matching how `make` reads them.
+    let esc = |p: &Path| p.to_string_lossy().replace(' ', "\\ ");
+    // The input is read directly (not through the resolver), so list it first;
+    // the resolver captured everything reachable via include/use/import/surface.
+    let mut rule = format!("{}: {}", esc(output), esc(input));
+    for dep in resolver.deps.borrow().iter() {
+        rule.push(' ');
+        rule.push_str(&esc(dep));
+    }
+    rule.push('\n');
+    if let Some(cmd) = &cli.make {
+        // A rebuild recipe for the dependencies (GNU make wants a tab prefix).
+        rule.push_str(&format!("\t{cmd}\n"));
+    }
+    std::fs::write(deps_path, rule)
+        .with_context(|| format!("writing dependency file {}", deps_path.display()))?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // Run on a worker thread with a large stack: recursive libraries (e.g.
     // BOSL2's attachment system) can nest the evaluator deeply, and OpenSCAD
@@ -503,7 +574,7 @@ fn run() -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .collect();
-    let resolver = DiskResolver { libs };
+    let resolver = DiskResolver::new(libs);
 
     // Parameter overrides: a customizer parameter set (`-p file.json -P set`)
     // first, then `-D name=value` on top (so `-D` wins).
@@ -574,6 +645,7 @@ fn run() -> Result<()> {
     }
 
     if echo_only {
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
@@ -583,6 +655,7 @@ fn run() -> Result<()> {
     if let (Some(path), Some(OutputFormat::Csg)) = (&cli.output, format) {
         std::fs::write(path, openrscad_eval::export_csg(&out.node))?;
         eprintln!("wrote {}", path.display());
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
@@ -612,6 +685,7 @@ fn run() -> Result<()> {
             ),
             Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
         }
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
@@ -713,6 +787,7 @@ fn run() -> Result<()> {
         eprintln!("wrote {}", path.display());
     }
 
+    write_deps(&cli, input, &resolver)?;
     Ok(())
 }
 

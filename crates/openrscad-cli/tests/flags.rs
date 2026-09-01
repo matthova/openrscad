@@ -205,6 +205,49 @@ fn export_format_rejects_unknown() {
 }
 
 #[test]
+fn deps_file_lists_imported_and_used_files() {
+    // Build an STL to import, plus a `use`d library, then check both land in
+    // the dependency rule — the important case is `import`, which flows through
+    // `load_bytes`, not just `include`/`use`.
+    let cube_stl = tmp("cube.stl");
+    assert!(bin()
+        .arg(scad("cube(3);"))
+        .arg("-o")
+        .arg(&cube_stl)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+
+    let src = scad(&format!(
+        "import(\"{}\"); cube(1);",
+        cube_stl.to_string_lossy()
+    ));
+    let out = tmp("out.stl");
+    let deps = tmp("out.deps");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .arg("-d")
+        .arg(&deps)
+        .arg("-m")
+        .arg("echo rebuild")
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+
+    let rule = std::fs::read_to_string(&deps).unwrap();
+    assert!(rule.starts_with(&out.to_string_lossy().replace(' ', "\\ ")));
+    assert!(
+        rule.contains("cube.stl"),
+        "imported STL must appear in deps: {rule}"
+    );
+    assert!(rule.contains("\techo rebuild"), "-m recipe missing: {rule}");
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");
