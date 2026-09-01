@@ -1320,6 +1320,95 @@ pub fn export_svg(contours: &[Contour]) -> String {
     )
 }
 
+/// Export contours as a minimal, uncompressed PDF (2D vector output), mirroring
+/// OpenSCAD's PDF export. Contours become a single filled path (even-odd rule)
+/// in a content stream. Coordinates are in PDF points (1 pt = 1/72 in); we map
+/// 1 mm → 1 pt as OpenSCAD does not scale to physical millimeters either.
+pub fn export_pdf(contours: &[Contour]) -> Vec<u8> {
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for p in contours.iter().flatten() {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    if contours.iter().all(|c| c.is_empty()) {
+        (min_x, min_y, max_x, max_y) = (0.0, 0.0, 0.0, 0.0);
+    }
+    // Shift into the positive quadrant so the whole drawing sits on the page.
+    let w = (max_x - min_x).max(1.0);
+    let h = (max_y - min_y).max(1.0);
+
+    // Build the content stream of path operators.
+    let mut content = String::from("0.8 0.8 0.8 rg\n0 0 0 RG\n0.5 w\n");
+    for c in contours {
+        if c.len() < 2 {
+            continue;
+        }
+        for (k, p) in c.iter().enumerate() {
+            let op = if k == 0 { "m" } else { "l" };
+            content.push_str(&format!(
+                "{} {} {op}\n",
+                num(p[0] - min_x),
+                num(p[1] - min_y)
+            ));
+        }
+        content.push_str("h\n");
+    }
+    // Fill (even-odd) then stroke the outlines.
+    content.push_str("B*\n");
+
+    // Assemble objects, recording byte offsets for the xref table.
+    let mut pdf: Vec<u8> = Vec::new();
+    let mut offsets = Vec::new();
+    let push = |pdf: &mut Vec<u8>, offsets: &mut Vec<usize>, s: &str| {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(s.as_bytes());
+    };
+    pdf.extend_from_slice(b"%PDF-1.4\n");
+    push(
+        &mut pdf,
+        &mut offsets,
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    );
+    push(
+        &mut pdf,
+        &mut offsets,
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    );
+    push(
+        &mut pdf,
+        &mut offsets,
+        &format!(
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R >>\nendobj\n",
+            num(w),
+            num(h),
+        ),
+    );
+    push(
+        &mut pdf,
+        &mut offsets,
+        &format!(
+            "4 0 obj\n<< /Length {} >>\nstream\n{content}endstream\nendobj\n",
+            content.len(),
+        ),
+    );
+    let xref_off = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", offsets.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for off in &offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n",
+            offsets.len() + 1,
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1338,6 +1427,28 @@ mod tests {
                 a / 2.0
             })
             .sum()
+    }
+
+    #[test]
+    fn pdf_has_header_and_path_ops() {
+        let outer = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
+        let hole = vec![[4.0, 4.0], [4.0, 6.0], [6.0, 6.0], [6.0, 4.0]];
+        let pdf = export_pdf(&[outer, hole]);
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.starts_with("%PDF-1.4"));
+        assert!(s.contains("/Type /Catalog"));
+        assert!(s.trim_end().ends_with("%%EOF"));
+        // One moveto per contour, and the even-odd fill+stroke operator.
+        assert_eq!(s.matches(" m\n").count(), 2);
+        assert!(s.contains("B*"));
+    }
+
+    #[test]
+    fn pdf_empty_is_still_valid() {
+        let pdf = export_pdf(&[]);
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.starts_with("%PDF-1.4"));
+        assert!(s.contains("startxref"));
     }
 
     #[test]

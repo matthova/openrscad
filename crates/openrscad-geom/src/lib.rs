@@ -15,7 +15,7 @@ pub use kernel::{BoolmeshKernel, Kernel, RustManifoldKernel};
 pub use mesh::Mesh;
 pub use shape2d::Contour;
 pub use tessellate::{cube, cylinder, fragments, polyhedron, sphere};
-pub use vector2d::{export_dxf, export_svg, import_dxf, import_svg};
+pub use vector2d::{export_dxf, export_pdf, export_svg, import_dxf, import_svg};
 
 /// Render a node's 2D profile as even-odd contours with the target's default
 /// geometry kernel, or `None` if it isn't a 2D object (or projection lowering

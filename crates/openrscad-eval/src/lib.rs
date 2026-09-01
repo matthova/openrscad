@@ -389,6 +389,58 @@ pub fn value_from_param(p: &openrscad_syntax::customizer::ParamValue) -> Value {
     }
 }
 
+/// Evaluate a single OpenSCAD *expression* against the base scope (so `PI`,
+/// `sqrt()`, list/range/vector literals, etc. all work), returning its value.
+///
+/// This backs the CLI's `-D name=<expr>`, which upstream accepts as an arbitrary
+/// expression — `-D 'm=[[1,2],[3,4]]'`, `-D 'r=sqrt(2)*2'` — not just the flat
+/// literals the customizer parser handles. The expression is evaluated with the
+/// default fragment specials and no file resolver (an `include`-bearing `-D`
+/// value is not a thing).
+pub fn eval_const_expr(src: &str) -> EResult<Value> {
+    // Reuse the program parser by wrapping the expression in an assignment, then
+    // pull the value expression back out.
+    let wrapped = format!("__orscad_const = ({src});");
+    let prog = openrscad_syntax::parse(&wrapped)
+        .map_err(|e| EvalError::new(format!("invalid expression: {}", e.message)))?;
+    let expr = prog.iter().find_map(|s| match &s.node {
+        Stmt::Assign { name, value } if name == "__orscad_const" => Some(value),
+        _ => None,
+    });
+    let expr = expr.ok_or_else(|| EvalError::new("empty expression"))?;
+
+    let mut base = Scope::default();
+    base.vars
+        .insert("PI".into(), Value::Number(std::f64::consts::PI));
+    let mut globals = FastMap::default();
+    globals.insert("$fn".to_string(), Value::Number(0.0));
+    globals.insert("$fa".to_string(), Value::Number(12.0));
+    globals.insert("$fs".to_string(), Value::Number(2.0));
+    globals.insert("$t".to_string(), Value::Number(0.0));
+    globals.insert("$preview".to_string(), Value::Bool(false));
+
+    let mut interp = Interp {
+        scopes: vec![Rc::new(RefCell::new(base))],
+        specials: vec![globals],
+        echoes: Vec::new(),
+        warnings: Vec::new(),
+        asserts_run: 0,
+        root: None,
+        depth: 0,
+        fuel: u64::MAX,
+        in_main: true,
+        cur_span: None,
+        children_stack: Vec::new(),
+        module_stack: Vec::new(),
+        resolver: &NullResolver,
+        cur_dir: ".".to_string(),
+        loading: HashSet::new(),
+        overrides: FastMap::default(),
+        warned: HashSet::new(),
+    };
+    interp.eval_expr(expr)
+}
+
 /// Evaluate a program with `include`/`use` support via `resolver`, resolving
 /// relative paths against `base_dir`.
 pub fn eval_program_with(
@@ -3726,6 +3778,34 @@ fn cross(args: &[Value]) -> Value {
 mod tests {
     use super::*;
     use openrscad_syntax::parse;
+
+    /// `eval_const_expr` backs `-D name=<expr>`: it must handle arbitrary
+    /// expressions, not just flat literals — nested vectors, builtin calls, and
+    /// constants like `PI`.
+    #[test]
+    fn const_expr_evaluates_arbitrary_expressions() {
+        assert_eq!(eval_const_expr("42").unwrap(), Value::Number(42.0));
+        assert_eq!(
+            eval_const_expr("sqrt(2)*2").unwrap(),
+            Value::Number(2.0_f64.sqrt() * 2.0)
+        );
+        // A nested matrix, which the customizer's flat-vector parser rejects.
+        let m = eval_const_expr("[[1,2],[3,4]]").unwrap();
+        match m {
+            Value::Vector(rows) => {
+                assert_eq!(rows.len(), 2);
+                assert!(matches!(&rows[0], Value::Vector(r) if r.len() == 2));
+            }
+            other => panic!("expected a vector, got {other:?}"),
+        }
+        // Constants from the base scope are in scope.
+        assert_eq!(
+            eval_const_expr("PI").unwrap(),
+            Value::Number(std::f64::consts::PI)
+        );
+        // A malformed expression is an error, not a panic.
+        assert!(eval_const_expr("[1,").is_err());
+    }
 
     /// Malformed and adversarial inputs must fail gracefully (parse error or
     /// eval error), never panic or overflow the stack — this is what keeps the

@@ -10,8 +10,32 @@ mod raster;
 
 /// Resolves `include`/`use` paths from disk: relative to the including file,
 /// then each `OPENSCADPATH` library directory.
+///
+/// Every successfully resolved path is recorded in `deps` (both text `load` and
+/// binary `load_bytes`, so `import()`, `surface()`, and DXF/SVG fixtures land in
+/// the dependency list too, not just `include`/`use`). `RefCell` is sufficient:
+/// the resolver is used single-threaded inside the render worker, through the
+/// `&self` trait methods.
 struct DiskResolver {
     libs: Vec<PathBuf>,
+    deps: std::cell::RefCell<Vec<PathBuf>>,
+}
+
+impl DiskResolver {
+    fn new(libs: Vec<PathBuf>) -> Self {
+        DiskResolver {
+            libs,
+            deps: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    fn record(&self, path: &Path) {
+        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut deps = self.deps.borrow_mut();
+        if !deps.contains(&canon) {
+            deps.push(canon);
+        }
+    }
 }
 
 impl FileResolver for DiskResolver {
@@ -20,6 +44,7 @@ impl FileResolver for DiskResolver {
             .chain(self.libs.iter().map(|l| l.join(path)));
         for c in candidates {
             if let Ok(source) = std::fs::read_to_string(&c) {
+                self.record(&c);
                 let key = std::fs::canonicalize(&c)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| c.to_string_lossy().into_owned());
@@ -36,7 +61,13 @@ impl FileResolver for DiskResolver {
     fn load_bytes(&self, path: &str, from_dir: &str) -> Option<Vec<u8>> {
         let candidates = std::iter::once(Path::new(from_dir).join(path))
             .chain(self.libs.iter().map(|l| l.join(path)));
-        candidates.into_iter().find_map(|c| std::fs::read(&c).ok())
+        for c in candidates {
+            if let Ok(bytes) = std::fs::read(&c) {
+                self.record(&c);
+                return Some(bytes);
+            }
+        }
+        None
     }
 }
 
@@ -44,11 +75,12 @@ impl FileResolver for DiskResolver {
 #[derive(Parser, Debug)]
 #[command(name = "openrscad", version, about)]
 struct Cli {
-    /// Input `.scad` file.
-    input: PathBuf,
+    /// Input `.scad` file. Optional only with `--info`.
+    input: Option<PathBuf>,
 
-    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`,
-    /// 2D `.dxf`/`.svg`, tree `.csg`. If omitted, only prints model statistics.
+    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`/`.wrl`,
+    /// 2D `.dxf`/`.svg`/`.pdf`, tree `.csg`. `-o -` writes to stdout (needs
+    /// `--export-format`). If omitted, only prints model statistics.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -56,9 +88,51 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = StlFormat::Binary)]
     format: StlFormat,
 
+    /// Explicit export format, overriding the `-o` suffix. Accepts OpenSCAD
+    /// spellings: `stl`/`binstl`/`asciistl`, `off`, `obj`, `3mf`, `amf`, `dxf`,
+    /// `svg`, `pdf`, `wrl`, `csg`, `png`, and `echo` (equivalent to `--check`).
+    #[arg(long, value_name = "FMT")]
+    export_format: Option<String>,
+
     /// Print echo/warning output only; do not render geometry.
     #[arg(long)]
     check: bool,
+
+    /// Enable an experimental feature (repeatable). Accepted for compatibility
+    /// with upstream scripts, but ignored: all experimental features are always
+    /// on in OpenRSCAD.
+    #[arg(long, value_name = "FEATURE")]
+    enable: Vec<String>,
+
+    /// OpenCSG preview polygon limit. Accepted and ignored (OpenRSCAD has no
+    /// OpenCSG preview); rendering is unaffected.
+    #[arg(long, value_name = "N")]
+    csglimit: Option<u64>,
+
+    /// Suppress echoes, warnings, and the render statistics; errors still go to
+    /// stderr and still set the exit code.
+    #[arg(short = 'q', long)]
+    quiet: bool,
+
+    /// Exit non-zero if the model produced any warnings (after printing them).
+    #[arg(long)]
+    hardwarnings: bool,
+
+    /// Print version, kernel backend, enabled features, and library paths, then
+    /// exit.
+    #[arg(long)]
+    info: bool,
+
+    /// Write a Makefile dependency rule (`<output>: <input> <deps>…`) to FILE,
+    /// listing every file the model read (`include`/`use`/`import`/`surface`/…).
+    /// Requires `-o`.
+    #[arg(short = 'd', long = "deps_file", value_name = "FILE")]
+    deps_file: Option<PathBuf>,
+
+    /// The command written into the dependency rule to rebuild a missing
+    /// dependency (`-m` in `make`'s sense). Only meaningful with `-d`.
+    #[arg(short = 'm', long = "make", value_name = "CMD")]
+    make: Option<String>,
 
     /// Override a top-level parameter, e.g. `-D width=20` or `-D label="hi"`.
     /// Repeatable. Values are literals (number/bool/string/vector), matching
@@ -74,6 +148,27 @@ struct Cli {
     /// Name of the parameter set to apply from `-p`'s file.
     #[arg(short = 'P', long = "set", value_name = "NAME")]
     param_set: Option<String>,
+
+    /// Validate the selected `-p`/`-P` set against the model's customizer schema,
+    /// reporting parameters that no longer exist. Non-zero exit on a mismatch.
+    #[arg(long)]
+    check_parameters: bool,
+
+    /// Validate the selected `-p`/`-P` set's values against slider ranges and
+    /// dropdown options. Non-zero exit on an out-of-range value.
+    #[arg(long)]
+    check_parameter_ranges: bool,
+
+    /// Print a render summary. Comma-separated set of: `all`, `cache`, `time`,
+    /// `camera`, `geometry`, `bounding-box`, `area`, `volume`.
+    #[arg(long, value_name = "SET")]
+    summary: Option<String>,
+
+    /// Write the summary (see `--summary`) as JSON to FILE instead of, or in
+    /// addition to, printing it. Implies the `all` set when `--summary` is
+    /// absent.
+    #[arg(long, value_name = "FILE")]
+    summary_file: Option<PathBuf>,
 
     /// Render an animation: `N` frames with `$t` sweeping 0→1, written as
     /// `out00000.png`… (requires a `.png` `-o`).
@@ -100,6 +195,17 @@ struct Cli {
     /// PNG: shift the model so its center is the view target.
     #[arg(long)]
     autocenter: bool,
+
+    /// PNG viewport color scheme (background). OpenSCAD names:
+    /// Cornfield, Metallic, Sunset, Starnight, BeforeDawn, Nature, DeepOcean,
+    /// Tomorrow, Tomorrow Night, Monotone.
+    #[arg(long, value_name = "NAME")]
+    colorscheme: Option<String>,
+
+    /// PNG: render only animation frames `i` where `frame ≡ i (mod n)`, given as
+    /// `i/n`. Shards a long `--animate` run across parallel invocations.
+    #[arg(long = "animate_sharding", value_name = "i/n")]
+    animate_sharding: Option<String>,
 
     /// Force `$preview = false` (F6 semantics). Geometry export already implies
     /// this; use it to render a PNG the way an exact export would.
@@ -128,6 +234,16 @@ impl Cli {
         if self.check {
             return RenderMode::Preview;
         }
+        // An explicit `--export-format` decides the mode when present: `echo`
+        // is echo-only (preview), PNG/CSG skip the exact render, the rest render
+        // exactly. An unrecognized spelling is reported later, by `run`.
+        if let Some(fmt) = &self.export_format {
+            return match OutputFormat::from_export_format(fmt) {
+                Ok(None) => RenderMode::Preview, // echo
+                Ok(Some((f, _))) if f.skips_exact_render() => RenderMode::Preview,
+                _ => RenderMode::Exact,
+            };
+        }
         // PNG (including `--animate`) and `.csg` are produced without an exact
         // render upstream. An unclassifiable suffix is reported later, by `run`.
         let no_render = self.animate.is_some()
@@ -150,7 +266,9 @@ enum StlFormat {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum Proj {
+    #[value(alias = "p")]
     Perspective,
+    #[value(name = "ortho", alias = "o", alias = "orthogonal")]
     Ortho,
 }
 
@@ -165,6 +283,8 @@ enum OutputFormat {
     Amf,
     Dxf,
     Svg,
+    Pdf,
+    Wrl,
     Png,
 }
 
@@ -190,18 +310,47 @@ impl OutputFormat {
             "amf" => OutputFormat::Amf,
             "dxf" => OutputFormat::Dxf,
             "svg" => OutputFormat::Svg,
+            "pdf" => OutputFormat::Pdf,
+            "wrl" => OutputFormat::Wrl,
             "png" => OutputFormat::Png,
             "csg" => OutputFormat::Csg,
             "" => anyhow::bail!(
                 "output path '{}' has no suffix; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg",
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, png, csg",
                 path.display()
             ),
             other => anyhow::bail!(
                 "invalid output suffix '{other}'; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg"
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, png, csg"
             ),
         })
+    }
+
+    /// Resolve an explicit `--export-format` spelling to a format, plus an
+    /// optional STL sub-format when the name pins ASCII/binary. `echo` returns
+    /// `Ok(None)` — the caller treats it like `--check`.
+    fn from_export_format(name: &str) -> Result<Option<(OutputFormat, Option<StlFormat>)>> {
+        let n = name.trim().to_ascii_lowercase();
+        Ok(Some(match n.as_str() {
+            "echo" => return Ok(None),
+            "stl" => (OutputFormat::Stl, None),
+            "binstl" => (OutputFormat::Stl, Some(StlFormat::Binary)),
+            "asciistl" => (OutputFormat::Stl, Some(StlFormat::Ascii)),
+            "off" => (OutputFormat::Off, None),
+            "obj" => (OutputFormat::Obj, None),
+            "3mf" => (OutputFormat::ThreeMf, None),
+            "amf" => (OutputFormat::Amf, None),
+            "dxf" => (OutputFormat::Dxf, None),
+            "svg" => (OutputFormat::Svg, None),
+            "pdf" => (OutputFormat::Pdf, None),
+            "wrl" | "vrml" => (OutputFormat::Wrl, None),
+            "csg" => (OutputFormat::Csg, None),
+            "png" => (OutputFormat::Png, None),
+            other => anyhow::bail!(
+                "unsupported --export-format '{other}'; expected one of: \
+                 stl, binstl, asciistl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, csg, png, echo"
+            ),
+        }))
     }
 
     /// Whether this format is produced *without* an exact render, and so keeps
@@ -245,28 +394,96 @@ fn parse_camera(s: &str) -> Result<raster::Camera> {
     }
 }
 
+/// A script-set viewport (`$vpr`/`$vpt`/`$vpd`/`$vpf`) as a gimbal camera plus
+/// its field of view, or `None` when the script assigned no `$vp*` variable.
+///
+/// The `$vp*` globals are *always* populated with defaults after evaluation, so
+/// their mere presence cannot tell us the script chose a camera. We therefore
+/// key off the source actually mentioning a `$vp` assignment — mirroring the
+/// intent of the flag: honor a camera the script deliberately set, otherwise
+/// keep auto-framing the model.
+fn viewport_camera(src: &str, vp: &openrscad_eval::Viewport) -> Option<(raster::Camera, f64)> {
+    let assigns_viewport = ["$vpr", "$vpt", "$vpd", "$vpf"]
+        .iter()
+        .any(|name| src.contains(name));
+    if !assigns_viewport {
+        return None;
+    }
+    let (Some(rot), Some(target), Some(dist)) = (vp.vpr, vp.vpt, vp.vpd) else {
+        return None;
+    };
+    let fov = vp.vpf.unwrap_or(22.5);
+    Some((raster::Camera::Gimbal { target, rot, dist }, fov))
+}
+
+/// Map an OpenSCAD `--colorscheme` name to a background color. These are
+/// clean-room approximations of the schemes' clear color (representative flat
+/// backgrounds, reconstructed from observation — we render no gradient). An
+/// unknown name is an error so a typo is not silently ignored.
+fn colorscheme_background(name: &str) -> Result<[u8; 3]> {
+    let bg = match name
+        .trim()
+        .to_ascii_lowercase()
+        .replace([' ', '_', '-'], "")
+        .as_str()
+    {
+        "cornfield" => [0xda, 0xe1, 0xe8],
+        "metallic" => [0xa0, 0xa0, 0xb0],
+        "sunset" => [0x60, 0x50, 0x60],
+        "starnight" => [0x00, 0x00, 0x10],
+        "beforedawn" => [0x1a, 0x1a, 0x2a],
+        "nature" => [0xc8, 0xdc, 0xc8],
+        "deepocean" => [0x10, 0x20, 0x30],
+        "tomorrow" => [0xff, 0xff, 0xff],
+        "tomorrownight" => [0x1d, 0x1f, 0x21],
+        "monotone" => [0x80, 0x80, 0x80],
+        other => anyhow::bail!(
+            "unknown --colorscheme '{other}'; expected one of: Cornfield, Metallic, \
+             Sunset, Starnight, BeforeDawn, Nature, DeepOcean, Tomorrow, \
+             Tomorrow Night, Monotone"
+        ),
+    };
+    Ok(bg)
+}
+
 /// Build the PNG render options from the CLI flags (`--imgsize`/`--camera`/…).
-fn build_render_opts(cli: &Cli) -> Result<raster::RenderOpts> {
+/// When `--camera` is absent, a script-set viewport (`vp_cam`) drives the
+/// camera and field of view.
+fn build_render_opts(
+    cli: &Cli,
+    vp_cam: Option<(raster::Camera, f64)>,
+) -> Result<raster::RenderOpts> {
     let (width, height) = match &cli.imgsize {
         Some(s) => parse_imgsize(s)?,
         None => (512, 512),
     };
-    let camera = match &cli.camera {
-        Some(s) => parse_camera(s)?,
-        None => raster::Camera::Auto,
+    // An explicit `--camera` always wins; otherwise a script-set `$vp*` camera;
+    // otherwise auto-frame.
+    let (camera, vp_fov) = match &cli.camera {
+        Some(s) => (parse_camera(s)?, None),
+        None => match vp_cam {
+            Some((cam, fov)) => (cam, Some(fov)),
+            None => (raster::Camera::Auto, None),
+        },
     };
     let projection = match cli.projection {
-        Proj::Perspective => raster::Projection::Perspective { fov_deg: 45.0 },
+        Proj::Perspective => raster::Projection::Perspective {
+            fov_deg: vp_fov.unwrap_or(45.0),
+        },
         Proj::Ortho => raster::Projection::Ortho,
+    };
+    let background = match &cli.colorscheme {
+        Some(name) => colorscheme_background(name)?,
+        None => raster::RenderOpts::default().background,
     };
     Ok(raster::RenderOpts {
         width,
         height,
         camera,
         projection,
+        background,
         viewall: cli.viewall,
         autocenter: cli.autocenter,
-        ..Default::default()
     })
 }
 
@@ -282,12 +499,26 @@ fn render_frame_png(node: &openrscad_ir::Node, opts: &raster::RenderOpts) -> Res
 }
 
 /// `--animate N`: render `N` frames with `$t` swept 0→1, written as numbered PNGs.
+/// Parse `--animate_sharding i/n` into `(i, n)`, validating `0 <= i < n`.
+fn parse_sharding(s: &str) -> Result<(u32, u32)> {
+    let (i, n) = s
+        .split_once('/')
+        .context("--animate_sharding expects i/n (e.g. 0/4)")?;
+    let i: u32 = i.trim().parse().context("--animate_sharding i")?;
+    let n: u32 = n.trim().parse().context("--animate_sharding n")?;
+    if n == 0 || i >= n {
+        anyhow::bail!("--animate_sharding needs 0 <= i < n, got {i}/{n}");
+    }
+    Ok((i, n))
+}
+
 fn run_animation(
     program: &openrscad_syntax::Program,
     resolver: &DiskResolver,
     base_dir: &str,
     base_overrides: &[(String, openrscad_eval::Value)],
     cli: &Cli,
+    src: &str,
     n: u32,
 ) -> Result<()> {
     let path = cli
@@ -305,12 +536,23 @@ fn run_animation(
     if n == 0 {
         anyhow::bail!("--animate N must be >= 1");
     }
-    let opts = build_render_opts(cli)?;
+    // `--animate_sharding i/n`: render only the frames this shard owns.
+    let shard = cli
+        .animate_sharding
+        .as_deref()
+        .map(parse_sharding)
+        .transpose()?;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     // Zero-pad to at least 5 digits (matching OpenSCAD), more if needed.
     let pad = 5.max((n - 1).to_string().len());
+    let mut written = 0u32;
     for i in 0..n {
+        if let Some((si, sn)) = shard {
+            if i % sn != si {
+                continue;
+            }
+        }
         let t = i as f64 / n as f64;
         let mut ov = base_overrides.to_vec();
         ov.push((
@@ -325,11 +567,281 @@ fn run_animation(
             cli.render_mode(),
         )
         .map_err(|e| anyhow::anyhow!("frame {i}: {}", e.message))?;
+        let opts = build_render_opts(cli, viewport_camera(src, &out.viewport))?;
         let bytes = render_frame_png(&out.node, &opts)?;
         let fname = format!("{stem}{i:0pad$}.png");
         std::fs::write(dir.join(&fname), bytes)?;
+        written += 1;
     }
-    eprintln!("wrote {n} frames to {}", dir.display());
+    eprintln!("wrote {written} frame(s) to {}", dir.display());
+    Ok(())
+}
+
+/// The experimental features that are always on (see `--enable`), reported by
+/// `--info` so no false parity claim is made about them being toggleable.
+const ALWAYS_ON_FEATURES: &[&str] = &["roof", "object-values", "fill", "lazy-union"];
+
+/// `--info`: print version, kernel backend, always-on features, and library
+/// paths, mirroring OpenSCAD's `--info`.
+fn print_info(_cli: &Cli) {
+    println!("OpenRSCAD version: {}", env!("CARGO_PKG_VERSION"));
+    println!("Geometry backend: Manifold (native)");
+    println!(
+        "Always-on experimental features: {}",
+        ALWAYS_ON_FEATURES.join(", ")
+    );
+    let osp = std::env::var("OPENSCADPATH").unwrap_or_default();
+    println!(
+        "OPENSCADPATH: {}",
+        if osp.is_empty() { "(unset)" } else { &osp }
+    );
+}
+
+/// `--check-parameters` / `--check-parameter-ranges`: validate a `-p`/`-P`
+/// override set against the model's customizer schema. Collects every problem
+/// and fails once, so a stale set surfaces all its issues at once.
+fn validate_param_set(
+    set: &[(String, openrscad_syntax::customizer::ParamValue)],
+    schema: &openrscad_syntax::customizer::Customizer,
+    cli: &Cli,
+) -> Result<()> {
+    use openrscad_syntax::customizer::{Control, ParamValue};
+    let mut problems: Vec<String> = Vec::new();
+    for (name, value) in set {
+        let Some(param) = schema.params.iter().find(|p| &p.name == name) else {
+            if cli.check_parameters {
+                problems.push(format!("unknown parameter '{name}' (not in the model)"));
+            }
+            continue;
+        };
+        if !cli.check_parameter_ranges {
+            continue;
+        }
+        match (&param.control, value) {
+            (Control::Slider { min, max, .. }, ParamValue::Number(n)) => {
+                if n < min || n > max {
+                    problems.push(format!(
+                        "'{name}' = {n} is outside the slider range [{min}:{max}]"
+                    ));
+                }
+            }
+            (Control::Dropdown(choices), v) if !choices.iter().any(|c| &c.value == v) => {
+                let opts: Vec<String> = choices
+                    .iter()
+                    .map(|c| match &c.value {
+                        ParamValue::Number(n) => n.to_string(),
+                        ParamValue::Text(s) => s.clone(),
+                        ParamValue::Bool(b) => b.to_string(),
+                        ParamValue::Vector(_) => "[…]".to_string(),
+                    })
+                    .collect();
+                problems.push(format!(
+                    "'{name}' = {v:?} is not one of the dropdown options [{}]",
+                    opts.join(", ")
+                ));
+            }
+            _ => {}
+        }
+    }
+    if !problems.is_empty() {
+        for p in &problems {
+            eprintln!("PARAMETER ERROR: {p}");
+        }
+        anyhow::bail!("{} parameter-set problem(s)", problems.len());
+    }
+    Ok(())
+}
+
+/// Which `--summary` sections were requested. `all` selects everything.
+struct SummarySections {
+    time: bool,
+    camera: bool,
+    geometry: bool,
+    bounding_box: bool,
+    area: bool,
+    volume: bool,
+    cache: bool,
+}
+
+impl SummarySections {
+    /// Parse the comma-separated `--summary` set. Unknown tokens are an error so
+    /// a typo is not silently dropped. `all` turns everything on.
+    fn parse(set: &str) -> Result<Self> {
+        let mut s = SummarySections {
+            time: false,
+            camera: false,
+            geometry: false,
+            bounding_box: false,
+            area: false,
+            volume: false,
+            cache: false,
+        };
+        for tok in set.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match tok.to_ascii_lowercase().as_str() {
+                "all" => {
+                    s = SummarySections {
+                        time: true,
+                        camera: true,
+                        geometry: true,
+                        bounding_box: true,
+                        area: true,
+                        volume: true,
+                        cache: true,
+                    }
+                }
+                "time" => s.time = true,
+                "camera" => s.camera = true,
+                "geometry" => s.geometry = true,
+                "bounding-box" | "boundingbox" => s.bounding_box = true,
+                "area" => s.area = true,
+                "volume" => s.volume = true,
+                "cache" => s.cache = true,
+                other => anyhow::bail!(
+                    "unknown --summary section '{other}'; expected any of: all, cache, \
+                     time, camera, geometry, bounding-box, area, volume"
+                ),
+            }
+        }
+        Ok(s)
+    }
+}
+
+/// `--summary`/`--summary-file`: report the render as OpenSCAD-style text
+/// (stdout) and/or JSON (to `--summary-file`). The selected sections come from
+/// `--summary`; a lone `--summary-file` implies `all`.
+fn emit_summary(
+    cli: &Cli,
+    mesh: &openrscad_geom::Mesh,
+    elapsed: std::time::Duration,
+) -> Result<()> {
+    let sel = match &cli.summary {
+        Some(set) => SummarySections::parse(set)?,
+        None => SummarySections::parse("all")?,
+    };
+    let bbox = mesh.bbox();
+    // JSON is emitted with only the requested fields present.
+    let mut json = String::from("{");
+    let mut first = true;
+    let mut field = |json: &mut String, key: &str, val: String| {
+        if !first {
+            json.push(',');
+        }
+        first = false;
+        json.push_str(&format!("\"{key}\":{val}"));
+    };
+    // Text lines for stdout.
+    let mut lines: Vec<String> = Vec::new();
+    if sel.geometry {
+        lines.push(format!("   Facets: {}", mesh.tris.len()));
+        lines.push(format!("   Vertices: {}", mesh.verts.len()));
+        field(&mut json, "facets", mesh.tris.len().to_string());
+        field(&mut json, "vertices", mesh.verts.len().to_string());
+    }
+    if sel.volume {
+        lines.push(format!("   Volume: {:.4}", mesh.volume()));
+        field(&mut json, "volume", format!("{:.6}", mesh.volume()));
+    }
+    if sel.area {
+        lines.push(format!("   Surface area: {:.4}", mesh.surface_area()));
+        field(&mut json, "area", format!("{:.6}", mesh.surface_area()));
+    }
+    if sel.bounding_box {
+        if let Some((lo, hi)) = bbox {
+            lines.push(format!(
+                "   Bounding box: [{:.4}, {:.4}, {:.4}] .. [{:.4}, {:.4}, {:.4}]",
+                lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]
+            ));
+            field(
+                &mut json,
+                "boundingBox",
+                format!(
+                    "[[{},{},{}],[{},{},{}]]",
+                    lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]
+                ),
+            );
+        }
+    }
+    if sel.time {
+        lines.push(format!("   Render time: {:.3}s", elapsed.as_secs_f64()));
+        field(
+            &mut json,
+            "renderTimeSeconds",
+            format!("{:.6}", elapsed.as_secs_f64()),
+        );
+    }
+    if sel.camera {
+        let cam = cli.camera.as_deref().unwrap_or("auto");
+        lines.push(format!("   Camera: {cam}"));
+        field(&mut json, "camera", format!("{cam:?}"));
+    }
+    if sel.cache {
+        // OpenRSCAD renders fresh per invocation; the CLI keeps no cross-run
+        // geometry cache, so this section is reported as empty for parity.
+        lines.push("   Geometry cache: 0 entries".to_string());
+        field(&mut json, "cacheEntries", "0".to_string());
+    }
+    json.push('}');
+
+    if cli.summary.is_some() && !cli.quiet {
+        println!("Summary:");
+        for l in &lines {
+            println!("{l}");
+        }
+    }
+    if let Some(path) = &cli.summary_file {
+        std::fs::write(path, format!("{json}\n"))
+            .with_context(|| format!("writing summary file {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// True when `-o` is `-`, meaning "write the export to stdout".
+fn is_stdout(path: &Path) -> bool {
+    path == Path::new("-")
+}
+
+/// Write an export to its destination: raw bytes to stdout for `-o -`, or to the
+/// file otherwise (with the usual "wrote <path>" note on stderr). Keeping the
+/// note on stderr means it never corrupts a piped stdout stream.
+fn emit_target(out: &Path, bytes: &[u8]) -> Result<()> {
+    if is_stdout(out) {
+        use std::io::Write;
+        std::io::stdout()
+            .write_all(bytes)
+            .context("writing export to stdout")?;
+    } else {
+        std::fs::write(out, bytes).with_context(|| format!("writing {}", out.display()))?;
+        eprintln!("wrote {}", out.display());
+    }
+    Ok(())
+}
+
+/// `-d/--deps_file`: write a Makefile rule listing every file the render read.
+/// Called once, after all loading (eval + geometry) is done. A no-op when `-d`
+/// was not given.
+fn write_deps(cli: &Cli, input: &Path, resolver: &DiskResolver) -> Result<()> {
+    let Some(deps_path) = &cli.deps_file else {
+        return Ok(());
+    };
+    let Some(output) = &cli.output else {
+        anyhow::bail!("-d/--deps_file requires -o <output>");
+    };
+    // Make-escape spaces in a path, matching how `make` reads them.
+    let esc = |p: &Path| p.to_string_lossy().replace(' ', "\\ ");
+    // The input is read directly (not through the resolver), so list it first;
+    // the resolver captured everything reachable via include/use/import/surface.
+    let mut rule = format!("{}: {}", esc(output), esc(input));
+    for dep in resolver.deps.borrow().iter() {
+        rule.push(' ');
+        rule.push_str(&esc(dep));
+    }
+    rule.push('\n');
+    if let Some(cmd) = &cli.make {
+        // A rebuild recipe for the dependencies (GNU make wants a tab prefix).
+        rule.push_str(&format!("\t{cmd}\n"));
+    }
+    std::fs::write(deps_path, rule)
+        .with_context(|| format!("writing dependency file {}", deps_path.display()))?;
     Ok(())
 }
 
@@ -348,16 +860,53 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    // Reject an unusable output suffix before doing any work, so a long render
-    // is not thrown away on a typo.
-    let format = cli
-        .output
-        .as_deref()
-        .map(OutputFormat::from_path)
-        .transpose()?;
+    // `--info` prints environment facts and exits; it needs no input file.
+    if cli.info {
+        print_info(&cli);
+        return Ok(());
+    }
 
-    let src = std::fs::read_to_string(&cli.input)
-        .with_context(|| format!("reading {}", cli.input.display()))?;
+    let input = cli
+        .input
+        .as_ref()
+        .context("no input file given (only `--info` may be run without one)")?;
+
+    // Resolve the export format. An explicit `--export-format` overrides the
+    // `-o` suffix (and may pin binary/ASCII STL, or request echo-only). Reject
+    // an unusable choice before doing any work, so a long render is not thrown
+    // away on a typo.
+    let mut stl_format = cli.format;
+    let mut echo_only = cli.check;
+    let format = if let Some(fmt) = &cli.export_format {
+        match OutputFormat::from_export_format(fmt)? {
+            None => {
+                echo_only = true;
+                None
+            }
+            Some((f, stl)) => {
+                if let Some(stl) = stl {
+                    stl_format = stl;
+                }
+                Some(f)
+            }
+        }
+    } else if cli.output.as_deref().is_some_and(is_stdout) {
+        // `-o -` has no suffix to infer from, so it needs an explicit format.
+        anyhow::bail!("-o - (stdout) requires --export-format to choose the format");
+    } else {
+        cli.output
+            .as_deref()
+            .map(OutputFormat::from_path)
+            .transpose()?
+    };
+
+    // Writing to stdout: suppress echoes (which also go to stdout) so they do
+    // not corrupt the exported byte stream. Warnings and notes are on stderr and
+    // are unaffected.
+    let stdout_export = cli.output.as_deref().is_some_and(is_stdout);
+
+    let src =
+        std::fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
 
     // Make the OS's installed fonts available to `text(font="…")` (matching
     // OpenSCAD's fontconfig behavior). Only pay the font-dir scan when the model
@@ -371,8 +920,7 @@ fn run() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("parse error at {:?}: {}", e.span, e.message))?;
 
     // Evaluate, resolving include/use relative to the input file + OPENSCADPATH.
-    let base_dir = cli
-        .input
+    let base_dir = input
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
@@ -383,24 +931,27 @@ fn run() -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .collect();
-    let resolver = DiskResolver { libs };
+    let resolver = DiskResolver::new(libs);
 
     // Parameter overrides: a customizer parameter set (`-p file.json -P set`)
     // first, then `-D name=value` on top (so `-D` wins).
     let mut overrides = Vec::new();
     if let Some(file) = &cli.params_file {
-        let set = cli
-            .param_set
-            .as_deref()
-            .context("-p requires -P <set-name> to select a parameter set")?;
         let json = std::fs::read_to_string(file)
             .with_context(|| format!("reading parameter-set file {}", file.display()))?;
         let schema = openrscad_syntax::customizer::extract(&src);
-        let set_overrides =
-            openrscad_syntax::customizer::parameter_set_overrides(&json, set, &schema)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-        for (name, pv) in set_overrides {
-            overrides.push((name, openrscad_eval::value_from_param(&pv)));
+        // OpenSCAD tolerates `-p` without `-P`: no set is selected, so no
+        // overrides are applied. Only `-P` without `-p` is an error.
+        if let Some(set) = cli.param_set.as_deref() {
+            let set_overrides =
+                openrscad_syntax::customizer::parameter_set_overrides(&json, set, &schema)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if cli.check_parameters || cli.check_parameter_ranges {
+                validate_param_set(&set_overrides, &schema, &cli)?;
+            }
+            for (name, pv) in set_overrides {
+                overrides.push((name, openrscad_eval::value_from_param(&pv)));
+            }
         }
     } else if cli.param_set.is_some() {
         anyhow::bail!("-P <set-name> requires -p <file.json>");
@@ -409,17 +960,25 @@ fn run() -> Result<()> {
         let (name, val) = p
             .split_once('=')
             .with_context(|| format!("--param must be NAME=VALUE, got '{p}'"))?;
-        let pv = openrscad_syntax::customizer::parse_value(val.trim())
-            .with_context(|| format!("invalid parameter value: '{val}'"))?;
-        overrides.push((
-            name.trim().to_string(),
-            openrscad_eval::value_from_param(&pv),
-        ));
+        // OpenSCAD's `-D` takes any expression, so evaluate it against the base
+        // scope (`PI`, `sqrt()`, nested vectors, …). Fall back to the flat
+        // customizer literal parser only if the expression evaluator rejects it,
+        // so an unquoted bareword like `-D label=hi` still works as a string the
+        // way the customizer allowed.
+        let value = match openrscad_eval::eval_const_expr(val.trim()) {
+            Ok(v) => v,
+            Err(_) => {
+                let pv = openrscad_syntax::customizer::parse_value(val.trim())
+                    .with_context(|| format!("invalid parameter value: '{val}'"))?;
+                openrscad_eval::value_from_param(&pv)
+            }
+        };
+        overrides.push((name.trim().to_string(), value));
     }
 
     // Animation: re-eval per frame with a swept `$t` and write numbered PNGs.
     if let Some(n) = cli.animate {
-        return run_animation(&program, &resolver, &base_dir, &overrides, &cli, n);
+        return run_animation(&program, &resolver, &base_dir, &overrides, &cli, &src, n);
     }
 
     let out = openrscad_eval::eval_program_with_mode(
@@ -431,14 +990,24 @@ fn run() -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
 
-    for line in &out.echoes {
-        println!("{line}");
+    if !cli.quiet {
+        if !stdout_export {
+            for line in &out.echoes {
+                println!("{line}");
+            }
+        }
+        for w in &out.warnings {
+            eprintln!("WARNING: {}", w.message);
+        }
     }
-    for w in &out.warnings {
-        eprintln!("WARNING: {}", w.message);
+    // `--hardwarnings` treats any script warning as a failure. Applies whether
+    // or not `-q` silenced the messages.
+    if cli.hardwarnings && !out.warnings.is_empty() {
+        anyhow::bail!("{} warning(s) with --hardwarnings", out.warnings.len());
     }
 
-    if cli.check {
+    if echo_only {
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
@@ -446,35 +1015,40 @@ fn run() -> Result<()> {
     // `.csg` is a serialization of the evaluated tree, so it needs no render at
     // all — emit it before the (potentially slow) geometry pass.
     if let (Some(path), Some(OutputFormat::Csg)) = (&cli.output, format) {
-        std::fs::write(path, openrscad_eval::export_csg(&out.node))?;
-        eprintln!("wrote {}", path.display());
+        emit_target(path, openrscad_eval::export_csg(&out.node).as_bytes())?;
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
-    if let (Some(path), Some(format @ (OutputFormat::Dxf | OutputFormat::Svg))) =
-        (&cli.output, format)
+    if let (
+        Some(path),
+        Some(format @ (OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Pdf)),
+    ) = (&cli.output, format)
     {
         let kernel = openrscad_geom::ManifoldKernel::new();
         match openrscad_geom::render_contours_with(&out.node, &kernel) {
             Ok(Some(contours)) => {
-                let text = if format == OutputFormat::Dxf {
-                    openrscad_geom::export_dxf(&contours)
-                } else {
-                    openrscad_geom::export_svg(&contours)
+                let bytes: Vec<u8> = match format {
+                    OutputFormat::Dxf => openrscad_geom::export_dxf(&contours).into_bytes(),
+                    OutputFormat::Svg => openrscad_geom::export_svg(&contours).into_bytes(),
+                    _ => openrscad_geom::export_pdf(&contours),
                 };
-                std::fs::write(path, text)?;
-                eprintln!("wrote {} ({} contours)", path.display(), contours.len());
+                emit_target(path, &bytes)?;
+                if !is_stdout(path) {
+                    eprintln!("  ({} contours)", contours.len());
+                }
             }
             Ok(None) => anyhow::bail!(
                 "{} export requires a 2D object",
-                if format == OutputFormat::Dxf {
-                    "DXF"
-                } else {
-                    "SVG"
+                match format {
+                    OutputFormat::Dxf => "DXF",
+                    OutputFormat::Svg => "SVG",
+                    _ => "PDF",
                 }
             ),
             Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
         }
+        write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
 
@@ -487,38 +1061,54 @@ fn run() -> Result<()> {
         &mut geom_cache,
     )
     .context("rendering geometry")?;
-    for w in &geom_warnings {
-        eprintln!("WARNING: {w}");
+    if !cli.quiet {
+        for w in &geom_warnings {
+            eprintln!("WARNING: {w}");
+        }
+    }
+    if cli.hardwarnings && !geom_warnings.is_empty() {
+        anyhow::bail!(
+            "{} geometry warning(s) with --hardwarnings",
+            geom_warnings.len()
+        );
     }
     let elapsed = t0.elapsed();
 
     let manifold_ok = mesh.signed_volume() > 0.0 || mesh.is_empty();
-    eprintln!(
-        "rendered {} triangles, {} vertices in {:.1?} (volume {:.4}, area {:.4}{})",
-        mesh.tris.len(),
-        mesh.verts.len(),
-        elapsed,
-        mesh.volume(),
-        mesh.surface_area(),
-        if manifold_ok {
-            ""
-        } else {
-            ", WARNING: inward-facing"
-        },
-    );
+    if !cli.quiet {
+        eprintln!(
+            "rendered {} triangles, {} vertices in {:.1?} (volume {:.4}, area {:.4}{})",
+            mesh.tris.len(),
+            mesh.verts.len(),
+            elapsed,
+            mesh.volume(),
+            mesh.surface_area(),
+            if manifold_ok {
+                ""
+            } else {
+                ", WARNING: inward-facing"
+            },
+        );
+    }
+
+    // `--summary` / `--summary-file`: a structured report of the render.
+    if cli.summary.is_some() || cli.summary_file.is_some() {
+        emit_summary(&cli, &mesh, elapsed)?;
+    }
 
     if let Some(path) = &cli.output {
-        let name = cli
-            .input
+        let name = input
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("openrscad");
         // Classified up front, so the only formats left here are the 3D ones
         // plus PNG; DXF/SVG returned above.
         let format = format.unwrap_or(OutputFormat::Stl);
-        match format {
-            OutputFormat::Off => std::fs::write(path, mesh.to_off())?,
-            OutputFormat::Obj => std::fs::write(path, mesh.to_obj())?,
+        // Render the bytes for the chosen format, then emit once (to a file or
+        // to stdout for `-o -`).
+        let bytes: Vec<u8> = match format {
+            OutputFormat::Off => mesh.to_off().into_bytes(),
+            OutputFormat::Obj => mesh.to_obj().into_bytes(),
             // 3MF carries per-object color: partition into color groups (dropping
             // `%` background) and write one object per color. Falls back to the
             // fused single-object 3MF when the model uses no color.
@@ -530,29 +1120,44 @@ fn run() -> Result<()> {
                     .filter(|g| g.mode != openrscad_geom::DisplayMode::Background)
                     .map(|g| (&g.mesh, g.color))
                     .collect();
-                std::fs::write(path, openrscad_geom::Mesh::to_3mf_colored(&colored))?
+                openrscad_geom::Mesh::to_3mf_colored(&colored)
             }
-            OutputFormat::ThreeMf => std::fs::write(path, mesh.to_3mf())?,
-            OutputFormat::Amf => std::fs::write(path, mesh.to_amf())?,
+            OutputFormat::ThreeMf => mesh.to_3mf(),
+            OutputFormat::Amf => mesh.to_amf().into_bytes(),
+            // VRML 2.0 carries per-Shape color: partition into color groups
+            // (dropping `%` background) like 3MF, one Shape per color. Falls
+            // back to a single uncolored Shape when the model uses no color.
+            OutputFormat::Wrl if openrscad_geom::has_display_attrs(&out.node) => {
+                let groups =
+                    openrscad_geom::render_groups(&out.node).context("rendering color groups")?;
+                let colored: Vec<(&openrscad_geom::Mesh, [f32; 4])> = groups
+                    .iter()
+                    .filter(|g| g.mode != openrscad_geom::DisplayMode::Background)
+                    .map(|g| (&g.mesh, g.color))
+                    .collect();
+                openrscad_geom::Mesh::to_wrl_colored(&colored).into_bytes()
+            }
+            OutputFormat::Wrl => mesh.to_wrl().into_bytes(),
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.
             OutputFormat::Png => {
-                let opts = build_render_opts(&cli)?;
-                std::fs::write(path, render_frame_png(&out.node, &opts)?)?;
+                let opts = build_render_opts(&cli, viewport_camera(&src, &out.viewport))?;
+                render_frame_png(&out.node, &opts)?
             }
-            OutputFormat::Stl if matches!(cli.format, StlFormat::Ascii) => {
-                std::fs::write(path, mesh.to_ascii_stl(name))?
+            OutputFormat::Stl if matches!(stl_format, StlFormat::Ascii) => {
+                mesh.to_ascii_stl(name).into_bytes()
             }
-            OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
+            OutputFormat::Stl => mesh.to_binary_stl(),
             // Returned above; listed so a new format cannot silently fall
             // through to STL.
-            OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Csg => {
+            OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Pdf | OutputFormat::Csg => {
                 unreachable!("2D and .csg formats exported earlier")
             }
-        }
-        eprintln!("wrote {}", path.display());
+        };
+        emit_target(path, &bytes)?;
     }
 
+    write_deps(&cli, input, &resolver)?;
     Ok(())
 }
 
@@ -616,6 +1221,8 @@ mod tests {
             ("m.amf", Amf),
             ("m.dxf", Dxf),
             ("m.SVG", Svg),
+            ("m.pdf", Pdf),
+            ("m.WRL", Wrl),
             ("m.png", Png),
             ("m.csg", Csg),
             ("a.b.stl", Stl),

@@ -122,6 +122,31 @@ difference, with the observed OpenSCAD and OpenRSCAD numbers for each.
   echo(rands(0, 1, 3, seed=42)); // reproducible, but not OpenSCAD's values
   ```
 
+## CLI workflow divergences
+
+These concern the `openrscad` command-line surface (Track G, batch 1), not
+`.scad` program semantics. They have no `.scad`-level oracle; the behavior is
+proven by `crates/openrscad-cli/tests/flags.rs` against the built binary.
+
+- **`--enable <feature>` is accepted and ignored.** Every experimental feature
+  OpenRSCAD implements (`roof`, object values, `fill`, lazy-union) is always on,
+  so an upstream `--enable=<x>` invocation neither turns anything on nor errors.
+  `--info` lists the always-on features so no false toggleability is implied.
+
+- **`--csglimit <n>` is accepted and ignored.** OpenRSCAD has no OpenCSG
+  preview, so a preview-polygon cap is behaviorally a no-op; ignoring it is the
+  correct outcome, not a silent difference to warn about.
+
+- **`--summary` / `--summary-file` formatting is our own.** The selected
+  sections (facets, vertices, volume, area, bounding-box, time, camera, cache)
+  and their JSON keys are a clean-room layout, not a byte match of OpenSCAD's
+  summary text. The `cache` section always reports zero entries: the CLI keeps
+  no cross-invocation geometry cache.
+
+- **`--colorscheme` backgrounds are approximations.** Scheme names map to a
+  single representative flat background color, reconstructed from observation;
+  OpenRSCAD renders no viewport gradient.
+
 ## Closed since M0
 
 The current gates are `corpus/echo` **35/35**, geometry **125/125**, and BOSL2

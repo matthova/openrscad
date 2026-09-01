@@ -2,8 +2,8 @@
 
 _Status snapshot: 2026-08-09. M0–M9 are complete. Tracks A–E are retained as
 historical design/implementation records; their line references and test counts
-describe the commits at which they were written, not the current tree. Track F
-is active._
+describe the commits at which they were written, not the current tree. Tracks F and G are
+active._
 
 | track | doc | theme | effort | exit criterion (summary) |
 |---|---|---|---|---|
@@ -12,7 +12,8 @@ is active._
 | **C (complete)** | [track-c-ci-hardening.md](track-c-ci-hardening.md) | CI, fuzzing, wasm, desktop, web, and oracle gates | shipped incrementally | Retained as a historical audit; current workflow files are authoritative |
 | **D (M8, complete)** | [track-d-ui-structure.md](track-d-ui-structure.md) | UI structure, quality, inspector, integrity | shipped | Historical implementation plan |
 | **E (M9, complete)** | [track-e-ui-ceiling.md](track-e-ui-ceiling.md) | Responsive command registry and product ceiling | shipped | Historical implementation plan |
-| **F (M10, active)** | [track-f-measured-openscad-compatibility.md](track-f-measured-openscad-compatibility.md) | Classify and close the full OpenSCAD compatibility surface | incremental | Every 2021.01 core feature classified and tested; zero known silent differences |
+| **F (M10, complete)** | [track-f-measured-openscad-compatibility.md](track-f-measured-openscad-compatibility.md) | Classify and close the full OpenSCAD compatibility surface | incremental | Every 2021.01 core feature classified and tested; zero known silent differences |
+| **G (M11, active)** | [track-g-parity-beyond-the-language-core.md](track-g-parity-beyond-the-language-core.md) | Parity beyond the language core: CLI/workflow, experimental surface, geometry gaps, libraries, GUI, LSP | incremental | `openrscad` is a drop-in for `openscad` in scripts and CI, and the app covers the OpenSCAD GUI feature set |
 
 ## Why Track F is next
 
