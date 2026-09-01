@@ -148,6 +148,16 @@ struct Cli {
     #[arg(short = 'P', long = "set", value_name = "NAME")]
     param_set: Option<String>,
 
+    /// Validate the selected `-p`/`-P` set against the model's customizer schema,
+    /// reporting parameters that no longer exist. Non-zero exit on a mismatch.
+    #[arg(long)]
+    check_parameters: bool,
+
+    /// Validate the selected `-p`/`-P` set's values against slider ranges and
+    /// dropdown options. Non-zero exit on an out-of-range value.
+    #[arg(long)]
+    check_parameter_ranges: bool,
+
     /// Render an animation: `N` frames with `$t` sweeping 0→1, written as
     /// `out00000.png`… (requires a `.png` `-o`).
     #[arg(long, value_name = "N")]
@@ -467,6 +477,61 @@ fn print_info(_cli: &Cli) {
     );
 }
 
+/// `--check-parameters` / `--check-parameter-ranges`: validate a `-p`/`-P`
+/// override set against the model's customizer schema. Collects every problem
+/// and fails once, so a stale set surfaces all its issues at once.
+fn validate_param_set(
+    set: &[(String, openrscad_syntax::customizer::ParamValue)],
+    schema: &openrscad_syntax::customizer::Customizer,
+    cli: &Cli,
+) -> Result<()> {
+    use openrscad_syntax::customizer::{Control, ParamValue};
+    let mut problems: Vec<String> = Vec::new();
+    for (name, value) in set {
+        let Some(param) = schema.params.iter().find(|p| &p.name == name) else {
+            if cli.check_parameters {
+                problems.push(format!("unknown parameter '{name}' (not in the model)"));
+            }
+            continue;
+        };
+        if !cli.check_parameter_ranges {
+            continue;
+        }
+        match (&param.control, value) {
+            (Control::Slider { min, max, .. }, ParamValue::Number(n)) => {
+                if n < min || n > max {
+                    problems.push(format!(
+                        "'{name}' = {n} is outside the slider range [{min}:{max}]"
+                    ));
+                }
+            }
+            (Control::Dropdown(choices), v) if !choices.iter().any(|c| &c.value == v) => {
+                let opts: Vec<String> = choices
+                    .iter()
+                    .map(|c| match &c.value {
+                        ParamValue::Number(n) => n.to_string(),
+                        ParamValue::Text(s) => s.clone(),
+                        ParamValue::Bool(b) => b.to_string(),
+                        ParamValue::Vector(_) => "[…]".to_string(),
+                    })
+                    .collect();
+                problems.push(format!(
+                    "'{name}' = {v:?} is not one of the dropdown options [{}]",
+                    opts.join(", ")
+                ));
+            }
+            _ => {}
+        }
+    }
+    if !problems.is_empty() {
+        for p in &problems {
+            eprintln!("PARAMETER ERROR: {p}");
+        }
+        anyhow::bail!("{} parameter-set problem(s)", problems.len());
+    }
+    Ok(())
+}
+
 /// `-d/--deps_file`: write a Makefile rule listing every file the render read.
 /// Called once, after all loading (eval + geometry) is done. A no-op when `-d`
 /// was not given.
@@ -580,18 +645,21 @@ fn run() -> Result<()> {
     // first, then `-D name=value` on top (so `-D` wins).
     let mut overrides = Vec::new();
     if let Some(file) = &cli.params_file {
-        let set = cli
-            .param_set
-            .as_deref()
-            .context("-p requires -P <set-name> to select a parameter set")?;
         let json = std::fs::read_to_string(file)
             .with_context(|| format!("reading parameter-set file {}", file.display()))?;
         let schema = openrscad_syntax::customizer::extract(&src);
-        let set_overrides =
-            openrscad_syntax::customizer::parameter_set_overrides(&json, set, &schema)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-        for (name, pv) in set_overrides {
-            overrides.push((name, openrscad_eval::value_from_param(&pv)));
+        // OpenSCAD tolerates `-p` without `-P`: no set is selected, so no
+        // overrides are applied. Only `-P` without `-p` is an error.
+        if let Some(set) = cli.param_set.as_deref() {
+            let set_overrides =
+                openrscad_syntax::customizer::parameter_set_overrides(&json, set, &schema)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if cli.check_parameters || cli.check_parameter_ranges {
+                validate_param_set(&set_overrides, &schema, &cli)?;
+            }
+            for (name, pv) in set_overrides {
+                overrides.push((name, openrscad_eval::value_from_param(&pv)));
+            }
         }
     } else if cli.param_set.is_some() {
         anyhow::bail!("-P <set-name> requires -p <file.json>");

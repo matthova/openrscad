@@ -248,6 +248,51 @@ fn deps_file_lists_imported_and_used_files() {
 }
 
 #[test]
+fn check_parameter_ranges_catches_out_of_range() {
+    let model = scad("width = 5; // [0:10]\ncube(width);");
+    let set = tmp("set.json");
+    std::fs::write(
+        &set,
+        r#"{"parameterSets":{"big":{"width":"20"}},"fileFormatVersion":"1"}"#,
+    )
+    .unwrap();
+
+    // Out of range → non-zero exit.
+    let bad = bin()
+        .arg(&model)
+        .arg("-p")
+        .arg(&set)
+        .args(["-P", "big", "--check-parameter-ranges", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        !bad.status.success(),
+        "out-of-range slider value should fail validation"
+    );
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("slider range"));
+}
+
+#[test]
+fn params_file_without_set_is_tolerated() {
+    // `-p` without `-P` selects no set and must not error (OpenSCAD behavior).
+    let model = scad("width = 5; cube(width);");
+    let set = tmp("set.json");
+    std::fs::write(
+        &set,
+        r#"{"parameterSets":{"s":{"width":"7"}},"fileFormatVersion":"1"}"#,
+    )
+    .unwrap();
+    let out = bin()
+        .arg(&model)
+        .arg("-p")
+        .arg(&set)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "-p without -P must be tolerated");
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");
