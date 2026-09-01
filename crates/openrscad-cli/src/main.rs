@@ -265,7 +265,9 @@ enum StlFormat {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum Proj {
+    #[value(alias = "p")]
     Perspective,
+    #[value(name = "ortho", alias = "o", alias = "orthogonal")]
     Ortho,
 }
 

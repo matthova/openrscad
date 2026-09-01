@@ -3774,6 +3774,210 @@
       ],
       "summary": "An unrecognized or missing -o suffix is rejected before any render, exiting non-zero and writing nothing, matching the 2024.12 binary across eleven suffixes; recognized suffixes match case-insensitively. Unit-tested, but like every other export entry it has no .scad-level oracle case, so it stays implemented rather than verified. Export formats have no `.scad`-level oracle: the comparison would be byte identity, which is outside the compatibility contract.",
       "notes": "CLI workflow parity is tracked separately from .scad program semantics; see Track F."
+    },
+    {
+      "id": "cli.enable",
+      "category": "cli",
+      "surface": "--enable <feature>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Accepted and ignored: experimental features (roof, object values, fill, lazy-union) are always on, so upstream --enable=<x> invocations do not break. Reported by --info so no false toggleability is claimed.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.csglimit",
+      "category": "cli",
+      "surface": "--csglimit <n>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Accepted and ignored -- OpenRSCAD has no OpenCSG preview, so a polygon cap is behaviorally a no-op.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.quiet",
+      "category": "cli",
+      "surface": "-q / --quiet",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Suppresses echoes, warnings, and the render statistics block; errors still print to stderr and still set the exit code.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.hardwarnings",
+      "category": "cli",
+      "surface": "--hardwarnings",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Exits non-zero when the model produced any script or geometry warning, after printing it.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.info",
+      "category": "cli",
+      "surface": "--info",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Prints version, geometry backend, always-on experimental features, and OPENSCADPATH, then exits; runs without an input file.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.deps_file",
+      "category": "cli",
+      "surface": "-d / --deps_file <file>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Writes a Makefile dependency rule listing every file the render read -- include/use plus import/surface/DXF/SVG, captured through the resolver's text and byte loads.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.make",
+      "category": "cli",
+      "surface": "-m / --make <cmd>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Supplies the rebuild recipe written into the -d dependency rule.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.export_format",
+      "category": "cli",
+      "surface": "--export-format <fmt>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Selects the export format explicitly, overriding the -o suffix. Accepts OpenSCAD spellings including binstl/asciistl and echo (mapped to the --check path).",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.define_expr",
+      "category": "cli",
+      "surface": "-D name=<expr>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "-D accepts any expression (nested vectors, builtin calls, PI), evaluated against the base scope via openrscad_eval::eval_const_expr, matching OpenSCAD; the flat customizer literal parser is the fallback.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.check_parameters",
+      "category": "cli",
+      "surface": "--check-parameters / --check-parameter-ranges",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Validates a -p/-P parameter set against the customizer schema, reporting unknown names and out-of-range slider/dropdown values; non-zero exit on a mismatch. -p without -P is tolerated.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.summary",
+      "category": "cli",
+      "surface": "--summary <set> / --summary-file <file>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Reports facets/vertices/volume/area/bounding-box/time as OpenSCAD-style text or as JSON to a file; sections selected from all,cache,time,camera,geometry,bounding-box,area,volume.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.viewport_camera",
+      "category": "cli",
+      "surface": "$vpr/$vpt/$vpd/$vpf drive the PNG camera",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "When --camera is absent and the script assigns a $vp* variable, the CLI raster uses that viewport as the gimbal camera (and $vpf as the field of view); previously the script camera was ignored and PNGs rendered from the wrong angle.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.colorscheme",
+      "category": "cli",
+      "surface": "--colorscheme <name>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Maps an OpenSCAD scheme name (Cornfield, Metallic, Sunset, ...) to the PNG background; clean-room color approximations, no gradient.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.animate_sharding",
+      "category": "cli",
+      "surface": "--animate_sharding <i/n>",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Renders only the animation frames this shard owns (frame == i mod n), for splitting a long --animate run across parallel invocations.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "cli.projection_aliases",
+      "category": "cli",
+      "surface": "--projection o|ortho|orthogonal|p|perspective",
+      "tier": "current_stable",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Accepts OpenSCAD's short projection spellings as aliases.",
+      "notes": "CLI workflow parity (Track G, batch 1); proven by crates/openrscad-cli/tests/flags.rs against the built binary, no .scad-level oracle."
+    },
+    {
+      "id": "export.wrl",
+      "category": "export",
+      "surface": "VRML2 (.wrl) export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Writes VRML 2.0 with one Shape per color group so color() survives, mirroring the colored-3MF partition. Unit + CLI tested; no .scad-level oracle.",
+      "notes": "Export-format parity (Track G, batch 1); unit-tested in openrscad-geom plus crates/openrscad-cli/tests/flags.rs. Export formats have no .scad-level oracle, so status stays implemented."
+    },
+    {
+      "id": "export.pdf",
+      "category": "export",
+      "surface": "PDF (.pdf) export",
+      "tier": "core_2021_01",
+      "status": "implemented",
+      "hosts": [
+        "cli"
+      ],
+      "summary": "Writes minimal uncompressed 2D vector PDF (catalog/pages/one content stream of path ops) with the same 'requires a 2D object' error path as DXF/SVG. Unit + CLI tested; no .scad-level oracle.",
+      "notes": "Export-format parity (Track G, batch 1); unit-tested in openrscad-geom plus crates/openrscad-cli/tests/flags.rs. Export formats have no .scad-level oracle, so status stays implemented."
     }
   ]
 }

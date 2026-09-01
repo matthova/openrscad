@@ -78,7 +78,8 @@
             "module_parameter",
             "file_semantics",
             "import",
-            "export"
+            "export",
+            "cli"
           ]
         },
         "surface": { "type": "string", "minLength": 1 },

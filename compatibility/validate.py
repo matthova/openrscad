@@ -34,6 +34,7 @@ CATEGORIES = {
     "file_semantics",
     "import",
     "export",
+    "cli",
 }
 TIERS = {
     "core_2021_01",
