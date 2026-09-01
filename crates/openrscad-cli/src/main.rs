@@ -44,8 +44,8 @@ impl FileResolver for DiskResolver {
 #[derive(Parser, Debug)]
 #[command(name = "openrscad", version, about)]
 struct Cli {
-    /// Input `.scad` file.
-    input: PathBuf,
+    /// Input `.scad` file. Optional only with `--info`.
+    input: Option<PathBuf>,
 
     /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`/`.wrl`,
     /// 2D `.dxf`/`.svg`/`.pdf`, tree `.csg`. If omitted, only prints model statistics.
@@ -59,6 +59,31 @@ struct Cli {
     /// Print echo/warning output only; do not render geometry.
     #[arg(long)]
     check: bool,
+
+    /// Enable an experimental feature (repeatable). Accepted for compatibility
+    /// with upstream scripts, but ignored: all experimental features are always
+    /// on in OpenRSCAD.
+    #[arg(long, value_name = "FEATURE")]
+    enable: Vec<String>,
+
+    /// OpenCSG preview polygon limit. Accepted and ignored (OpenRSCAD has no
+    /// OpenCSG preview); rendering is unaffected.
+    #[arg(long, value_name = "N")]
+    csglimit: Option<u64>,
+
+    /// Suppress echoes, warnings, and the render statistics; errors still go to
+    /// stderr and still set the exit code.
+    #[arg(short = 'q', long)]
+    quiet: bool,
+
+    /// Exit non-zero if the model produced any warnings (after printing them).
+    #[arg(long)]
+    hardwarnings: bool,
+
+    /// Print version, kernel backend, enabled features, and library paths, then
+    /// exit.
+    #[arg(long)]
+    info: bool,
 
     /// Override a top-level parameter, e.g. `-D width=20` or `-D label="hi"`.
     /// Repeatable. Values are literals (number/bool/string/vector), matching
@@ -337,6 +362,26 @@ fn run_animation(
     Ok(())
 }
 
+/// The experimental features that are always on (see `--enable`), reported by
+/// `--info` so no false parity claim is made about them being toggleable.
+const ALWAYS_ON_FEATURES: &[&str] = &["roof", "object-values", "fill", "lazy-union"];
+
+/// `--info`: print version, kernel backend, always-on features, and library
+/// paths, mirroring OpenSCAD's `--info`.
+fn print_info(_cli: &Cli) {
+    println!("OpenRSCAD version: {}", env!("CARGO_PKG_VERSION"));
+    println!("Geometry backend: Manifold (native)");
+    println!(
+        "Always-on experimental features: {}",
+        ALWAYS_ON_FEATURES.join(", ")
+    );
+    let osp = std::env::var("OPENSCADPATH").unwrap_or_default();
+    println!(
+        "OPENSCADPATH: {}",
+        if osp.is_empty() { "(unset)" } else { &osp }
+    );
+}
+
 fn main() -> Result<()> {
     // Run on a worker thread with a large stack: recursive libraries (e.g.
     // BOSL2's attachment system) can nest the evaluator deeply, and OpenSCAD
@@ -352,6 +397,17 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // `--info` prints environment facts and exits; it needs no input file.
+    if cli.info {
+        print_info(&cli);
+        return Ok(());
+    }
+
+    let input = cli
+        .input
+        .as_ref()
+        .context("no input file given (only `--info` may be run without one)")?;
+
     // Reject an unusable output suffix before doing any work, so a long render
     // is not thrown away on a typo.
     let format = cli
@@ -360,8 +416,8 @@ fn run() -> Result<()> {
         .map(OutputFormat::from_path)
         .transpose()?;
 
-    let src = std::fs::read_to_string(&cli.input)
-        .with_context(|| format!("reading {}", cli.input.display()))?;
+    let src =
+        std::fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
 
     // Make the OS's installed fonts available to `text(font="…")` (matching
     // OpenSCAD's fontconfig behavior). Only pay the font-dir scan when the model
@@ -375,8 +431,7 @@ fn run() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("parse error at {:?}: {}", e.span, e.message))?;
 
     // Evaluate, resolving include/use relative to the input file + OPENSCADPATH.
-    let base_dir = cli
-        .input
+    let base_dir = input
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
@@ -435,11 +490,18 @@ fn run() -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
 
-    for line in &out.echoes {
-        println!("{line}");
+    if !cli.quiet {
+        for line in &out.echoes {
+            println!("{line}");
+        }
+        for w in &out.warnings {
+            eprintln!("WARNING: {}", w.message);
+        }
     }
-    for w in &out.warnings {
-        eprintln!("WARNING: {}", w.message);
+    // `--hardwarnings` treats any script warning as a failure. Applies whether
+    // or not `-q` silenced the messages.
+    if cli.hardwarnings && !out.warnings.is_empty() {
+        anyhow::bail!("{} warning(s) with --hardwarnings", out.warnings.len());
     }
 
     if cli.check {
@@ -493,29 +555,38 @@ fn run() -> Result<()> {
         &mut geom_cache,
     )
     .context("rendering geometry")?;
-    for w in &geom_warnings {
-        eprintln!("WARNING: {w}");
+    if !cli.quiet {
+        for w in &geom_warnings {
+            eprintln!("WARNING: {w}");
+        }
+    }
+    if cli.hardwarnings && !geom_warnings.is_empty() {
+        anyhow::bail!(
+            "{} geometry warning(s) with --hardwarnings",
+            geom_warnings.len()
+        );
     }
     let elapsed = t0.elapsed();
 
     let manifold_ok = mesh.signed_volume() > 0.0 || mesh.is_empty();
-    eprintln!(
-        "rendered {} triangles, {} vertices in {:.1?} (volume {:.4}, area {:.4}{})",
-        mesh.tris.len(),
-        mesh.verts.len(),
-        elapsed,
-        mesh.volume(),
-        mesh.surface_area(),
-        if manifold_ok {
-            ""
-        } else {
-            ", WARNING: inward-facing"
-        },
-    );
+    if !cli.quiet {
+        eprintln!(
+            "rendered {} triangles, {} vertices in {:.1?} (volume {:.4}, area {:.4}{})",
+            mesh.tris.len(),
+            mesh.verts.len(),
+            elapsed,
+            mesh.volume(),
+            mesh.surface_area(),
+            if manifold_ok {
+                ""
+            } else {
+                ", WARNING: inward-facing"
+            },
+        );
+    }
 
     if let Some(path) = &cli.output {
-        let name = cli
-            .input
+        let name = input
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("openrscad");
