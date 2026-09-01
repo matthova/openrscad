@@ -468,12 +468,20 @@ fn run() -> Result<()> {
         let (name, val) = p
             .split_once('=')
             .with_context(|| format!("--param must be NAME=VALUE, got '{p}'"))?;
-        let pv = openrscad_syntax::customizer::parse_value(val.trim())
-            .with_context(|| format!("invalid parameter value: '{val}'"))?;
-        overrides.push((
-            name.trim().to_string(),
-            openrscad_eval::value_from_param(&pv),
-        ));
+        // OpenSCAD's `-D` takes any expression, so evaluate it against the base
+        // scope (`PI`, `sqrt()`, nested vectors, …). Fall back to the flat
+        // customizer literal parser only if the expression evaluator rejects it,
+        // so an unquoted bareword like `-D label=hi` still works as a string the
+        // way the customizer allowed.
+        let value = match openrscad_eval::eval_const_expr(val.trim()) {
+            Ok(v) => v,
+            Err(_) => {
+                let pv = openrscad_syntax::customizer::parse_value(val.trim())
+                    .with_context(|| format!("invalid parameter value: '{val}'"))?;
+                openrscad_eval::value_from_param(&pv)
+            }
+        };
+        overrides.push((name.trim().to_string(), value));
     }
 
     // Animation: re-eval per frame with a swept `$t` and write numbered PNGs.

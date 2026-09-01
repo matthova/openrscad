@@ -135,6 +135,24 @@ fn wrl_and_pdf_export_write_files() {
 }
 
 #[test]
+fn define_accepts_arbitrary_expressions() {
+    // A nested matrix and an arithmetic expression, neither a flat literal.
+    let src = scad("m = 0; r = 0; echo(m); echo(r);");
+    let out = bin()
+        .arg(&src)
+        .args(["-D", "m=[[1,2],[3,4]]", "-D", "r=sqrt(2)*2", "--check"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[[1, 2], [3, 4]]"),
+        "nested matrix -D failed: {stdout}"
+    );
+    assert!(stdout.contains("2.82843"), "expression -D failed: {stdout}");
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");
