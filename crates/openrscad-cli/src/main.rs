@@ -79,7 +79,8 @@ struct Cli {
     input: Option<PathBuf>,
 
     /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`/`.wrl`,
-    /// 2D `.dxf`/`.svg`/`.pdf`, tree `.csg`. If omitted, only prints model statistics.
+    /// 2D `.dxf`/`.svg`/`.pdf`, tree `.csg`. `-o -` writes to stdout (needs
+    /// `--export-format`). If omitted, only prints model statistics.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -794,6 +795,27 @@ fn emit_summary(
     Ok(())
 }
 
+/// True when `-o` is `-`, meaning "write the export to stdout".
+fn is_stdout(path: &Path) -> bool {
+    path == Path::new("-")
+}
+
+/// Write an export to its destination: raw bytes to stdout for `-o -`, or to the
+/// file otherwise (with the usual "wrote <path>" note on stderr). Keeping the
+/// note on stderr means it never corrupts a piped stdout stream.
+fn emit_target(out: &Path, bytes: &[u8]) -> Result<()> {
+    if is_stdout(out) {
+        use std::io::Write;
+        std::io::stdout()
+            .write_all(bytes)
+            .context("writing export to stdout")?;
+    } else {
+        std::fs::write(out, bytes).with_context(|| format!("writing {}", out.display()))?;
+        eprintln!("wrote {}", out.display());
+    }
+    Ok(())
+}
+
 /// `-d/--deps_file`: write a Makefile rule listing every file the render read.
 /// Called once, after all loading (eval + geometry) is done. A no-op when `-d`
 /// was not given.
@@ -868,12 +890,20 @@ fn run() -> Result<()> {
                 Some(f)
             }
         }
+    } else if cli.output.as_deref().is_some_and(is_stdout) {
+        // `-o -` has no suffix to infer from, so it needs an explicit format.
+        anyhow::bail!("-o - (stdout) requires --export-format to choose the format");
     } else {
         cli.output
             .as_deref()
             .map(OutputFormat::from_path)
             .transpose()?
     };
+
+    // Writing to stdout: suppress echoes (which also go to stdout) so they do
+    // not corrupt the exported byte stream. Warnings and notes are on stderr and
+    // are unaffected.
+    let stdout_export = cli.output.as_deref().is_some_and(is_stdout);
 
     let src =
         std::fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
@@ -961,8 +991,10 @@ fn run() -> Result<()> {
     .map_err(|e| anyhow::anyhow!("evaluation error: {}", e.message))?;
 
     if !cli.quiet {
-        for line in &out.echoes {
-            println!("{line}");
+        if !stdout_export {
+            for line in &out.echoes {
+                println!("{line}");
+            }
         }
         for w in &out.warnings {
             eprintln!("WARNING: {}", w.message);
@@ -983,8 +1015,7 @@ fn run() -> Result<()> {
     // `.csg` is a serialization of the evaluated tree, so it needs no render at
     // all — emit it before the (potentially slow) geometry pass.
     if let (Some(path), Some(OutputFormat::Csg)) = (&cli.output, format) {
-        std::fs::write(path, openrscad_eval::export_csg(&out.node))?;
-        eprintln!("wrote {}", path.display());
+        emit_target(path, openrscad_eval::export_csg(&out.node).as_bytes())?;
         write_deps(&cli, input, &resolver)?;
         return Ok(());
     }
@@ -1002,8 +1033,10 @@ fn run() -> Result<()> {
                     OutputFormat::Svg => openrscad_geom::export_svg(&contours).into_bytes(),
                     _ => openrscad_geom::export_pdf(&contours),
                 };
-                std::fs::write(path, bytes)?;
-                eprintln!("wrote {} ({} contours)", path.display(), contours.len());
+                emit_target(path, &bytes)?;
+                if !is_stdout(path) {
+                    eprintln!("  ({} contours)", contours.len());
+                }
             }
             Ok(None) => anyhow::bail!(
                 "{} export requires a 2D object",
@@ -1071,9 +1104,11 @@ fn run() -> Result<()> {
         // Classified up front, so the only formats left here are the 3D ones
         // plus PNG; DXF/SVG returned above.
         let format = format.unwrap_or(OutputFormat::Stl);
-        match format {
-            OutputFormat::Off => std::fs::write(path, mesh.to_off())?,
-            OutputFormat::Obj => std::fs::write(path, mesh.to_obj())?,
+        // Render the bytes for the chosen format, then emit once (to a file or
+        // to stdout for `-o -`).
+        let bytes: Vec<u8> = match format {
+            OutputFormat::Off => mesh.to_off().into_bytes(),
+            OutputFormat::Obj => mesh.to_obj().into_bytes(),
             // 3MF carries per-object color: partition into color groups (dropping
             // `%` background) and write one object per color. Falls back to the
             // fused single-object 3MF when the model uses no color.
@@ -1085,10 +1120,10 @@ fn run() -> Result<()> {
                     .filter(|g| g.mode != openrscad_geom::DisplayMode::Background)
                     .map(|g| (&g.mesh, g.color))
                     .collect();
-                std::fs::write(path, openrscad_geom::Mesh::to_3mf_colored(&colored))?
+                openrscad_geom::Mesh::to_3mf_colored(&colored)
             }
-            OutputFormat::ThreeMf => std::fs::write(path, mesh.to_3mf())?,
-            OutputFormat::Amf => std::fs::write(path, mesh.to_amf())?,
+            OutputFormat::ThreeMf => mesh.to_3mf(),
+            OutputFormat::Amf => mesh.to_amf().into_bytes(),
             // VRML 2.0 carries per-Shape color: partition into color groups
             // (dropping `%` background) like 3MF, one Shape per color. Falls
             // back to a single uncolored Shape when the model uses no color.
@@ -1100,26 +1135,26 @@ fn run() -> Result<()> {
                     .filter(|g| g.mode != openrscad_geom::DisplayMode::Background)
                     .map(|g| (&g.mesh, g.color))
                     .collect();
-                std::fs::write(path, openrscad_geom::Mesh::to_wrl_colored(&colored))?
+                openrscad_geom::Mesh::to_wrl_colored(&colored).into_bytes()
             }
-            OutputFormat::Wrl => std::fs::write(path, mesh.to_wrl())?,
+            OutputFormat::Wrl => mesh.to_wrl().into_bytes(),
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.
             OutputFormat::Png => {
                 let opts = build_render_opts(&cli, viewport_camera(&src, &out.viewport))?;
-                std::fs::write(path, render_frame_png(&out.node, &opts)?)?;
+                render_frame_png(&out.node, &opts)?
             }
             OutputFormat::Stl if matches!(stl_format, StlFormat::Ascii) => {
-                std::fs::write(path, mesh.to_ascii_stl(name))?
+                mesh.to_ascii_stl(name).into_bytes()
             }
-            OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
+            OutputFormat::Stl => mesh.to_binary_stl(),
             // Returned above; listed so a new format cannot silently fall
             // through to STL.
             OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Pdf | OutputFormat::Csg => {
                 unreachable!("2D and .csg formats exported earlier")
             }
-        }
-        eprintln!("wrote {}", path.display());
+        };
+        emit_target(path, &bytes)?;
     }
 
     write_deps(&cli, input, &resolver)?;

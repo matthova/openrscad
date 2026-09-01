@@ -439,6 +439,47 @@ fn summary_text_and_json() {
 }
 
 #[test]
+fn stdout_export_matches_file_and_needs_a_format() {
+    let src = scad("echo(\"SECRET\"); cube(3);");
+
+    // `-o file` and `-o - --export-format binstl` must produce identical bytes.
+    let file = tmp("ref.stl");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&file)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+    let from_file = std::fs::read(&file).unwrap();
+
+    let out = bin()
+        .arg(&src)
+        .args(["-o", "-", "--export-format", "binstl"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        out.stdout, from_file,
+        "-o - must equal -o file byte-for-byte"
+    );
+    // Echoes must not corrupt the stdout stream.
+    assert!(
+        !out.stdout.windows(6).any(|w| w == b"SECRET"),
+        "echo leaked into the stdout export stream"
+    );
+
+    // `-o -` without an explicit format is an error.
+    assert!(!bin()
+        .arg(&src)
+        .args(["-o", "-"])
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");
