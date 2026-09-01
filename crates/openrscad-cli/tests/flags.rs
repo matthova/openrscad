@@ -153,6 +153,58 @@ fn define_accepts_arbitrary_expressions() {
 }
 
 #[test]
+fn export_format_overrides_the_suffix() {
+    let src = scad("cube(3);");
+    // Ask for OFF but name the file `.stl`: the explicit format wins.
+    let out = tmp("mismatch.stl");
+    assert!(bin()
+        .arg(&src)
+        .args(["--export-format", "off"])
+        .arg("-o")
+        .arg(&out)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        text.starts_with("OFF"),
+        "expected OFF content, got: {text:.10}"
+    );
+}
+
+#[test]
+fn export_format_asciistl_pins_ascii() {
+    let src = scad("cube(3);");
+    let out = tmp("ascii.stl");
+    assert!(bin()
+        .arg(&src)
+        .args(["--export-format", "asciistl"])
+        .arg("-o")
+        .arg(&out)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.starts_with("solid"), "expected ASCII STL, got binary");
+}
+
+#[test]
+fn export_format_rejects_unknown() {
+    let src = scad("cube(3);");
+    let out = tmp("x.stl");
+    assert!(!bin()
+        .arg(&src)
+        .args(["--export-format", "nope"])
+        .arg("-o")
+        .arg(&out)
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");

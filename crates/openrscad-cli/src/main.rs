@@ -56,6 +56,12 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = StlFormat::Binary)]
     format: StlFormat,
 
+    /// Explicit export format, overriding the `-o` suffix. Accepts OpenSCAD
+    /// spellings: `stl`/`binstl`/`asciistl`, `off`, `obj`, `3mf`, `amf`, `dxf`,
+    /// `svg`, `pdf`, `wrl`, `csg`, `png`, and `echo` (equivalent to `--check`).
+    #[arg(long, value_name = "FMT")]
+    export_format: Option<String>,
+
     /// Print echo/warning output only; do not render geometry.
     #[arg(long)]
     check: bool,
@@ -153,6 +159,16 @@ impl Cli {
         if self.check {
             return RenderMode::Preview;
         }
+        // An explicit `--export-format` decides the mode when present: `echo`
+        // is echo-only (preview), PNG/CSG skip the exact render, the rest render
+        // exactly. An unrecognized spelling is reported later, by `run`.
+        if let Some(fmt) = &self.export_format {
+            return match OutputFormat::from_export_format(fmt) {
+                Ok(None) => RenderMode::Preview, // echo
+                Ok(Some((f, _))) if f.skips_exact_render() => RenderMode::Preview,
+                _ => RenderMode::Exact,
+            };
+        }
         // PNG (including `--animate`) and `.csg` are produced without an exact
         // render upstream. An unclassifiable suffix is reported later, by `run`.
         let no_render = self.animate.is_some()
@@ -231,6 +247,33 @@ impl OutputFormat {
                  expected one of: stl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, png, csg"
             ),
         })
+    }
+
+    /// Resolve an explicit `--export-format` spelling to a format, plus an
+    /// optional STL sub-format when the name pins ASCII/binary. `echo` returns
+    /// `Ok(None)` — the caller treats it like `--check`.
+    fn from_export_format(name: &str) -> Result<Option<(OutputFormat, Option<StlFormat>)>> {
+        let n = name.trim().to_ascii_lowercase();
+        Ok(Some(match n.as_str() {
+            "echo" => return Ok(None),
+            "stl" => (OutputFormat::Stl, None),
+            "binstl" => (OutputFormat::Stl, Some(StlFormat::Binary)),
+            "asciistl" => (OutputFormat::Stl, Some(StlFormat::Ascii)),
+            "off" => (OutputFormat::Off, None),
+            "obj" => (OutputFormat::Obj, None),
+            "3mf" => (OutputFormat::ThreeMf, None),
+            "amf" => (OutputFormat::Amf, None),
+            "dxf" => (OutputFormat::Dxf, None),
+            "svg" => (OutputFormat::Svg, None),
+            "pdf" => (OutputFormat::Pdf, None),
+            "wrl" | "vrml" => (OutputFormat::Wrl, None),
+            "csg" => (OutputFormat::Csg, None),
+            "png" => (OutputFormat::Png, None),
+            other => anyhow::bail!(
+                "unsupported --export-format '{other}'; expected one of: \
+                 stl, binstl, asciistl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, csg, png, echo"
+            ),
+        }))
     }
 
     /// Whether this format is produced *without* an exact render, and so keeps
@@ -408,13 +451,31 @@ fn run() -> Result<()> {
         .as_ref()
         .context("no input file given (only `--info` may be run without one)")?;
 
-    // Reject an unusable output suffix before doing any work, so a long render
-    // is not thrown away on a typo.
-    let format = cli
-        .output
-        .as_deref()
-        .map(OutputFormat::from_path)
-        .transpose()?;
+    // Resolve the export format. An explicit `--export-format` overrides the
+    // `-o` suffix (and may pin binary/ASCII STL, or request echo-only). Reject
+    // an unusable choice before doing any work, so a long render is not thrown
+    // away on a typo.
+    let mut stl_format = cli.format;
+    let mut echo_only = cli.check;
+    let format = if let Some(fmt) = &cli.export_format {
+        match OutputFormat::from_export_format(fmt)? {
+            None => {
+                echo_only = true;
+                None
+            }
+            Some((f, stl)) => {
+                if let Some(stl) = stl {
+                    stl_format = stl;
+                }
+                Some(f)
+            }
+        }
+    } else {
+        cli.output
+            .as_deref()
+            .map(OutputFormat::from_path)
+            .transpose()?
+    };
 
     let src =
         std::fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
@@ -512,7 +573,7 @@ fn run() -> Result<()> {
         anyhow::bail!("{} warning(s) with --hardwarnings", out.warnings.len());
     }
 
-    if cli.check {
+    if echo_only {
         return Ok(());
     }
 
@@ -639,7 +700,7 @@ fn run() -> Result<()> {
                 let opts = build_render_opts(&cli)?;
                 std::fs::write(path, render_frame_png(&out.node, &opts)?)?;
             }
-            OutputFormat::Stl if matches!(cli.format, StlFormat::Ascii) => {
+            OutputFormat::Stl if matches!(stl_format, StlFormat::Ascii) => {
                 std::fs::write(path, mesh.to_ascii_stl(name))?
             }
             OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
