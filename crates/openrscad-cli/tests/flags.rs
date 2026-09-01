@@ -394,6 +394,51 @@ fn animate_sharding_renders_a_subset() {
 }
 
 #[test]
+fn summary_text_and_json() {
+    let src = scad("cube([10, 8, 6]);");
+    let stl = tmp("out.stl");
+
+    // Selected sections print to stdout.
+    let out = bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&stl)
+        .args(["--summary", "volume,geometry"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Volume: 480"), "summary text: {stdout}");
+    assert!(stdout.contains("Facets: 12"), "summary text: {stdout}");
+
+    // `--summary-file` writes JSON with the requested fields.
+    let json = tmp("sum.json");
+    assert!(bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&stl)
+        .arg("--summary-file")
+        .arg(&json)
+        .arg("-q")
+        .status()
+        .unwrap()
+        .success());
+    let text = std::fs::read_to_string(&json).unwrap();
+    assert!(text.contains("\"volume\":480"), "summary json: {text}");
+    assert!(text.contains("\"facets\":12"), "summary json: {text}");
+
+    // An unknown section is rejected.
+    assert!(!bin()
+        .arg(&src)
+        .arg("-o")
+        .arg(&stl)
+        .args(["--summary", "nope"])
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
 fn invalid_output_suffix_is_rejected() {
     let src = scad("cube(3);");
     let bad = tmp("out.xyz");

@@ -158,6 +158,17 @@ struct Cli {
     #[arg(long)]
     check_parameter_ranges: bool,
 
+    /// Print a render summary. Comma-separated set of: `all`, `cache`, `time`,
+    /// `camera`, `geometry`, `bounding-box`, `area`, `volume`.
+    #[arg(long, value_name = "SET")]
+    summary: Option<String>,
+
+    /// Write the summary (see `--summary`) as JSON to FILE instead of, or in
+    /// addition to, printing it. Implies the `all` set when `--summary` is
+    /// absent.
+    #[arg(long, value_name = "FILE")]
+    summary_file: Option<PathBuf>,
+
     /// Render an animation: `N` frames with `$t` sweeping 0→1, written as
     /// `out00000.png`… (requires a `.png` `-o`).
     #[arg(long, value_name = "N")]
@@ -638,6 +649,149 @@ fn validate_param_set(
     Ok(())
 }
 
+/// Which `--summary` sections were requested. `all` selects everything.
+struct SummarySections {
+    time: bool,
+    camera: bool,
+    geometry: bool,
+    bounding_box: bool,
+    area: bool,
+    volume: bool,
+    cache: bool,
+}
+
+impl SummarySections {
+    /// Parse the comma-separated `--summary` set. Unknown tokens are an error so
+    /// a typo is not silently dropped. `all` turns everything on.
+    fn parse(set: &str) -> Result<Self> {
+        let mut s = SummarySections {
+            time: false,
+            camera: false,
+            geometry: false,
+            bounding_box: false,
+            area: false,
+            volume: false,
+            cache: false,
+        };
+        for tok in set.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match tok.to_ascii_lowercase().as_str() {
+                "all" => {
+                    s = SummarySections {
+                        time: true,
+                        camera: true,
+                        geometry: true,
+                        bounding_box: true,
+                        area: true,
+                        volume: true,
+                        cache: true,
+                    }
+                }
+                "time" => s.time = true,
+                "camera" => s.camera = true,
+                "geometry" => s.geometry = true,
+                "bounding-box" | "boundingbox" => s.bounding_box = true,
+                "area" => s.area = true,
+                "volume" => s.volume = true,
+                "cache" => s.cache = true,
+                other => anyhow::bail!(
+                    "unknown --summary section '{other}'; expected any of: all, cache, \
+                     time, camera, geometry, bounding-box, area, volume"
+                ),
+            }
+        }
+        Ok(s)
+    }
+}
+
+/// `--summary`/`--summary-file`: report the render as OpenSCAD-style text
+/// (stdout) and/or JSON (to `--summary-file`). The selected sections come from
+/// `--summary`; a lone `--summary-file` implies `all`.
+fn emit_summary(
+    cli: &Cli,
+    mesh: &openrscad_geom::Mesh,
+    elapsed: std::time::Duration,
+) -> Result<()> {
+    let sel = match &cli.summary {
+        Some(set) => SummarySections::parse(set)?,
+        None => SummarySections::parse("all")?,
+    };
+    let bbox = mesh.bbox();
+    // JSON is emitted with only the requested fields present.
+    let mut json = String::from("{");
+    let mut first = true;
+    let mut field = |json: &mut String, key: &str, val: String| {
+        if !first {
+            json.push(',');
+        }
+        first = false;
+        json.push_str(&format!("\"{key}\":{val}"));
+    };
+    // Text lines for stdout.
+    let mut lines: Vec<String> = Vec::new();
+    if sel.geometry {
+        lines.push(format!("   Facets: {}", mesh.tris.len()));
+        lines.push(format!("   Vertices: {}", mesh.verts.len()));
+        field(&mut json, "facets", mesh.tris.len().to_string());
+        field(&mut json, "vertices", mesh.verts.len().to_string());
+    }
+    if sel.volume {
+        lines.push(format!("   Volume: {:.4}", mesh.volume()));
+        field(&mut json, "volume", format!("{:.6}", mesh.volume()));
+    }
+    if sel.area {
+        lines.push(format!("   Surface area: {:.4}", mesh.surface_area()));
+        field(&mut json, "area", format!("{:.6}", mesh.surface_area()));
+    }
+    if sel.bounding_box {
+        if let Some((lo, hi)) = bbox {
+            lines.push(format!(
+                "   Bounding box: [{:.4}, {:.4}, {:.4}] .. [{:.4}, {:.4}, {:.4}]",
+                lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]
+            ));
+            field(
+                &mut json,
+                "boundingBox",
+                format!(
+                    "[[{},{},{}],[{},{},{}]]",
+                    lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]
+                ),
+            );
+        }
+    }
+    if sel.time {
+        lines.push(format!("   Render time: {:.3}s", elapsed.as_secs_f64()));
+        field(
+            &mut json,
+            "renderTimeSeconds",
+            format!("{:.6}", elapsed.as_secs_f64()),
+        );
+    }
+    if sel.camera {
+        let cam = cli.camera.as_deref().unwrap_or("auto");
+        lines.push(format!("   Camera: {cam}"));
+        field(&mut json, "camera", format!("{cam:?}"));
+    }
+    if sel.cache {
+        // OpenRSCAD renders fresh per invocation; the CLI keeps no cross-run
+        // geometry cache, so this section is reported as empty for parity.
+        lines.push("   Geometry cache: 0 entries".to_string());
+        field(&mut json, "cacheEntries", "0".to_string());
+    }
+    json.push('}');
+
+    if cli.summary.is_some() && !cli.quiet {
+        println!("Summary:");
+        for l in &lines {
+            println!("{l}");
+        }
+    }
+    if let Some(path) = &cli.summary_file {
+        std::fs::write(path, format!("{json}\n"))
+            .with_context(|| format!("writing summary file {}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// `-d/--deps_file`: write a Makefile rule listing every file the render read.
 /// Called once, after all loading (eval + geometry) is done. A no-op when `-d`
 /// was not given.
@@ -900,6 +1054,11 @@ fn run() -> Result<()> {
                 ", WARNING: inward-facing"
             },
         );
+    }
+
+    // `--summary` / `--summary-file`: a structured report of the render.
+    if cli.summary.is_some() || cli.summary_file.is_some() {
+        emit_summary(&cli, &mesh, elapsed)?;
     }
 
     if let Some(path) = &cli.output {
