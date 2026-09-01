@@ -47,8 +47,8 @@ struct Cli {
     /// Input `.scad` file.
     input: PathBuf,
 
-    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`,
-    /// 2D `.dxf`/`.svg`, tree `.csg`. If omitted, only prints model statistics.
+    /// Output file. Format by extension: 3D `.stl`/`.off`/`.obj`/`.3mf`/`.amf`/`.wrl`,
+    /// 2D `.dxf`/`.svg`/`.pdf`, tree `.csg`. If omitted, only prints model statistics.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -165,6 +165,8 @@ enum OutputFormat {
     Amf,
     Dxf,
     Svg,
+    Pdf,
+    Wrl,
     Png,
 }
 
@@ -190,16 +192,18 @@ impl OutputFormat {
             "amf" => OutputFormat::Amf,
             "dxf" => OutputFormat::Dxf,
             "svg" => OutputFormat::Svg,
+            "pdf" => OutputFormat::Pdf,
+            "wrl" => OutputFormat::Wrl,
             "png" => OutputFormat::Png,
             "csg" => OutputFormat::Csg,
             "" => anyhow::bail!(
                 "output path '{}' has no suffix; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg",
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, png, csg",
                 path.display()
             ),
             other => anyhow::bail!(
                 "invalid output suffix '{other}'; \
-                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, png, csg"
+                 expected one of: stl, off, obj, 3mf, amf, dxf, svg, pdf, wrl, png, csg"
             ),
         })
     }
@@ -451,26 +455,28 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    if let (Some(path), Some(format @ (OutputFormat::Dxf | OutputFormat::Svg))) =
-        (&cli.output, format)
+    if let (
+        Some(path),
+        Some(format @ (OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Pdf)),
+    ) = (&cli.output, format)
     {
         let kernel = openrscad_geom::ManifoldKernel::new();
         match openrscad_geom::render_contours_with(&out.node, &kernel) {
             Ok(Some(contours)) => {
-                let text = if format == OutputFormat::Dxf {
-                    openrscad_geom::export_dxf(&contours)
-                } else {
-                    openrscad_geom::export_svg(&contours)
+                let bytes: Vec<u8> = match format {
+                    OutputFormat::Dxf => openrscad_geom::export_dxf(&contours).into_bytes(),
+                    OutputFormat::Svg => openrscad_geom::export_svg(&contours).into_bytes(),
+                    _ => openrscad_geom::export_pdf(&contours),
                 };
-                std::fs::write(path, text)?;
+                std::fs::write(path, bytes)?;
                 eprintln!("wrote {} ({} contours)", path.display(), contours.len());
             }
             Ok(None) => anyhow::bail!(
                 "{} export requires a 2D object",
-                if format == OutputFormat::Dxf {
-                    "DXF"
-                } else {
-                    "SVG"
+                match format {
+                    OutputFormat::Dxf => "DXF",
+                    OutputFormat::Svg => "SVG",
+                    _ => "PDF",
                 }
             ),
             Err(e) => anyhow::bail!("rendering 2D geometry: {e}"),
@@ -534,6 +540,20 @@ fn run() -> Result<()> {
             }
             OutputFormat::ThreeMf => std::fs::write(path, mesh.to_3mf())?,
             OutputFormat::Amf => std::fs::write(path, mesh.to_amf())?,
+            // VRML 2.0 carries per-Shape color: partition into color groups
+            // (dropping `%` background) like 3MF, one Shape per color. Falls
+            // back to a single uncolored Shape when the model uses no color.
+            OutputFormat::Wrl if openrscad_geom::has_display_attrs(&out.node) => {
+                let groups =
+                    openrscad_geom::render_groups(&out.node).context("rendering color groups")?;
+                let colored: Vec<(&openrscad_geom::Mesh, [f32; 4])> = groups
+                    .iter()
+                    .filter(|g| g.mode != openrscad_geom::DisplayMode::Background)
+                    .map(|g| (&g.mesh, g.color))
+                    .collect();
+                std::fs::write(path, openrscad_geom::Mesh::to_wrl_colored(&colored))?
+            }
+            OutputFormat::Wrl => std::fs::write(path, mesh.to_wrl())?,
             // PNG: headless software rasterizer over the colored groups (dropping
             // `%` background), honoring --imgsize/--camera/--projection.
             OutputFormat::Png => {
@@ -546,7 +566,7 @@ fn run() -> Result<()> {
             OutputFormat::Stl => std::fs::write(path, mesh.to_binary_stl())?,
             // Returned above; listed so a new format cannot silently fall
             // through to STL.
-            OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Csg => {
+            OutputFormat::Dxf | OutputFormat::Svg | OutputFormat::Pdf | OutputFormat::Csg => {
                 unreachable!("2D and .csg formats exported earlier")
             }
         }
@@ -616,6 +636,8 @@ mod tests {
             ("m.amf", Amf),
             ("m.dxf", Dxf),
             ("m.SVG", Svg),
+            ("m.pdf", Pdf),
+            ("m.WRL", Wrl),
             ("m.png", Png),
             ("m.csg", Csg),
             ("a.b.stl", Stl),

@@ -184,6 +184,40 @@ impl Mesh {
         s
     }
 
+    /// Serialize as VRML 2.0 (`.wrl`) — a single uncolored `Shape`.
+    pub fn to_wrl(&self) -> String {
+        Mesh::to_wrl_colored(&[(self, [0.8, 0.8, 0.8, 1.0])])
+    }
+
+    /// Serialize several colored meshes as one VRML 2.0 scene, one
+    /// `Shape { geometry IndexedFaceSet {…} }` per color group so `color()`
+    /// survives the round-trip, mirroring [`Mesh::to_3mf_colored`].
+    pub fn to_wrl_colored(groups: &[(&Mesh, [f32; 4])]) -> String {
+        let mut s = String::from("#VRML V2.0 utf8\n");
+        for (mesh, color) in groups {
+            s.push_str("Shape {\n  appearance Appearance {\n    material Material {\n");
+            s.push_str(&format!(
+                "      diffuseColor {} {} {}\n",
+                color[0], color[1], color[2]
+            ));
+            if color[3] < 1.0 {
+                s.push_str(&format!("      transparency {}\n", 1.0 - color[3]));
+            }
+            s.push_str(
+                "    }\n  }\n  geometry IndexedFaceSet {\n    coord Coordinate {\n      point [\n",
+            );
+            for v in &mesh.verts {
+                s.push_str(&format!("        {} {} {},\n", v[0], v[1], v[2]));
+            }
+            s.push_str("      ]\n    }\n    coordIndex [\n");
+            for t in &mesh.tris {
+                s.push_str(&format!("      {} {} {} -1,\n", t[0], t[1], t[2]));
+            }
+            s.push_str("    ]\n  }\n}\n");
+        }
+        s
+    }
+
     /// The `3D/3dmodel.model` XML for a minimal (core-spec) 3MF package.
     pub fn to_3mf_model(&self) -> String {
         let mut s = String::from(
@@ -1063,6 +1097,26 @@ mod io_tests {
         assert_eq!(amf.matches("<vertex>").count(), m.verts.len());
         assert_eq!(amf.matches("<triangle>").count(), m.tris.len());
         assert!(amf.contains("<amf unit=\"millimeter\">"));
+    }
+
+    #[test]
+    fn wrl_has_all_geometry() {
+        let m = cube();
+        let wrl = m.to_wrl();
+        assert!(wrl.starts_with("#VRML V2.0 utf8"));
+        assert_eq!(wrl.matches("IndexedFaceSet").count(), 1);
+        // One coordIndex face line (ends in " -1,") per triangle.
+        assert_eq!(wrl.matches(" -1,").count(), m.tris.len());
+    }
+
+    #[test]
+    fn wrl_colored_writes_one_shape_per_group() {
+        let a = cube();
+        let b = cube();
+        let wrl = Mesh::to_wrl_colored(&[(&a, [1.0, 0.0, 0.0, 1.0]), (&b, [0.0, 1.0, 0.0, 0.5])]);
+        assert_eq!(wrl.matches("Shape {").count(), 2);
+        assert!(wrl.contains("diffuseColor 1 0 0"));
+        assert!(wrl.contains("transparency 0.5"));
     }
 
     #[test]
