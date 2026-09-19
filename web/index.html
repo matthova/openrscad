@@ -19,167 +19,450 @@
       property="og:description"
       content="The OpenSCAD language you know, with a modern editor, instant preview, and a native engine that renders fast."
     />
-    <meta
-      property="og:url"
-      content="https://matthova.github.io/openrscad/"
-    />
+    <meta property="og:url" content="https://matthova.github.io/openrscad/" />
     <meta name="twitter:card" content="summary" />
+
+    <!-- Brand type: Schibsted Grotesk (display/UI) + IBM Plex Mono (code/labels).
+         Preconnect so the swap happens fast; display=swap avoids blocking paint. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
     <script>
-      // Set the theme attribute before first paint so a light-mode OS doesn't
-      // flash the dark default for a frame. about.ts keeps this in sync after.
-      document.documentElement.dataset.theme = window.matchMedia(
-        "(prefers-color-scheme: dark)",
-      ).matches
-        ? "dark"
-        : "light";
+      // Set the theme attribute before first paint so we never flash the wrong
+      // appearance for a frame. A saved manual choice wins; otherwise follow the
+      // OS. about.ts keeps this in sync (toggle + OS changes) after hydration.
+      (function () {
+        try {
+          var saved = localStorage.getItem("orscad-theme");
+          document.documentElement.dataset.theme =
+            saved ||
+            (window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light");
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
     </script>
   </head>
-  <body class="mk">
+  <body class="mk" id="top">
+    <!-- Fixed nav pill. The spacer reserves its height so content starts below. -->
+    <div class="mk-nav-spacer" aria-hidden="true"></div>
     <header class="mk-nav">
-      <a class="mk-brand" href="playground">
-        <svg
-          class="mk-logo"
-          viewBox="0 0 64 64"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d="M14 14h24v12h12v24H14z" fill="currentColor" />
-        </svg>
-        OpenRSCAD
-      </a>
-      <nav class="mk-nav-links">
-        <a href="playground">Playground</a>
-        <a href="#download">Download</a>
-        <a
-          href="https://github.com/matthova/openrscad"
-          target="_blank"
-          rel="noopener noreferrer"
-          >GitHub</a
-        >
-      </nav>
+      <div class="mk-nav-box" data-menu="closed">
+        <div class="mk-nav-bar">
+          <a class="mk-brand" href="#top">
+            <svg
+              class="mk-logo"
+              viewBox="0 0 64 64"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M14 14h24v12h12v24H14z" fill="currentColor" />
+            </svg>
+            OpenRSCAD
+          </a>
+          <nav class="mk-nav-links" aria-label="Primary">
+            <a href="#features">Features</a>
+            <a href="#shootout">Speed</a>
+            <a href="#download">Download</a>
+            <a
+              href="https://github.com/matthova/openrscad"
+              target="_blank"
+              rel="noopener noreferrer"
+              >GitHub</a
+            >
+          </nav>
+          <div class="mk-nav-actions">
+            <button
+              id="theme-toggle"
+              class="mk-theme-toggle"
+              type="button"
+              aria-label="Switch to light theme"
+            >
+              <span class="mk-theme-dot" aria-hidden="true"></span>
+              <span class="mk-theme-label">Dark</span>
+            </button>
+            <a class="mk-cta" href="playground">Open playground</a>
+            <button
+              id="menu-toggle"
+              class="mk-burger"
+              type="button"
+              aria-label="Menu"
+              aria-expanded="false"
+              aria-controls="mobile-menu"
+            >
+              <span></span><span></span><span></span>
+            </button>
+          </div>
+        </div>
+        <nav id="mobile-menu" class="mk-mobile-menu" aria-label="Menu">
+          <a href="#features">Features</a>
+          <a href="#shootout">Speed</a>
+          <a href="#download">Download</a>
+          <a
+            href="https://github.com/matthova/openrscad"
+            target="_blank"
+            rel="noopener noreferrer"
+            >GitHub</a
+          >
+          <a class="mk-mobile-cta" href="playground">Open playground</a>
+        </nav>
+      </div>
     </header>
 
     <main>
-      <!-- Hero -->
+      <!-- Hero: copy + a live in-page mini-playground (progressive enhancement —
+           the CTAs work without JS; about.ts fills the model, code, and controls). -->
       <section class="mk-hero">
-        <h1 class="mk-title">
-          OpenSCAD, <span class="mk-accent">reimagined for speed.</span>
-        </h1>
-        <p class="mk-sub">
-          OpenRSCAD is a clean-room reimplementation of OpenSCAD in Rust — the same
-          language you already know, paired with a modern editor, live preview,
-          and a native geometry engine that renders fast.
-        </p>
-        <div class="mk-cta-row">
-          <!-- Auto-detected primary download. JS upgrades href + label to the
-               visitor's OS; without JS it falls back to the releases page. -->
-          <a
-            id="primary-download"
-            class="mk-btn mk-btn-primary"
-            href="https://github.com/matthova/openrscad/releases/latest"
-          >
-            Download OpenRSCAD
-          </a>
-          <a class="mk-btn mk-btn-ghost" href="playground"
-            >Open the playground&nbsp;→</a
+        <div class="mk-hero-copy">
+          <p class="mk-badge">
+            <span class="mk-badge-dot" aria-hidden="true"></span>
+            OpenSCAD-compatible · written in Rust · open source
+          </p>
+          <h1 class="mk-title">
+            Your .scad files.<br />
+            <span class="mk-accent">Rendered in milliseconds.</span>
+          </h1>
+          <p class="mk-sub">
+            OpenRSCAD runs the OpenSCAD language you already write on a native
+            Rust geometry engine. A boolean-heavy model that takes 19&nbsp;seconds
+            in OpenSCAD finishes in 53&nbsp;ms. Same code, faster loop.
+          </p>
+          <div class="mk-cta-row">
+            <!-- Auto-detected primary download. JS upgrades href + label to the
+                 visitor's OS; without JS it falls back to the releases page. -->
+            <a
+              id="primary-download"
+              class="mk-btn mk-btn-primary"
+              href="https://github.com/matthova/openrscad/releases/latest"
+            >
+              Download for macOS
+            </a>
+            <a class="mk-btn mk-btn-ghost" href="playground"
+              >Open the playground&nbsp;→</a
+            >
+          </div>
+          <p id="primary-note" class="mk-note">
+            Apple Silicon · .dmg — Intel, Windows and Linux below. Free, no
+            account.
+          </p>
+        </div>
+
+        <div class="mk-widget">
+          <div class="mk-widget-head">
+            <span class="mk-widget-file">
+              <span class="mk-dots" aria-hidden="true"
+                ><i></i><i></i><i></i></span
+              >main.scad
+            </span>
+            <span class="mk-widget-live">● live</span>
+          </div>
+          <pre id="hero-code" class="mk-widget-code" aria-hidden="true"></pre>
+          <div class="mk-widget-stage">
+            <div id="hero-model" class="mk-widget-model"></div>
+            <div id="hero-meta" class="mk-widget-meta"></div>
+            <div id="hero-dims" class="mk-widget-dims"></div>
+          </div>
+          <div class="mk-widget-controls">
+            <label class="mk-ctrl-label" for="hero-size">size</label>
+            <input
+              id="hero-size"
+              class="mk-ctrl-slider"
+              type="range"
+              min="10"
+              max="60"
+              step="1"
+              value="30"
+            />
+            <span id="hero-size-val" class="mk-ctrl-val">30</span>
+            <label class="mk-ctrl-label" for="hero-radius">radius</label>
+            <input
+              id="hero-radius"
+              class="mk-ctrl-slider"
+              type="range"
+              min="1"
+              max="12"
+              step="1"
+              value="4"
+            />
+            <span id="hero-radius-val" class="mk-ctrl-val">4</span>
+            <span class="mk-ctrl-label">lid</span>
+            <button
+              id="hero-lid"
+              class="mk-switch"
+              type="button"
+              role="switch"
+              aria-checked="true"
+              aria-label="Lid"
+            >
+              <span class="mk-switch-knob" aria-hidden="true"></span>
+            </button>
+            <span></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Headline stat strip -->
+      <section class="mk-stats" aria-label="Benchmark summary">
+        <h2 class="sr-only">By the numbers</h2>
+        <div class="mk-stat">
+          <span class="mk-stat-num">29×</span>
+          <span class="mk-stat-label"
+            >faster than OpenSCAD's default CGAL engine, geometric mean across
+            five models</span
           >
         </div>
-        <p id="primary-note" class="mk-note">
-          Free and open source. No account required.
-        </p>
+        <div class="mk-stat">
+          <span class="mk-stat-num">365×</span>
+          <span class="mk-stat-label"
+            >on the boolean-heavy model: 19&nbsp;s becomes 53&nbsp;ms</span
+          >
+        </div>
+        <div class="mk-stat">
+          <span class="mk-stat-num">3.9×</span>
+          <span class="mk-stat-label"
+            >ahead of OpenSCAD's newest Manifold backend, too</span
+          >
+        </div>
       </section>
 
-      <!-- Features -->
-      <section class="mk-features" aria-label="Features">
-        <h2 class="sr-only">What you get</h2>
-        <article class="mk-card">
-          <h3>OpenSCAD-compatible</h3>
-          <p>
-            Bring your existing <code>.scad</code> files. OpenRSCAD speaks the same
-            language — modules, <code>use</code>/<code>include</code>, the
-            customizer, and the built-ins you rely on.
-          </p>
+      <!-- Features: alternating rows, each with a small mock visual. -->
+      <section id="features" class="mk-features" aria-label="Features">
+        <article class="mk-feature">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">01 · OpenSCAD-compatible</p>
+            <h2>Bring your files. Nothing to port.</h2>
+            <p>
+              Modules, <code>use</code> and <code>include</code>, customizer
+              annotations, the built-ins you rely on. Open an existing
+              <code>.scad</code> and it just renders. Your muscle memory comes
+              along.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-compat">
+              <pre class="mk-code"><span class="kw">module</span> <span class="fn">gear</span>(t=<span class="num">24</span>) {
+  <span class="ctl">for</span> (i=[<span class="num">0</span>:t-<span class="num">1</span>])
+    <span class="fn">rotate</span>(i*<span class="num">360</span>/t)
+      <span class="fn">tooth</span>();
+}
+<span class="fn">gear</span>();</pre>
+              <div class="mk-viz-arrow">
+                <span class="mk-arrow" aria-hidden="true">→</span>12 ms
+              </div>
+              <div class="mk-viz-mini">
+                <span class="mk-mini-box"></span>
+              </div>
+            </div>
+          </div>
         </article>
-        <article class="mk-card">
-          <h3>Native-speed geometry</h3>
-          <p>
-            A Rust core over the Manifold CSG kernel means models resolve fast.
-            The desktop app renders with the native engine; the browser runs the
-            same engine compiled to WebAssembly.
-          </p>
+
+        <article class="mk-feature mk-feature--flip">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">02 · Native-speed geometry</p>
+            <h2>A Rust core. Booleans in milliseconds.</h2>
+            <p>
+              OpenRSCAD sits on the Manifold CSG kernel, so models that stall
+              OpenSCAD resolve while you're still looking. The desktop app runs
+              the native engine; the browser runs the very same engine compiled
+              to WebAssembly.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-pipe">
+              <div class="mk-pipe">
+                <span class="mk-chip">your.scad</span>
+                <span class="mk-arrow" aria-hidden="true">→</span>
+                <span class="mk-chip">Rust core</span>
+                <span class="mk-arrow" aria-hidden="true">→</span>
+                <span class="mk-chip">Manifold CSG</span>
+              </div>
+              <div class="mk-pipe-cards">
+                <div class="mk-pipe-card mk-pipe-card--on">
+                  <span class="mk-pipe-tag">desktop</span>
+                  <span class="mk-pipe-name">Native engine</span>
+                  <span class="mk-pipe-num">53 ms</span>
+                </div>
+                <div class="mk-pipe-card">
+                  <span class="mk-pipe-tag">browser</span>
+                  <span class="mk-pipe-name">Same engine, WebAssembly</span>
+                  <span class="mk-pipe-num mk-pipe-num--muted">no install</span>
+                </div>
+              </div>
+              <div class="mk-pipe-foot">
+                <span>OpenSCAD CGAL, same model</span>
+                <span class="mk-pipe-bar" aria-hidden="true"></span>
+                <span>19 s</span>
+              </div>
+            </div>
+          </div>
         </article>
-        <article class="mk-card">
-          <h3>Editor ↔ preview linking</h3>
-          <p>
-            Click a face to jump to the statement that made it, and watch the
-            geometry under your cursor light up. Isolate any part to inspect it
-            on its own.
-          </p>
+
+        <article class="mk-feature">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">03 · Editor ↔ preview</p>
+            <h2>Click a face. Land on the line that made it.</h2>
+            <p>
+              Hover geometry and the statement behind it lights up. Isolate any
+              part to check it alone, then jump back. No more counting braces to
+              find the cube you meant.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-link">
+              <pre class="mk-code"><span class="ln">14  <span class="fn">rounded_box</span>([size, size, size], radius);</span><span class="ln">15  <span class="ctl">if</span> (lid)</span><span class="ln">16    <span class="fn">translate</span>([<span class="num">0</span>, <span class="num">0</span>, size/<span class="num">2</span> + lid_gap])</span><span class="ln mk-ln-active">17      <span class="fn">rounded_box</span>([size, size, <span class="num">4</span>], radius);</span><span class="ln">18</span></pre>
+              <div class="mk-link-chip">
+                <span
+                  ><span class="mk-swatch-sm" aria-hidden="true"></span
+                  >rounded_box([size, size, 4], radius)</span
+                >
+                <span class="mk-muted">2,300 tris · isolated</span>
+              </div>
+            </div>
+          </div>
         </article>
-        <article class="mk-card">
-          <h3>Parametric customizer</h3>
-          <p>
-            Your script's parameters become sliders, toggles, and dropdowns.
-            Tweak values live, save parameter sets, and share a link that opens
-            on the exact same model.
-          </p>
+
+        <article class="mk-feature mk-feature--flip">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">04 · Parametric customizer</p>
+            <h2>Comments become controls.</h2>
+            <p>
+              A range comment turns into a slider, a list into a dropdown, a
+              boolean into a switch. Tweak values live, save parameter sets, and
+              share a link that opens on exactly the model you're looking at.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-cust">
+              <pre class="mk-code"><span class="var">size</span> = <span class="num">30</span>; <span class="cmt">// [10:60]</span>
+<span class="var">fit</span> = <span class="str">"snug"</span>; <span class="cmt">// [snug,loose]</span>
+<span class="var">lid</span> = <span class="kw">true</span>;</pre>
+              <div class="mk-cust-controls">
+                <div class="mk-cust-slider" aria-hidden="true">
+                  <span class="mk-cust-track"><span class="mk-cust-knob"></span></span>
+                  <span class="mk-cust-num">30</span>
+                </div>
+                <div class="mk-cust-select" aria-hidden="true">
+                  <span>snug</span><span class="mk-muted">▾</span>
+                </div>
+                <div class="mk-cust-switch" aria-hidden="true">
+                  <span class="mk-cust-toggle"><span></span></span>
+                  <span class="mk-muted">lid</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </article>
-        <article class="mk-card">
-          <h3>Export anywhere</h3>
-          <p>
-            Watertight STL, 3MF (with color), OBJ, OFF, and AMF for 3D — plus
-            DXF and SVG for 2D. Capture PNGs or render animation frames straight
-            from the viewport.
-          </p>
+
+        <article class="mk-feature">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">05 · Export anywhere</p>
+            <h2>Watertight output for any slicer.</h2>
+            <p>
+              STL, 3MF with color, OBJ, OFF and AMF for 3D. DXF and SVG for laser
+              and CNC. Capture PNGs or full animation frames straight from the
+              viewport.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-export">
+              <div class="mk-export-group">
+                <span class="mk-export-label">3D · watertight</span>
+                <div class="mk-export-chips">
+                  <span class="mk-fmt mk-fmt--on">.stl</span>
+                  <span class="mk-fmt">.3mf</span>
+                  <span class="mk-fmt">.obj</span>
+                  <span class="mk-fmt">.off</span>
+                  <span class="mk-fmt">.amf</span>
+                </div>
+              </div>
+              <div class="mk-export-group">
+                <span class="mk-export-label">2D · laser and CNC</span>
+                <div class="mk-export-chips">
+                  <span class="mk-fmt">.dxf</span>
+                  <span class="mk-fmt">.svg</span>
+                </div>
+              </div>
+              <div class="mk-export-group">
+                <span class="mk-export-label">from the viewport</span>
+                <div class="mk-export-chips">
+                  <span class="mk-fmt">.png</span>
+                  <span class="mk-fmt">animation frames</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </article>
-        <article class="mk-card">
-          <h3>Browser or desktop</h3>
-          <p>
-            Start instantly in the browser — it installs as an offline app — or
-            get the desktop build for the native engine, local file open/save,
-            and automatic updates.
-          </p>
+
+        <article class="mk-feature mk-feature--flip">
+          <div class="mk-feature-copy">
+            <p class="mk-eyebrow">06 · Browser or desktop</p>
+            <h2>Open a tab, or install it.</h2>
+            <p>
+              Start instantly in the browser and it installs as an offline app.
+              When you want the native engine, local file open and save and
+              automatic updates, grab the desktop build.
+            </p>
+          </div>
+          <div class="mk-feature-visual">
+            <div class="mk-viz mk-viz-where">
+              <div class="mk-where-card">
+                <div class="mk-where-frame">
+                  <span class="mk-where-url">openrscad.app/playground</span>
+                </div>
+                <div class="mk-where-stage">
+                  <span class="mk-mini-box"></span>
+                </div>
+                <div class="mk-where-cap">
+                  <span class="mk-pipe-name">Browser</span>
+                  <span class="mk-muted">WASM · works offline</span>
+                </div>
+              </div>
+              <div class="mk-where-card">
+                <div class="mk-where-frame">
+                  <span class="mk-dots" aria-hidden="true"
+                    ><i></i><i></i><i></i></span
+                  ><span class="mk-where-title">OpenRSCAD</span>
+                </div>
+                <div class="mk-where-stage">
+                  <span class="mk-mini-box"></span>
+                </div>
+                <div class="mk-where-cap">
+                  <span class="mk-pipe-name">Desktop</span>
+                  <span class="mk-accent-text">native · auto-updates</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </article>
       </section>
 
-      <!-- Shootout: real render times vs OpenSCAD -->
+      <!-- Shootout: real render times vs OpenSCAD. -->
       <section class="mk-shootout" id="shootout">
-        <h2>How much faster? A render shootout.</h2>
-        <p class="mk-download-sub">
-          Same models, same machine — OpenRSCAD's native engine against OpenSCAD's
-          two backends. These are real numbers, not estimates.
-        </p>
-
-        <!-- Headline figures (static; the chart + table below add per-model
-             detail once JS runs). -->
-        <div class="mk-stats">
-          <div class="mk-stat">
-            <span class="mk-stat-num">29×</span>
-            <span class="mk-stat-label"
-              >faster than OpenSCAD's default CGAL engine — five-model geometric
-              mean</span
-            >
-          </div>
-          <div class="mk-stat">
-            <span class="mk-stat-num">365×</span>
-            <span class="mk-stat-label"
-              >on the boolean-heavy model — 19&nbsp;s drops to 53&nbsp;ms</span
-            >
-          </div>
-          <div class="mk-stat">
-            <span class="mk-stat-num">3.9×</span>
-            <span class="mk-stat-label"
-              >still ahead of OpenSCAD's newest Manifold backend (geomean)</span
-            >
-          </div>
+        <div class="mk-shootout-head">
+          <p class="mk-eyebrow">Render shootout</p>
+          <h2>Same models, same machine. Real numbers.</h2>
+          <p class="mk-download-sub">
+            OpenRSCAD's native engine against both OpenSCAD backends. Best of
+            three runs, full-process wall clock.
+          </p>
         </div>
 
         <!-- Per-model chart, rendered by src/about.ts from the committed
              benchmark data. -->
-        <figure class="mk-figure">
+        <figure class="mk-figure" id="shootout-figure">
           <figcaption class="mk-fig-title">
-            Render time per model — lower is better
-            <span class="mk-fig-note">(log scale)</span>
+            Render time per model
+            <span class="mk-fig-note">(log scale, lower is better)</span>
           </figcaption>
           <div id="shootout-chart" class="mk-chart"></div>
         </figure>
@@ -188,18 +471,17 @@
         <div id="shootout-table" class="mk-table-wrap"></div>
 
         <p class="mk-note mk-method">
-          Best of 3 runs, full-process wall-clock, on an Apple M4 Max
-          (macOS&nbsp;26.5) vs OpenSCAD&nbsp;2024.12. Reproduce with
+          Apple M4 Max, macOS&nbsp;26.5, vs OpenSCAD&nbsp;2024.12. Reproduce with
           <code>cargo run -p xtask -- bench</code>.
         </p>
       </section>
 
       <!-- Download -->
       <section class="mk-download" id="download">
-        <h2>Download the desktop app</h2>
+        <h2>Get the desktop app</h2>
         <p class="mk-download-sub">
-          The native engine renders fastest and reads and writes your local
-          files directly.
+          The native engine at full speed, with local file open and save and
+          automatic updates.
         </p>
 
         <div class="mk-os-grid">
@@ -242,18 +524,18 @@
             href="https://github.com/matthova/openrscad/releases/latest"
             target="_blank"
             rel="noopener noreferrer"
-            >…or check out other download options&nbsp;→</a
+            >All download options&nbsp;→</a
           >
           <span class="mk-more-note"
-            >(.deb, .rpm, .msi, and every architecture live on the GitHub
-            release page.)</span
+            >.deb, .rpm, .msi and every architecture on the GitHub release
+            page.</span
           >
         </p>
       </section>
     </main>
 
     <footer class="mk-footer">
-      <span>OpenRSCAD — a fast OpenSCAD-compatible modeler.</span>
+      <span>OpenRSCAD — a fast, OpenSCAD-compatible modeler.</span>
       <span class="mk-footer-links">
         <a href="playground">Playground</a>
         <a
