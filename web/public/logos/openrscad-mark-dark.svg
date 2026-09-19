@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="OpenRSCAD logo mark">
+  <!-- Mark for use on DARK backgrounds (light ink). Mirrors the site nav glyph. -->
+  <path d="M14 14h24v12h12v24H14z" fill="#e6e8ec"/>
+</svg>

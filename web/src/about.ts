@@ -12,6 +12,7 @@
 // widget never hydrates.
 import "./about.css";
 import { ASSETS, DL, detectOs, isAppleSilicon } from "./downloads";
+import { wireTheme, wireMenu, wireLogoContextMenu } from "./mkChrome";
 
 type Target = {
   /** Filename of the stable release alias, or null for "no desktop build". */
@@ -103,74 +104,8 @@ async function wirePrimaryDownload() {
   }
 }
 
-// ── Theme (manual toggle + OS follow) ───────────────────────────────────────
-// A pre-paint script in index.html already set data-theme from a saved choice or
-// the OS. Here we keep the toggle button in sync, persist a manual choice, and —
-// only while there's no manual choice — follow later OS changes.
-const THEME_KEY = "orscad-theme";
-
-function currentTheme(): "dark" | "light" {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
-
-function applyTheme(t: "dark" | "light") {
-  document.documentElement.dataset.theme = t;
-  const btn = document.getElementById("theme-toggle");
-  const label = btn?.querySelector(".mk-theme-label");
-  if (label) label.textContent = t === "dark" ? "Dark" : "Light";
-  btn?.setAttribute(
-    "aria-label",
-    t === "dark" ? "Switch to light theme" : "Switch to dark theme",
-  );
-}
-
-function wireTheme() {
-  applyTheme(currentTheme());
-  document.getElementById("theme-toggle")?.addEventListener("click", () => {
-    const next = currentTheme() === "dark" ? "light" : "dark";
-    try {
-      localStorage.setItem(THEME_KEY, next);
-    } catch {
-      /* private mode — the choice just won't persist */
-    }
-    applyTheme(next);
-  });
-  // Follow the OS only until the visitor picks a side themselves.
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", (e) => {
-      let saved: string | null = null;
-      try {
-        saved = localStorage.getItem(THEME_KEY);
-      } catch {
-        /* ignore */
-      }
-      if (!saved) applyTheme(e.matches ? "dark" : "light");
-    });
-}
-
-// ── Mobile nav menu ─────────────────────────────────────────────────────────
-function wireMenu() {
-  const box = document.querySelector(".mk-nav-box");
-  const toggle = document.getElementById("menu-toggle");
-  if (!box || !toggle) return;
-  const set = (open: boolean) => {
-    box.setAttribute("data-menu", open ? "open" : "closed");
-    toggle.setAttribute("aria-expanded", String(open));
-    document.body.style.overflow = open ? "hidden" : "";
-  };
-  toggle.addEventListener("click", () =>
-    set(box.getAttribute("data-menu") !== "open"),
-  );
-  // Any menu link closes it; Escape closes it.
-  box
-    .querySelector(".mk-mobile-menu")
-    ?.querySelectorAll("a")
-    .forEach((a) => a.addEventListener("click", () => set(false)));
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") set(false);
-  });
-}
+// Theme toggle, mobile nav menu, and the right-click-logo → brand shortcut all
+// live in ./mkChrome (shared with brand.html).
 
 // ── Hero mini-playground ────────────────────────────────────────────────────
 const M_SHADES = ["var(--model)", "var(--model-2)", "var(--model-3)"];
@@ -604,6 +539,7 @@ function renderShootout() {
 
 wireTheme();
 wireMenu();
+wireLogoContextMenu();
 wireHero();
 renderShootout();
 void wirePrimaryDownload();

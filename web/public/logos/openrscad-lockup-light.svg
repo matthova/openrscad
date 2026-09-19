@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" role="img" aria-label="OpenRSCAD logo">
+  <!-- Mark + wordmark for use on LIGHT backgrounds (dark ink). The wordmark is
+       set in Schibsted Grotesk (the site's display face) with a grotesque
+       fallback where that font isn't installed. -->
+  <path d="M14 14h24v12h12v24H14z" fill="#1b1e23"/>
+  <text x="80" y="32" dominant-baseline="central" fill="#1b1e23"
+        font-family="'Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif"
+        font-size="34" font-weight="700" letter-spacing="-0.01em">OpenRSCAD</text>
+</svg>
