@@ -71,6 +71,13 @@ export function wireMenu() {
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") set(false);
   });
+  // Growing to the desktop layout retires the burger/overlay, so close an open
+  // menu on the way up — otherwise it lingers over the desktop nav and leaves
+  // body scroll locked. 881px mirrors the CSS breakpoint (max-width: 880px).
+  const desktop = window.matchMedia("(min-width: 881px)");
+  desktop.addEventListener("change", (e) => {
+    if (e.matches) set(false);
+  });
 }
 
 // ── Logo right-click → brand page ────────────────────────────────────────────
