@@ -361,7 +361,7 @@ body.mk {
   color: var(--accent-strong) !important;
   text-decoration: none;
 }
-.mk-mobile-cta {
+.mk-mobile-menu a.mk-mobile-cta {
   margin-top: 24px;
   background: var(--cta-bg);
   color: var(--on-accent) !important;
