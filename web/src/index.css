@@ -39,9 +39,11 @@
   --motion-med: 200ms;
   --ease-standard: ease;
 
-  /* Type families — one token each instead of ten scattered literals. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, Menlo, monospace;
+  /* Type families — brand faces (loaded in playground.html) with system
+     fallbacks so text still renders if the web fonts are blocked/offline. */
+  --font-sans:
+    "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 
 /* Palettes are attribute-scoped; :root stays dark so first paint (before JS
@@ -73,9 +75,11 @@
      code, a slightly cool grey chrome (panel) sits behind it, and controls /
      popovers rise back to white (raised). */
   --bg: #ffffff;
-  --panel: #eef0f3;
+  /* Warm "paper" chrome (redesign): a hair warmer than the old cool grey so the
+     white content surface reads as inset, not flush. */
+  --panel: #f3f2ed;
   --raised: #ffffff;
-  --border: #d5d9e0;
+  --border: #e0ddd5;
   /* --border was 1.24:1 (a hairline). Control boundaries and the focus ring use
      the stronger variants, which clear WCAG 1.4.11's 3:1 / 1.4.3's text ratios.
      --accent-strong darkens the yellow to 4.5:1 for text/border/focus, where the
@@ -83,6 +87,9 @@
   --border-strong: #8b929e;
   --text: #1b1e23;
   --muted: #5b6472;
+  /* --accent stays the brighter #b09b00: it also backs dark-ink-on-accent
+     surfaces (e.g. the command-palette selected row, ink #1b1e23), which need it
+     bright to clear 4.5:1. Accent-colored TEXT uses --accent-strong instead. */
   --accent: #b09b00;
   --accent-strong: #7a6e00;
   --err: #c62222;
@@ -228,6 +235,26 @@ body {
 .actions button.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* One-click light/dark toggle (sun ⇄ moon), a compact square icon button. The
+   dot is a solid accent disc; in dark a crescent is carved out with an inset
+   shadow the colour of the button so it reads as a moon. Purely decorative
+   (the accessible name lives on the button). */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+}
+.theme-toggle-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+:root[data-theme="dark"] .theme-toggle-dot {
+  box-shadow: inset -5px -2px 0 0 var(--panel);
 }
 
 .examples-select {

@@ -2740,6 +2740,19 @@ export function App() {
             </PopoverAction>
             <div className="popover-version">{version || "openrscad"}</div>
           </Popover>
+          <button
+            className="theme-toggle"
+            data-cmd="theme-toggle"
+            onClick={() => setThemePref(mode === "dark" ? "light" : "dark")}
+            title={
+              mode === "dark" ? "Switch to light theme" : "Switch to dark theme"
+            }
+            aria-label={
+              mode === "dark" ? "Switch to light theme" : "Switch to dark theme"
+            }
+          >
+            <span className="theme-toggle-dot" aria-hidden="true" />
+          </button>
         </div>
       </header>
 
