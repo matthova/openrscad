@@ -218,7 +218,8 @@ function cube(sz: number, bgs: string[], dz: number, s: number, r: number) {
     [s, s, bgs[2], `rotateX(90deg) translateZ(${hh}px)`, r],
     [s, s, bgs[1], `rotateX(-90deg) translateZ(${hh}px)`, r],
   ];
-  for (const [w, h, bg, tf, rad] of faces) wrap.appendChild(face(w, h, bg, tf, rad));
+  for (const [w, h, bg, tf, rad] of faces)
+    wrap.appendChild(face(w, h, bg, tf, rad));
   return wrap;
 }
 
@@ -267,7 +268,11 @@ function heroModel(sizeU: number, radiusU: number, lid: boolean, px: number) {
 }
 
 /** The syntax-coloured code listing that mirrors the current slider values. */
-function heroCode(size: number, radius: number, lid: boolean): DocumentFragment {
+function heroCode(
+  size: number,
+  radius: number,
+  lid: boolean,
+): DocumentFragment {
   const frag = document.createDocumentFragment();
   const line = (...parts: Array<Node | string>) => {
     for (const p of parts)
@@ -276,12 +281,41 @@ function heroCode(size: number, radius: number, lid: boolean): DocumentFragment 
   };
   line(span("cmt", "// drag the sliders — the model re-renders live"));
   line(span("kw", "use"), " <helpers.scad>");
-  line(span("var", "size"), " = ", span("num", String(size)), ";     ", span("cmt", "// [10:60]"));
-  line(span("var", "radius"), " = ", span("num", String(radius)), ";    ", span("cmt", "// [1:12]"));
+  line(
+    span("var", "size"),
+    " = ",
+    span("num", String(size)),
+    ";     ",
+    span("cmt", "// [10:60]"),
+  );
+  line(
+    span("var", "radius"),
+    " = ",
+    span("num", String(radius)),
+    ";    ",
+    span("cmt", "// [1:12]"),
+  );
   line(span("var", "lid"), " = ", span("kw", lid ? "true" : "false"), ";");
   line(span("fn", "rounded_box"), "([size, size, size], radius);");
-  line(span("ctl", "if"), " (lid) ", span("fn", "translate"), "([", span("num", "0"), ", ", span("num", "0"), ", size/", span("num", "2"), " + radius])");
-  line("  ", span("fn", "rounded_box"), "([size, size, ", span("num", "4"), "], radius);");
+  line(
+    span("ctl", "if"),
+    " (lid) ",
+    span("fn", "translate"),
+    "([",
+    span("num", "0"),
+    ", ",
+    span("num", "0"),
+    ", size/",
+    span("num", "2"),
+    " + radius])",
+  );
+  line(
+    "  ",
+    span("fn", "rounded_box"),
+    "([size, size, ",
+    span("num", "4"),
+    "], radius);",
+  );
   return frag;
 }
 
@@ -290,8 +324,12 @@ function wireHero() {
   const codeEl = document.getElementById("hero-code");
   const meta = document.getElementById("hero-meta");
   const dims = document.getElementById("hero-dims");
-  const sizeIn = document.getElementById("hero-size") as HTMLInputElement | null;
-  const radiusIn = document.getElementById("hero-radius") as HTMLInputElement | null;
+  const sizeIn = document.getElementById(
+    "hero-size",
+  ) as HTMLInputElement | null;
+  const radiusIn = document.getElementById(
+    "hero-radius",
+  ) as HTMLInputElement | null;
   const lidBtn = document.getElementById("hero-lid");
   const sizeVal = document.getElementById("hero-size-val");
   const radiusVal = document.getElementById("hero-radius-val");
