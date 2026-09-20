@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Brand — OpenRSCAD</title>
+    <meta
+      name="description"
+      content="Download the OpenRSCAD logo for light or dark backgrounds. SVG, transparent background."
+    />
+
+    <!-- Brand type: Schibsted Grotesk (display/UI) + IBM Plex Mono (code/labels).
+         Preconnect so the swap happens fast; display=swap avoids blocking paint. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <script>
+      // Set the theme attribute before first paint so we never flash the wrong
+      // appearance for a frame. A saved manual choice wins; otherwise follow the
+      // OS. brand.ts keeps this in sync (toggle + OS changes) after hydration.
+      (function () {
+        try {
+          var saved = localStorage.getItem("orscad-theme");
+          document.documentElement.dataset.theme =
+            saved ||
+            (window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light");
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body class="mk" id="top">
+    <!-- Fixed nav pill. The spacer reserves its height so content starts below. -->
+    <div class="mk-nav-spacer" aria-hidden="true"></div>
+    <header class="mk-nav">
+      <div class="mk-nav-box" data-menu="closed">
+        <div class="mk-nav-bar">
+          <a class="mk-brand" href=".">
+            <svg
+              class="mk-logo"
+              viewBox="0 0 64 64"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M14 14h24v12h12v24H14z" fill="currentColor" />
+            </svg>
+            OpenRSCAD
+          </a>
+          <nav class="mk-nav-links" aria-label="Primary">
+            <a href=".">Home</a>
+            <a href="./#features">Features</a>
+            <a href="./#download">Download</a>
+            <a
+              href="https://github.com/matthova/openrscad"
+              target="_blank"
+              rel="noopener noreferrer"
+              >GitHub</a
+            >
+          </nav>
+          <div class="mk-nav-actions">
+            <button
+              id="theme-toggle"
+              class="mk-theme-toggle"
+              type="button"
+              aria-label="Switch to light theme"
+            >
+              <span class="mk-theme-dot" aria-hidden="true"></span>
+              <span class="mk-theme-label">Dark</span>
+            </button>
+            <a class="mk-cta" href="playground">Open playground</a>
+            <button
+              id="menu-toggle"
+              class="mk-burger"
+              type="button"
+              aria-label="Menu"
+              aria-expanded="false"
+              aria-controls="mobile-menu"
+            >
+              <span></span><span></span><span></span>
+            </button>
+          </div>
+        </div>
+        <nav id="mobile-menu" class="mk-mobile-menu" aria-label="Menu">
+          <a href=".">Home</a>
+          <a href="./#features">Features</a>
+          <a href="./#download">Download</a>
+          <a
+            href="https://github.com/matthova/openrscad"
+            target="_blank"
+            rel="noopener noreferrer"
+            >GitHub</a
+          >
+          <a class="mk-mobile-cta" href="playground">Open playground</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="mk-brand-page" aria-labelledby="brand-title">
+        <p class="mk-eyebrow">Brand</p>
+        <h1 id="brand-title">Logo &amp; brand assets</h1>
+        <p class="mk-brand-lead">
+          Download the OpenRSCAD logo for light or dark backgrounds. Every file
+          is an SVG with a transparent background, so it scales cleanly and
+          drops onto any surface. Tip: you can reach this page any time by
+          right-clicking the logo in the nav.
+        </p>
+
+        <h2 class="mk-brand-group">Logo mark</h2>
+        <div class="mk-asset-grid">
+          <div class="mk-asset">
+            <div class="mk-asset-preview mk-asset-preview--light">
+              <img
+                src="logos/openrscad-mark-light.svg"
+                alt="OpenRSCAD mark on a light background"
+              />
+            </div>
+            <span class="mk-asset-label">For light backgrounds</span>
+            <a
+              class="mk-btn mk-btn-ghost"
+              href="logos/openrscad-mark-light.svg"
+              download
+              >Download SVG</a
+            >
+          </div>
+          <div class="mk-asset">
+            <div class="mk-asset-preview mk-asset-preview--dark">
+              <img
+                src="logos/openrscad-mark-dark.svg"
+                alt="OpenRSCAD mark on a dark background"
+              />
+            </div>
+            <span class="mk-asset-label">For dark backgrounds</span>
+            <a
+              class="mk-btn mk-btn-ghost"
+              href="logos/openrscad-mark-dark.svg"
+              download
+              >Download SVG</a
+            >
+          </div>
+        </div>
+
+        <h2 class="mk-brand-group">Logo lockup</h2>
+        <div class="mk-asset-grid">
+          <div class="mk-asset">
+            <div class="mk-asset-preview mk-asset-preview--light">
+              <img
+                src="logos/openrscad-lockup-light.svg"
+                alt="OpenRSCAD logo lockup on a light background"
+              />
+            </div>
+            <span class="mk-asset-label">For light backgrounds</span>
+            <a
+              class="mk-btn mk-btn-ghost"
+              href="logos/openrscad-lockup-light.svg"
+              download
+              >Download SVG</a
+            >
+          </div>
+          <div class="mk-asset">
+            <div class="mk-asset-preview mk-asset-preview--dark">
+              <img
+                src="logos/openrscad-lockup-dark.svg"
+                alt="OpenRSCAD logo lockup on a dark background"
+              />
+            </div>
+            <span class="mk-asset-label">For dark backgrounds</span>
+            <a
+              class="mk-btn mk-btn-ghost"
+              href="logos/openrscad-lockup-dark.svg"
+              download
+              >Download SVG</a
+            >
+          </div>
+        </div>
+
+        <p class="mk-note mk-brand-foot">
+          Please keep the mark's proportions and don't recolor it. Questions
+          about usage? Open an issue on GitHub.
+        </p>
+      </section>
+    </main>
+
+    <footer class="mk-footer">
+      <span>OpenRSCAD — a fast, OpenSCAD-compatible modeler.</span>
+      <span class="mk-footer-links">
+        <a href=".">Home</a>
+        <a href="playground">Playground</a>
+        <a
+          href="https://github.com/matthova/openrscad"
+          target="_blank"
+          rel="noopener noreferrer"
+          >GitHub</a
+        >
+      </span>
+    </footer>
+
+    <script type="module" src="/src/brand.ts"></script>
+  </body>
+</html>

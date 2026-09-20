@@ -496,7 +496,7 @@ impl Mesh {
             objects
         };
         for scope in scopes {
-            let base = verts.len() as u32;
+            let base = verts.len();
             // Each <vertex> holds a <coordinates> with <x>/<y>/<z> children.
             for v in split_elements(scope, "vertex") {
                 verts.push([
@@ -505,13 +505,27 @@ impl Mesh {
                     xml_child_f64(v, "z").unwrap_or(0.0),
                 ]);
             }
+            // Indices are object-local and 0-based, so shift them past the
+            // vertices already appended. Untrusted input can name an index that
+            // is negative, fractional, NaN, or wildly out of range; such a face
+            // references a vertex this object doesn't have, so drop it rather
+            // than emit a dangling index. Dropping also avoids the shift
+            // overflowing: `huge as u32` saturates to u32::MAX, and
+            // `base + u32::MAX` panics under the fuzzer's overflow checks. Hence
+            // `then` (lazy), not `then_some` — the shift mustn't be evaluated
+            // for an out-of-range index.
+            let count = verts.len() - base;
+            let resolve = |x: f64| -> Option<u32> {
+                let i = x as usize; // saturating: negative/NaN -> 0, huge -> MAX
+                (x >= 0.0 && i < count).then(|| (base + i) as u32)
+            };
             for t in split_elements(scope, "triangle") {
                 if let (Some(a), Some(b), Some(c)) = (
-                    xml_child_f64(t, "v1"),
-                    xml_child_f64(t, "v2"),
-                    xml_child_f64(t, "v3"),
+                    xml_child_f64(t, "v1").and_then(&resolve),
+                    xml_child_f64(t, "v2").and_then(&resolve),
+                    xml_child_f64(t, "v3").and_then(&resolve),
                 ) {
-                    tris.push([base + a as u32, base + b as u32, base + c as u32]);
+                    tris.push([a, b, c]);
                 }
             }
         }
@@ -1242,5 +1256,34 @@ mod scene_tests {
         let xml = format!("<amf>{}</amf>", amf_object(1, 2.0));
         let m = Mesh::from_amf(xml.as_bytes());
         assert!((m.volume() - 8.0).abs() < 1e-9);
+    }
+
+    /// Untrusted AMF can name a triangle index that is out of range, or so large
+    /// it saturates to `u32::MAX` on the cast; shifting it past a nonzero object
+    /// base overflowed and panicked (a fuzzer crash,
+    /// `fuzz/regressions/import_amf/crash-88d1…`). Such faces reference a vertex
+    /// the object lacks, so they are dropped: parsing never panics and never
+    /// emits a dangling index (which `signed_volume`/`surface_area` would then
+    /// index out of bounds).
+    #[test]
+    fn out_of_range_triangle_indices_are_dropped() {
+        let xml = format!(
+            "<amf>{}<object id=\"2\"><mesh><vertices>\
+             <vertex><coordinates><x>0</x><y>0</y><z>0</z></coordinates></vertex>\
+             </vertices><volume>\
+             <triangle><v1>0</v1><v2>7</v2><v3>999999999999999</v3></triangle>\
+             </volume></mesh></object></amf>",
+            amf_object(1, 2.0)
+        );
+        let m = Mesh::from_amf(xml.as_bytes());
+        // First object (8 verts, 12 tris) parses normally; the second object's
+        // lone face references vertices it doesn't have, so it is dropped.
+        assert_eq!(m.verts.len(), 9);
+        assert_eq!(m.tris.len(), 12);
+        let n = m.verts.len() as u32;
+        assert!(
+            m.tris.iter().flatten().all(|&i| i < n),
+            "from_amf emitted a dangling triangle index"
+        );
     }
 }
