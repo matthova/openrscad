@@ -3,27 +3,81 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#141414" />
+    <link rel="canonical" href="https://openrscad.com/" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
     <title>OpenRSCAD — a fast, OpenSCAD-compatible 3D modeler</title>
     <meta
       name="description"
       content="OpenRSCAD is a clean-room OpenSCAD reimplementation in Rust: the same language, a modern editor, instant preview, and a native engine that renders fast. Runs in your browser or as a desktop app."
     />
-    <!-- Open Graph / social preview -->
+    <meta
+      name="keywords"
+      content="OpenSCAD, OpenRSCAD, 3D modeling, CAD, parametric design, Rust, WebAssembly, STL, 3D printing, CSG, code CAD, solid modeling"
+    />
+    <meta name="author" content="OpenRSCAD" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenRSCAD" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://openrscad.com/" />
     <meta
       property="og:title"
       content="OpenRSCAD — a fast, OpenSCAD-compatible 3D modeler"
     />
     <meta
       property="og:description"
-      content="The OpenSCAD language you know, with a modern editor, instant preview, and a native engine that renders fast."
+      content="The OpenSCAD language you know, with a modern editor, instant preview, and a native engine that renders fast. Free and open source."
+    />
+    <meta property="og:image" content="https://openrscad.com/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="OpenRSCAD — OpenSCAD, reimagined for speed. A model renders in 53 ms versus 19 s in OpenSCAD."
+    />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="OpenRSCAD — a fast, OpenSCAD-compatible 3D modeler"
     />
     <meta
-      property="og:url"
-      content="https://matthova.github.io/openrscad/"
+      name="twitter:description"
+      content="The OpenSCAD language you know, with a modern editor, instant preview, and a native engine that renders fast. Free and open source."
     />
-    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:image" content="https://openrscad.com/og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="OpenRSCAD — OpenSCAD, reimagined for speed. A model renders in 53 ms versus 19 s in OpenSCAD."
+    />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "OpenRSCAD",
+        "url": "https://openrscad.com/",
+        "description": "A clean-room OpenSCAD reimplementation in Rust: the same language, a modern editor, instant preview, and a native geometry engine that renders fast. Runs in the browser or as a desktop app.",
+        "applicationCategory": "DesignApplication",
+        "operatingSystem": "Web, macOS, Windows, Linux",
+        "softwareHelp": "https://github.com/matthova/openrscad",
+        "isAccessibleForFree": true,
+        "license": "https://github.com/matthova/openrscad/blob/main/LICENSE-APACHE",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
     <script>
       // Set the theme attribute before first paint so a light-mode OS doesn't
       // flash the dark default for a frame. about.ts keeps this in sync after.
