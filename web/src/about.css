@@ -1452,6 +1452,15 @@ body.mk {
   color: var(--muted);
   font-size: 13px;
 }
+/* One-time Gatekeeper step for the (ad-hoc signed) macOS build. */
+.mk-first-launch {
+  max-width: 560px;
+  line-height: 1.5;
+}
+.mk-first-launch strong {
+  color: var(--text);
+  font-weight: 600;
+}
 
 /* ── Brand page (brand.html) ───────────────────────────────────────────────*/
 .mk-brand-page {

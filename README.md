@@ -24,17 +24,22 @@ geometry behavior checked against stock OpenSCAD.
 Desktop links always fetch the latest release, and the app auto-updates in place.
 Need `.deb` / `.rpm` / `.msi` or an older version? <a href="https://github.com/matthova/openrscad/releases/latest" target="_blank" rel="noopener noreferrer">Browse all downloads</a>.
 
-> **macOS: "OpenRSCAD is damaged and can't be opened"?** The app isn't damaged —
-> it's <a href="https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web" target="_blank" rel="noopener noreferrer">not yet notarized</a>, so Gatekeeper blocks the quarantined
-> download. Drag OpenRSCAD to your Applications folder, then run this once in
-> Terminal to clear the quarantine flag:
+> **macOS: "Apple could not verify OpenRSCAD is free of malware"?** OpenRSCAD
+> isn't <a href="https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web" target="_blank" rel="noopener noreferrer">notarized</a> with Apple yet, so Gatekeeper stops the first launch
+> of a downloaded copy. Drag OpenRSCAD to your Applications folder, open it once
+> and click **Done**, then go to **System Settings → Privacy & Security**, scroll
+> to *Security*, and click **Open Anyway** next to OpenRSCAD
+> (<a href="https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac" target="_blank" rel="noopener noreferrer">Apple's guide</a>).
+> One time only — updates install in place afterwards. From a terminal, clearing
+> the quarantine flag works too:
 >
 > ```sh
 > xattr -cr /Applications/OpenRSCAD.app
 > ```
 >
-> Then open it normally. (Right-click → Open won't clear the "damaged" state on
-> recent macOS — use the command above.)
+> Builds up to v0.14.0 shipped without a bundle signature, so macOS called them
+> "damaged and can't be opened" and offered no *Open Anyway* button — the
+> command above is the fix for those.
 
 ---
 

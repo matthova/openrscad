@@ -11,7 +11,7 @@ test("about page renders hero, features, and per-OS downloads", async ({
   await page.goto("/");
 
   await expect(
-    page.getByRole("heading", { level: 1, name: /rendered in milliseconds/i }),
+    page.getByRole("heading", { level: 1, name: /reimagined for speed/i }),
   ).toBeVisible();
 
   // All four stable per-OS download aliases are present and point at the
@@ -39,6 +39,17 @@ test("about page renders hero, features, and per-OS downloads", async ({
   ).toHaveAttribute(
     "href",
     "https://github.com/matthova/openrscad/releases/latest",
+  );
+
+  // macOS builds are ad-hoc signed, not notarized, so Gatekeeper blocks the
+  // first launch. The page says so up front, names the one-time Open Anyway
+  // step, and links Apple's guide for it.
+  const firstLaunch = page.locator("#mac-first-launch");
+  await expect(firstLaunch).toBeVisible();
+  await expect(firstLaunch).toContainText(/Open Anyway/);
+  await expect(firstLaunch.getByRole("link")).toHaveAttribute(
+    "href",
+    /support\.apple\.com\/guide\/mac-help\/open-a-mac-app-from-an-unknown-developer/,
   );
 });
 
