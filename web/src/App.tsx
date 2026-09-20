@@ -168,6 +168,19 @@ const ABOUT_URL = ".";
 // Base URL for bundled libraries (public/lib/…), resolved against the page.
 const LIB_BASE = new URL("lib/", document.baseURI).href;
 
+// The brand lockup (mark + wordmark) shown in the topbar, resolved against the
+// page like LIB_BASE so it works under the deployed subpath. We swap between the
+// dark-ink (light background) and light-ink (dark background) variants with the
+// active theme; the files live in public/logos/ (see brand.html).
+const LOGO_LOCKUP_LIGHT = new URL(
+  "logos/openrscad-lockup-light.svg",
+  document.baseURI,
+).href;
+const LOGO_LOCKUP_DARK = new URL(
+  "logos/openrscad-lockup-dark.svg",
+  document.baseURI,
+).href;
+
 /** Editor extensions gating editability — read-only for binary-asset tabs, whose
  *  editor shows only a placeholder (the real bytes live in `File.bytes`). */
 function roExts(readOnly: boolean) {
@@ -2387,7 +2400,14 @@ export function App() {
       <header className="topbar">
         <h1 className="sr-only">OpenRSCAD playground</h1>
         <a className="brand" href={ABOUT_URL}>
-          OpenRSCAD <span className="tag">playground</span>
+          <img
+            className="brand-logo"
+            src={mode === "dark" ? LOGO_LOCKUP_DARK : LOGO_LOCKUP_LIGHT}
+            alt="OpenRSCAD"
+            width={113}
+            height={24}
+          />
+          <span className="tag">playground</span>
         </a>
         <div className="actions">
           <select

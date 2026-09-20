@@ -240,13 +240,23 @@ body {
 }
 
 .brand {
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
   color: inherit;
   text-decoration: none;
 }
 
-.brand:hover {
+/* The lockup (mark + wordmark) replaces the wordmark text; width tracks the
+   SVG's 300×64 aspect at this height. It carries the brand, so only the tag
+   underlines on hover. */
+.brand-logo {
+  height: 24px;
+  width: auto;
+  display: block;
+}
+
+.brand:hover .tag {
   text-decoration: underline;
 }
 
@@ -254,7 +264,6 @@ body {
   color: var(--muted);
   font-weight: 400;
   font-size: var(--text-sm);
-  margin-left: var(--space-2);
 }
 
 /* The control row. A real flex rule with an explicit gap (M8 shipped none, so
@@ -1290,19 +1299,6 @@ body {
 .export {
   display: inline-flex;
 }
-.export button {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.export select {
-  border-left: 0;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  background: var(--panel);
-  color: inherit;
-  border: 1px solid var(--border);
-  font-size: var(--text-sm);
-}
 
 /* Transport strip — animation controls below the canvas (overlays the bottom
    edge). A thin bar unless the main file reads $t; then it expands (FPS/Steps).
@@ -1365,8 +1361,12 @@ body {
   padding: var(--space-2) var(--space-3) 0;
 }
 
-/* Export split button: primary + caret popover trigger flush together. */
-.export-primary {
+/* Export split button: primary + caret popover trigger flush together, so only
+   their touching corners are squared. Scope these to the two split-button parts
+   (not a bare `.export button`, which would also reach the format rows inside the
+   caret's popover panel) and beat the toolbar's `.actions button` radius with a
+   two-class selector. */
+.export .export-primary {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
