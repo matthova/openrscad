@@ -239,6 +239,14 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* macOS desktop only (Tauri overlay title bar): the topbar is the window's drag
+   surface, so inset its left edge to clear the overlaid traffic-light buttons.
+   The right-hand controls keep their layout (the header stays space-between).
+   Web/Windows/Linux never get this class, so they are unaffected. */
+.topbar-overlay {
+  padding-left: 80px;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;

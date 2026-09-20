@@ -134,6 +134,14 @@ import { pickDownloadUrl } from "./downloads";
 
 const TAURI = isTauri();
 
+// On macOS the desktop window uses an overlay title bar (see tauri.conf.json's
+// titleBarStyle), so the web topbar becomes the window's drag surface and must
+// inset its left edge to clear the traffic-light buttons. Detect the platform
+// once; Windows/Linux keep their native frame, and the browser is never a Mac
+// desktop, so the web build is unaffected.
+const MAC_DESKTOP =
+  TAURI && typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
 // Render a completion's info panel BELOW the completion list instead of beside
 // it, so the `font=` preview (a pangram in the actual typeface — see
 // systemFonts.ts) reads on its own line rather than being squeezed to the right
@@ -2397,7 +2405,13 @@ export function App() {
         if (e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
       }}
     >
-      <header className="topbar">
+      <header
+        className={`topbar${MAC_DESKTOP ? " topbar-overlay" : ""}`}
+        // On the desktop the native title bar is hidden, so the topbar is the
+        // window's drag surface. Interactive children (brand link, selects,
+        // popover triggers) are not drag regions, so they stay clickable.
+        {...(TAURI ? { "data-tauri-drag-region": "" } : {})}
+      >
         <h1 className="sr-only">OpenRSCAD playground</h1>
         <a className="brand" href={ABOUT_URL}>
           <img
