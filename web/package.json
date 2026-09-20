@@ -6,7 +6,7 @@
   "scripts": {
     "build:wasm": "wasm-pack build ../crates/openrscad-wasm --target web --out-dir ../../web/engine --out-name openrscad",
     "dev": "vite",
-    "start-local": "npm run build:wasm && vite",
+    "start-local": "npm install && npm run build:wasm && vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

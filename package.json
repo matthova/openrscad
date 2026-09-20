@@ -5,6 +5,7 @@
   "description": "Private root that drives changesets-based versioning for the whole repo. Never published; carries the canonical version that scripts/sync-versions.mjs propagates to Cargo, Tauri, and the npm package.",
   "scripts": {
     "changeset": "changeset",
+    "start-local": "npm --prefix web run start-local",
     "version": "changeset version && node scripts/sync-versions.mjs"
   },
   "devDependencies": {
