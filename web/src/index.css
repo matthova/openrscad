@@ -20,6 +20,11 @@
   --radius-sm: 4px;
   --radius-md: 6px;
 
+  /* Right padding every <select> reserves for the shared dropdown caret: the
+     var(--space-6) edge inset that matches the popover triggers (Display ▾),
+     plus room for the caret glyph and the gap before the value text. */
+  --select-caret-space: calc(var(--space-6) + 16px);
+
   /* Type scale (px). */
   --text-xs: 11px;
   --text-sm: 12px;
@@ -72,6 +77,10 @@
   --ok: #5ad38a;
   /* A faint accent wash for tinted surfaces (promo banner, isolate chips). */
   --accent-soft: rgba(255, 214, 10, 0.12);
+  /* Filled downward caret for <select> dropdowns, coloured to --text so it
+     matches the popover-trigger ▾. Baked per theme since a background-image
+     data URI can't read a CSS variable. */
+  --select-caret: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='6'%20viewBox='0%200%2010%206'%3E%3Cpath%20d='M0%200h10L5%206z'%20fill='%23e6e8ec'/%3E%3C/svg%3E");
 }
 
 :root[data-theme="light"] {
@@ -103,6 +112,8 @@
      clear AA (4.5:1) on the light paper panel (a lighter green would not). */
   --ok: #0b6e33;
   --accent-soft: rgba(176, 155, 0, 0.14);
+  /* Dark ink caret for the light theme (see the dark block for the rationale). */
+  --select-caret: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='10'%20height='6'%20viewBox='0%200%2010%206'%3E%3Cpath%20d='M0%200h10L5%206z'%20fill='%231b1e23'/%3E%3C/svg%3E");
 }
 
 /* Focus ring color: the accent in a role that must clear 3:1 in both themes. */
@@ -168,6 +179,21 @@ input[type="range"]::-moz-range-thumb {
   background: var(--raised);
   border: 2px solid var(--accent);
   cursor: pointer;
+}
+
+/* Every dropdown <select> wears the same filled downward caret as the toolbar
+   popover triggers (Display ▾): appearance:none drops the browser's native
+   arrow, and the caret sits var(--space-6) from the right edge to match the
+   triggers' right padding. Per-select rules keep their own background colour and
+   box metrics (they set background-color, not the background shorthand, so this
+   image survives) and reserve --select-caret-space on the right for the caret. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: var(--select-caret);
+  background-repeat: no-repeat;
+  background-position: right var(--space-6) center;
+  background-size: 10px 6px;
 }
 
 /* Honour "reduce motion": drop CSS transitions/animations to near-instant.
@@ -302,11 +328,12 @@ body {
 }
 
 .examples-select {
-  background: var(--panel);
+  background-color: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--select-caret-space) var(--space-3)
+    var(--space-4);
   cursor: pointer;
   font-size: var(--text-md);
 }
@@ -546,7 +573,8 @@ body {
 }
 .popover-setting .quality-select {
   margin-left: var(--space-6);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--select-caret-space) var(--space-2)
+    var(--space-3);
 }
 /* Section-plane axis buttons + position slider inside the Display popover. */
 .section-controls {
@@ -586,11 +614,12 @@ body {
 
 /* Render-quality picker inside the Display popover. */
 .quality-select {
-  background: var(--panel);
+  background-color: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--select-caret-space) var(--space-3)
+    var(--space-4);
   cursor: pointer;
   font-size: var(--text-md);
 }
@@ -1069,11 +1098,16 @@ body {
   height: 30px;
   padding: 0 var(--space-5);
   font-size: var(--text-sm);
-  background: var(--raised);
+  background-color: var(--raised);
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   cursor: pointer;
+}
+/* The preset picker is the only <select> in this row, so it alone reserves the
+   caret's right padding — the sibling buttons keep their symmetric padding. */
+.params-presets select {
+  padding-right: var(--select-caret-space);
 }
 .params-presets .params-preset-save {
   flex: none;
@@ -1131,10 +1165,15 @@ body {
   width: 96px;
   font-size: var(--text-sm);
   padding: var(--space-1) var(--space-2);
-  background: var(--bg, #1a1a1a);
+  background-color: var(--bg, #1a1a1a);
   color: inherit;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+}
+/* Room on the right for the shared dropdown caret (the number/text siblings
+   above keep their symmetric padding). */
+.param-row select {
+  padding-right: var(--select-caret-space);
 }
 
 .param-slider {
