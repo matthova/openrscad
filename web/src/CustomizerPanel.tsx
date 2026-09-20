@@ -187,9 +187,7 @@ function Row({
           >
             <span className="param-switch-knob" aria-hidden="true" />
           </button>
-          <span className="param-switch-val">
-            {value ? "true" : "false"}
-          </span>
+          <span className="param-switch-val">{value ? "true" : "false"}</span>
         </span>
       )}
 
