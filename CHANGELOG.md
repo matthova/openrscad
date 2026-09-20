@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.1
+
+### Patch Changes
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`87fa540`](https://github.com/matthova/openrscad/commit/87fa540e24be7da644ea27ab41f6d0f441a95c14) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - geom: importing a malformed AMF file no longer panics — triangle faces that reference an out-of-range or oversized vertex index are dropped instead of crashing the importer
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`df8404a`](https://github.com/matthova/openrscad/commit/df8404af536ddad46e798a3bc408f82fac9349d5) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: add a brand page with light/dark logo downloads — the mark and the full lockup as transparent-background SVGs — reachable by right-clicking the nav logo or via a new footer link
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`e3399a7`](https://github.com/matthova/openrscad/commit/e3399a7897dec17a96382debfbe45b8996ce9b70) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - desktop: seamless title bar on macOS — the native title-bar band is replaced by an overlay so the app's themed topbar (brand lockup + controls) reads as the top of the window, matching the web playground. The topbar becomes the window's drag surface and insets to clear the traffic-light buttons; Windows/Linux keep their native frame.
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`189a500`](https://github.com/matthova/openrscad/commit/189a500b6a463012e8537e619134415b705bf456) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: round the right corners of the export format menu rows (a too-broad `.export button` rule was squaring them and the split-button caret's outer corner); the rows now match the other popover menus and the caret gets its rounded outer edge back
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`89af46d`](https://github.com/matthova/openrscad/commit/89af46ddbefa697d97e8e07cc2ced526971ee800) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: redesign the landing page — a split hero with a live, draggable mini-playground, a light/dark toggle, alternating feature rows, an animated render-shootout chart, and a full-screen mobile nav menu, set in Schibsted Grotesk + IBM Plex Mono
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`189a500`](https://github.com/matthova/openrscad/commit/189a500b6a463012e8537e619134415b705bf456) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: show the full OpenRSCAD logo lockup in the playground top nav instead of the plain wordmark text, swapping between the light and dark variants with the active theme
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`952c1a9`](https://github.com/matthova/openrscad/commit/952c1a966b98cdbde63d2365b1a65a8b45dec5ac) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: redesign the playground UI to the new design — Schibsted Grotesk + IBM Plex Mono type, a warmer "paper" light theme, and a one-click light/dark toggle, plus restyled controls: accent-filled sliders, a toggle switch for boolean parameters, a dotted green "Exact · watertight" integrity pill, a "Render" status pill, a solid-accent Export button, and a tidied preset toolbar (Preset · Save · overflow menu)
+
+- [#125](https://github.com/matthova/openrscad/pull/125) [`125409f`](https://github.com/matthova/openrscad/commit/125409fa750ae1502c82d73379dd3ff432e2e651) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: give every dropdown `<select>` the same filled downward caret as the toolbar popover triggers (Examples, Quality, preset picker, and customizer dropdowns), inset from the right edge to match the trigger buttons' padding
+
+- [#126](https://github.com/matthova/openrscad/pull/126) [`2599c17`](https://github.com/matthova/openrscad/commit/2599c17bdd3a65d1a9c807bcd6dd899aab85a13b) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: add a social preview (Open Graph) image and complete SEO metadata — Open Graph and Twitter cards, canonical URLs, `robots.txt`, `sitemap.xml`, and JSON-LD structured data — across the landing and playground pages.
+
 ## 0.14.0
 
 ### Minor Changes
