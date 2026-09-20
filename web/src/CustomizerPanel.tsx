@@ -1,7 +1,8 @@
 // The customizer panel: renders a control per parameter, grouped, and reports
 // changes as override values. Untouched params show their source default.
-import { useRef, useState } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import type { Param, ParamValue } from "./customizer";
+import { Popover, PopoverAction } from "./Popover";
 
 interface Props {
   params: Param[];
@@ -50,13 +51,6 @@ export function CustomizerPanel({
   return (
     <>
       <div className="params-presets">
-        <button
-          onClick={onReset}
-          disabled={!dirty}
-          title="Reset to source defaults"
-        >
-          Reset
-        </button>
         <select
           aria-label="Parameter set"
           value={selected}
@@ -74,34 +68,46 @@ export function CustomizerPanel({
           ))}
         </select>
         <button
+          className="params-preset-save"
           onClick={onSavePreset}
           title="Save current values as a named set"
         >
           Save
         </button>
-        <button
-          onClick={() => {
-            if (selected) onDeletePreset(selected);
-            setSelected("");
-          }}
-          disabled={!selected}
-          title="Delete the selected set"
-        >
-          Delete
-        </button>
-        <button
-          onClick={() => fileInput.current?.click()}
-          title="Import an OpenSCAD .json set file"
-        >
-          Import
-        </button>
-        <button
-          onClick={onExportPresets}
-          disabled={presets.length === 0}
-          title="Export sets as .json"
-        >
-          Export
-        </button>
+        {/* Less-used verbs collapse into an overflow menu so the toolbar stays a
+            single clean row (Preset · Save · ⋯). */}
+        <Popover label="⋯" hideCaret title="More parameter-set actions">
+          <PopoverAction
+            onClick={onReset}
+            disabled={!dirty}
+            title="Reset to source defaults"
+          >
+            Reset to defaults
+          </PopoverAction>
+          <PopoverAction
+            onClick={() => fileInput.current?.click()}
+            title="Import an OpenSCAD .json set file"
+          >
+            Import sets…
+          </PopoverAction>
+          <PopoverAction
+            onClick={onExportPresets}
+            disabled={presets.length === 0}
+            title="Export sets as .json"
+          >
+            Export sets
+          </PopoverAction>
+          <PopoverAction
+            onClick={() => {
+              if (selected) onDeletePreset(selected);
+              setSelected("");
+            }}
+            disabled={!selected}
+            title="Delete the selected set"
+          >
+            Delete selected set
+          </PopoverAction>
+        </Popover>
         <input
           ref={fileInput}
           type="file"
@@ -146,6 +152,14 @@ function formatSlider(value: number, step: number | null): string {
   return String(Number(value.toFixed(decimals)));
 }
 
+/** Percentage of the track that reads as "filled" (accent), for the slider's
+ *  `--fill` custom property. Clamped so an out-of-range override can't overrun. */
+function sliderFill(value: number, min: number, max: number): string {
+  if (!Number.isFinite(value) || max === min) return "0%";
+  const pct = ((value - min) / (max - min)) * 100;
+  return `${Math.max(0, Math.min(100, pct))}%`;
+}
+
 function Row({
   param,
   value,
@@ -162,11 +176,19 @@ function Row({
     <label className="param-row" title={param.name}>
       <span className="param-label">{label}</span>
       {c.kind === "checkbox" && (
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.target.checked)}
-        />
+        <span className="param-switch-wrap">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(value)}
+            aria-label={label}
+            className="param-switch"
+            onClick={() => onChange(!value)}
+          >
+            <span className="param-switch-knob" aria-hidden="true" />
+          </button>
+          <span className="param-switch-val">{value ? "true" : "false"}</span>
+        </span>
       )}
 
       {c.kind === "slider" && (
@@ -177,6 +199,11 @@ function Row({
             max={c.max}
             step={c.step ?? "any"}
             value={Number(value)}
+            style={
+              {
+                "--fill": sliderFill(Number(value), c.min, c.max),
+              } as CSSProperties
+            }
             onChange={(e) => onChange(parseFloat(e.target.value))}
           />
           <output>{formatSlider(Number(value), c.step)}</output>

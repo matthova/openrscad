@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { EditorView, keymap, tooltips } from "@codemirror/view";
 import { EditorState, Compartment, Prec } from "@codemirror/state";
 import { syntaxHighlighting } from "@codemirror/language";
@@ -134,6 +134,14 @@ import { pickDownloadUrl } from "./downloads";
 
 const TAURI = isTauri();
 
+// On macOS the desktop window uses an overlay title bar (see tauri.conf.json's
+// titleBarStyle), so the web topbar becomes the window's drag surface and must
+// inset its left edge to clear the traffic-light buttons. Detect the platform
+// once; Windows/Linux keep their native frame, and the browser is never a Mac
+// desktop, so the web build is unaffected.
+const MAC_DESKTOP =
+  TAURI && typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+
 // Render a completion's info panel BELOW the completion list instead of beside
 // it, so the `font=` preview (a pangram in the actual typeface — see
 // systemFonts.ts) reads on its own line rather than being squeezed to the right
@@ -167,6 +175,19 @@ const ABOUT_URL = ".";
 
 // Base URL for bundled libraries (public/lib/…), resolved against the page.
 const LIB_BASE = new URL("lib/", document.baseURI).href;
+
+// The brand lockup (mark + wordmark) shown in the topbar, resolved against the
+// page like LIB_BASE so it works under the deployed subpath. We swap between the
+// dark-ink (light background) and light-ink (dark background) variants with the
+// active theme; the files live in public/logos/ (see brand.html).
+const LOGO_LOCKUP_LIGHT = new URL(
+  "logos/openrscad-lockup-light.svg",
+  document.baseURI,
+).href;
+const LOGO_LOCKUP_DARK = new URL(
+  "logos/openrscad-lockup-dark.svg",
+  document.baseURI,
+).href;
 
 /** Editor extensions gating editability — read-only for binary-asset tabs, whose
  *  editor shows only a placeholder (the real bytes live in `File.bytes`). */
@@ -2384,10 +2405,23 @@ export function App() {
         if (e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
       }}
     >
-      <header className="topbar">
+      <header
+        className={`topbar${MAC_DESKTOP ? " topbar-overlay" : ""}`}
+        // On the desktop the native title bar is hidden, so the topbar is the
+        // window's drag surface. Interactive children (brand link, selects,
+        // popover triggers) are not drag regions, so they stay clickable.
+        {...(TAURI ? { "data-tauri-drag-region": "" } : {})}
+      >
         <h1 className="sr-only">OpenRSCAD playground</h1>
         <a className="brand" href={ABOUT_URL}>
-          OpenRSCAD <span className="tag">playground</span>
+          <img
+            className="brand-logo"
+            src={mode === "dark" ? LOGO_LOCKUP_DARK : LOGO_LOCKUP_LIGHT}
+            alt="OpenRSCAD"
+            width={113}
+            height={24}
+          />
+          <span className="tag">playground</span>
         </a>
         <div className="actions">
           <select
@@ -2502,6 +2536,7 @@ export function App() {
                   max={1}
                   step={0.01}
                   value={sectionT}
+                  style={{ "--fill": `${sectionT * 100}%` } as CSSProperties}
                   onChange={(e) =>
                     applySection(true, sectionAxis, Number(e.target.value))
                   }
@@ -2740,6 +2775,19 @@ export function App() {
             </PopoverAction>
             <div className="popover-version">{version || "openrscad"}</div>
           </Popover>
+          <button
+            className="theme-toggle"
+            data-cmd="theme-toggle"
+            onClick={() => setThemePref(mode === "dark" ? "light" : "dark")}
+            title={
+              mode === "dark" ? "Switch to light theme" : "Switch to dark theme"
+            }
+            aria-label={
+              mode === "dark" ? "Switch to light theme" : "Switch to dark theme"
+            }
+          >
+            <span className="theme-toggle-dot" aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -2835,7 +2883,7 @@ export function App() {
       )}
 
       {!TAURI && !desktopCalloutDismissed && desktopDownloadUrl && (
-        <div className="update-banner" role="status">
+        <div className="update-banner promo" role="status">
           <div className="update-banner-row">
             <span className="update-banner-msg">
               Get the OpenRSCAD desktop app for native-speed rendering and local
@@ -3004,6 +3052,7 @@ export function App() {
                   max={1}
                   step={0.001}
                   value={time}
+                  style={{ "--fill": `${time * 100}%` } as CSSProperties}
                   onChange={(e) => seekTime(parseFloat(e.target.value))}
                   aria-label="Animation time $t (0–1)"
                 />
@@ -3197,7 +3246,7 @@ export function App() {
               onClick={() => renderNowRef.current()}
               title="Render the current model"
             >
-              Render
+              Render <span className="status-render-key">F6</span>
             </button>
           )}
         </span>
@@ -3249,7 +3298,10 @@ export function App() {
           onClick={() => setConsoleOpen((o) => !o)}
           title="Toggle console"
         >
-          console{consoleLines.length ? ` (${consoleLines.length})` : ""}
+          console
+          {consoleLines.length ? (
+            <span className="console-count">{consoleLines.length}</span>
+          ) : null}
         </button>
         <span className="status-version">{version && `engine ${version}`}</span>
       </footer>

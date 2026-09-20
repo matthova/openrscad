@@ -1,7 +1,12 @@
 /* Marketing page (index.html) styles. Standalone — it does NOT import the app's
    index.css, so the ~35 KB of playground chrome never loads here. The design
    tokens below mirror the app's (web/src/index.css :root blocks) so light/dark
-   match; if those palettes change, update these too. */
+   match; if those palettes change, update these too.
+
+   Accent discipline (keeps the axe/contrast suite green): --accent is only for
+   fills, borders, dots and swatches; any accent-COLORED TEXT uses --accent-strong
+   (darker in light mode → clears 4.5:1), and solid-accent surfaces that carry ink
+   use the --cta-bg / --on-accent pair (darkened in light so white ink clears AA). */
 
 /* ── Tokens (mirror web/src/index.css) ─────────────────────────────────────*/
 :root {
@@ -13,8 +18,10 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 12px;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, Menlo, monospace;
+  --radius-xl: 16px;
+  --font-sans:
+    "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 
 :root,
@@ -29,36 +36,74 @@
   --muted: #9aa0aa;
   --accent: #ffd60a;
   --accent-strong: #ffd60a;
+  --accent-soft: rgba(255, 214, 10, 0.12);
   /* On dark, accent text on the accent button needs a dark ink for contrast. */
   --on-accent: #14161b;
   /* Filled-CTA background. On dark it's the bright accent under dark ink; on
-     light it darkens (below) so white ink clears AA (bare --accent is only
-     3.18:1 under white). */
+     light it darkens (below) so white ink clears AA. */
   --cta-bg: var(--accent);
+  /* Faux-model shades (hero + feature mocks). Decorative — no text sits on them. */
+  --model: #f2c500;
+  --model-2: #d9ae00;
+  --model-3: #b88f00;
+  /* Grid paper backdrop + nav-pill glass. */
+  --grid: rgba(255, 255, 255, 0.035);
+  --grid-major: rgba(255, 255, 255, 0.07);
+  --nav: rgba(26, 29, 35, 0.82);
+  --shadow: rgba(0, 0, 0, 0.6);
   /* Chart series (OpenRSCAD / OpenSCAD CGAL / OpenSCAD Manifold). Yellow + rose +
      blue — CVD-validated as a set on the panel surface (see dataviz check). */
   --series-openrscad: var(--accent);
   --series-cgal: #ef6f8e;
   --series-mfld: #5aa9e6;
+  /* Code preview syntax (VSCode Dark+, mirrors web/src/lang/theme.ts). */
+  --kw: #569cd6;
+  --ctl: #c586c0;
+  --fn: #dcdcaa;
+  --var: #9cdcfe;
+  --num: #b5cea8;
+  --cmt: #6a9955;
+  --str: #ce9178;
   --focus: var(--accent-strong);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #ffffff;
-  --panel: #eef0f3;
+  --bg: #fbfaf7;
+  --panel: #f1efe8;
   --raised: #ffffff;
-  --border: #d5d9e0;
+  --border: #e2dfd6;
   --border-strong: #8b929e;
   --text: #1b1e23;
   --muted: #5b6472;
-  --accent: #b09b00;
-  --accent-strong: #7a6e00;
+  --accent: #8a7a00;
+  /* Accent text tone. Darker than --accent so it clears 4.5:1 even on the warm
+     panel (--panel #f1efe8): #7a6e00 lands at 4.49 there, so nudge down. */
+  --accent-strong: #736700;
+  --accent-soft: rgba(138, 122, 0, 0.12);
   --on-accent: #ffffff;
   --cta-bg: #7a6e00; /* white ink → 5.1:1 (bright --accent would be 2.5:1) */
+  --model: #e9c400;
+  --model-2: #cfae00;
+  --model-3: #ad9000;
+  --grid: rgba(0, 0, 0, 0.04);
+  --grid-major: rgba(0, 0, 0, 0.08);
+  --nav: rgba(251, 250, 247, 0.82);
+  --shadow: rgba(27, 30, 35, 0.25);
   --series-openrscad: var(--accent);
   --series-cgal: #b0355a;
   --series-mfld: #2b6cb0;
+  /* Code preview syntax (VSCode Light+, mirrors web/src/lang/theme.ts). */
+  --kw: #0000ff;
+  --ctl: #af00db;
+  --fn: #795e26;
+  --var: #001080;
+  /* VSCode Light+ green (#098658) is tuned for a white editor bg; on the warm
+     panels here it drops to ~4.0:1, so darken it to clear 4.5:1 on --panel and
+     on the accent-soft active-line wash. */
+  --num: #0a6e42;
+  --cmt: #007000;
+  --str: #a31515;
   --focus: var(--accent-strong);
 }
 
@@ -83,11 +128,21 @@ html {
 }
 body.mk {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  background:
+    linear-gradient(var(--grid-major) 1px, transparent 1px) 0 0 / 160px 160px,
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) 0 0 / 160px
+      160px,
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
 }
 .mk a {
   color: var(--accent-strong);
@@ -95,6 +150,23 @@ body.mk {
 }
 .mk a:hover {
   text-decoration: underline;
+}
+.mk code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+.mk-accent {
+  color: var(--accent-strong);
+}
+.mk-accent-text {
+  color: var(--accent-strong);
+}
+.mk-muted {
+  color: var(--muted);
 }
 :focus-visible {
   outline: 2px solid var(--focus);
@@ -105,41 +177,78 @@ body.mk {
   html {
     scroll-behavior: auto;
   }
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
-/* ── Top nav ───────────────────────────────────────────────────────────────*/
+/* ── Nav pill ──────────────────────────────────────────────────────────────*/
+.mk-nav-spacer {
+  height: 64px;
+}
 .mk-nav {
+  position: fixed;
+  top: 12px;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 0 clamp(12px, 3vw, 24px);
+  pointer-events: none;
+}
+.mk-nav-box {
+  pointer-events: auto;
+  max-width: 1120px;
+  margin: 0 auto;
+  height: 62px;
+  background: var(--nav);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 8px 30px -18px var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition:
+    height 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    border-radius 0.45s ease,
+    background-color 0.3s ease;
+}
+.mk-nav-bar {
+  flex: none;
+  height: 62px;
+  padding: 10px 12px 10px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-8);
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-10);
 }
 .mk-brand {
   display: inline-flex;
   align-items: center;
   gap: var(--space-6);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: 0.3px;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.2px;
   color: var(--text) !important;
 }
 .mk-brand:hover {
   text-decoration: none !important;
 }
 .mk-logo {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   color: var(--accent);
   flex-shrink: 0;
 }
 .mk-nav-links {
   display: flex;
   align-items: center;
-  gap: var(--space-10);
+  gap: 26px;
   font-size: 15px;
+  font-weight: 600;
 }
 .mk-nav-links a {
   color: var(--muted);
@@ -148,39 +257,188 @@ body.mk {
   color: var(--text);
   text-decoration: none;
 }
+.mk-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.mk-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.mk-theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.mk-theme-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+}
+/* Dark = "moon": carve a crescent out of the dot with an inset shadow. */
+:root[data-theme="dark"] .mk-theme-dot {
+  box-shadow: inset -6px -3px 0 0 var(--panel);
+}
+.mk-cta {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 12px;
+  background: var(--cta-bg);
+  color: var(--on-accent) !important;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mk-cta:hover {
+  text-decoration: none !important;
+  filter: brightness(1.06);
+}
+.mk-burger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 42px;
+  height: 38px;
+  padding: 0 11px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.mk-burger span {
+  height: 2px;
+  background: var(--text);
+  border-radius: 1px;
+  transition:
+    transform 0.25s ease,
+    opacity 0.2s ease;
+}
+.mk-nav-box[data-menu="open"] .mk-burger span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+.mk-nav-box[data-menu="open"] .mk-burger span:nth-child(2) {
+  opacity: 0;
+}
+.mk-nav-box[data-menu="open"] .mk-burger span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+.mk-mobile-menu {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  opacity: 0;
+}
+.mk-mobile-menu a {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  padding: 10px 20px;
+  color: var(--text) !important;
+}
+.mk-mobile-menu a:hover {
+  color: var(--accent-strong) !important;
+  text-decoration: none;
+}
+.mk-mobile-menu a.mk-mobile-cta {
+  margin-top: 24px;
+  background: var(--cta-bg);
+  color: var(--on-accent) !important;
+  padding: 14px 26px;
+  border-radius: 14px;
+  font-size: 18px !important;
+}
+.mk-nav-box[data-menu="open"] {
+  height: calc(100vh - 24px);
+  border-radius: 24px;
+  background: var(--bg);
+}
+.mk-nav-box[data-menu="open"] .mk-mobile-menu {
+  display: flex;
+  opacity: 1;
+  transition: opacity 0.35s ease 0.15s;
+}
 
 /* ── Hero ──────────────────────────────────────────────────────────────────*/
 .mk-hero {
-  max-width: 780px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: clamp(48px, 9vw, 104px) var(--space-10) 56px;
-  text-align: center;
+  padding: clamp(48px, 8vw, 104px) var(--space-10) 56px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 48px;
+  align-items: center;
+}
+.mk-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+.mk-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.mk-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .mk-title {
-  margin: 0 0 var(--space-10);
-  font-size: clamp(36px, 6.5vw, 60px);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  margin: 0;
+  font-size: clamp(38px, 5.6vw, 68px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
   font-weight: 800;
-}
-.mk-accent {
-  color: var(--accent-strong);
+  text-wrap: balance;
 }
 .mk-sub {
-  margin: 0 auto var(--space-10);
-  max-width: 620px;
-  font-size: clamp(16px, 2.2vw, 19px);
+  margin: 0;
+  max-width: 520px;
+  font-size: clamp(16px, 1.6vw, 19px);
   color: var(--muted);
+  text-wrap: pretty;
 }
 .mk-cta-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-6);
-  justify-content: center;
-  margin-top: 28px;
+  margin-top: var(--space-2);
 }
 .mk-note {
-  margin: var(--space-8) 0 0;
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
 }
@@ -190,11 +448,12 @@ body.mk {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 22px;
+  height: 48px;
+  padding: 0 22px;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition:
     transform 120ms ease,
@@ -204,6 +463,9 @@ body.mk {
 .mk-btn:hover {
   text-decoration: none !important;
   transform: translateY(-1px);
+}
+.mk-btn[hidden] {
+  display: none;
 }
 .mk-btn-primary {
   background: var(--cta-bg);
@@ -217,71 +479,210 @@ body.mk {
   background: transparent;
   color: var(--text) !important;
   border-color: var(--border-strong);
+  font-weight: 600;
 }
 .mk-btn-ghost:hover {
   background: var(--panel);
 }
 
-/* ── Features ──────────────────────────────────────────────────────────────*/
-.mk-features {
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: 24px var(--space-10) 32px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-8);
+/* ── Hero widget (live mini-playground) ────────────────────────────────────*/
+@keyframes mk-spin {
+  from {
+    transform: rotateX(-24deg) rotateY(0deg);
+  }
+  to {
+    transform: rotateX(-24deg) rotateY(360deg);
+  }
 }
-.mk-card {
+.mk-widget {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
   background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 30px 80px -40px var(--shadow);
+}
+.mk-widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.mk-widget-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.mk-dots {
+  display: inline-flex;
+  gap: 5px;
+}
+.mk-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  display: block;
+}
+.mk-widget-live {
+  color: var(--accent-strong);
+}
+.mk-widget-code {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.mk-widget-stage {
+  position: relative;
+  height: 260px;
+  background:
+    linear-gradient(var(--grid-major) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) 0 0 / 28px
+      28px,
+    var(--panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.mk-widget-model {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mk-widget-meta {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mk-widget-dims {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  padding: 3px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--raised);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mk-widget-controls {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.mk-ctrl-label {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.mk-ctrl-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* Range inputs (hero + customizer mock) — accent fill up to --fill. */
+.mk input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) 0 / var(--fill, 50%) 100%
+      no-repeat,
+    var(--border-strong);
+  outline: none;
+  margin: 0;
+}
+.mk input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.mk input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 2px solid var(--accent);
+  cursor: pointer;
+}
+
+/* Switch (hero lid toggle). */
+.mk-switch {
+  justify-self: start;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  background: var(--border-strong);
+  transition: background 0.15s ease;
+}
+.mk-switch[aria-checked="true"] {
+  background: var(--accent);
+}
+.mk-switch-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--raised);
+  transform: translateX(0);
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.mk-switch[aria-checked="true"] .mk-switch-knob {
+  transform: translateX(16px);
+}
+
+/* ── Stats strip ───────────────────────────────────────────────────────────*/
+/* One bordered strip; tiles divide it with internal borders (no outer padding
+   so the frame hugs the numbers). Width matches the other sections' content box
+   (max content width minus their horizontal padding). */
+.mk-stats {
+  margin: 40px auto;
+  max-width: calc(1120px - 2 * var(--space-10));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 22px;
-}
-.mk-card h3 {
-  margin: 0 0 var(--space-6);
-  font-size: 17px;
-  font-weight: 700;
-}
-.mk-card p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 15px;
-}
-.mk-card code {
-  font-family: var(--font-mono);
-  font-size: 0.88em;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1px 5px;
-}
-
-/* ── Shootout ──────────────────────────────────────────────────────────────*/
-.mk-shootout {
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: 40px var(--space-10);
-  text-align: center;
-}
-.mk-shootout h2 {
-  margin: 0 0 var(--space-6);
-  font-size: clamp(26px, 4vw, 34px);
-  letter-spacing: -0.01em;
-}
-
-/* Headline stat tiles. */
-.mk-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--space-6);
-  margin: 32px 0 8px;
+  overflow: hidden;
+  background: var(--panel);
 }
 .mk-stat {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 22px var(--space-8);
-  text-align: left;
+  padding: 22px 24px;
+  border-right: 1px solid var(--border);
+}
+.mk-stat:last-child {
+  border-right: none;
 }
 .mk-stat-num {
   display: block;
@@ -289,28 +690,483 @@ body.mk {
   font-weight: 800;
   line-height: 1;
   color: var(--accent-strong);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 .mk-stat-label {
   display: block;
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
   color: var(--muted);
   font-size: 14px;
 }
 
+/* ── Features (rows) ───────────────────────────────────────────────────────*/
+.mk-features {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px var(--space-10);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(64px, 9vw, 120px);
+}
+.mk-feature {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 40px;
+  align-items: center;
+}
+.mk-feature-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mk-eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-strong);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.mk-feature-copy h2 {
+  margin: 0;
+  font-size: clamp(26px, 3.2vw, 36px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  text-wrap: balance;
+}
+.mk-feature-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  text-wrap: pretty;
+}
+.mk-feature-visual {
+  min-width: 0;
+}
+/* Flip rows put the copy on the right on wide screens; source order keeps the
+   copy first for readers/AT. */
+@media (min-width: 720px) {
+  .mk-feature--flip .mk-feature-copy {
+    order: 2;
+  }
+}
+.mk-viz {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  padding: 20px;
+}
+.mk-code {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+/* Shared OpenSCAD syntax colouring for the static feature snippets (.mk-code)
+   and the live hero listing (.mk-widget-code). */
+.mk-code .kw,
+.mk-widget-code .kw {
+  color: var(--kw);
+}
+.mk-code .ctl,
+.mk-widget-code .ctl {
+  color: var(--ctl);
+}
+.mk-code .fn,
+.mk-widget-code .fn {
+  color: var(--fn);
+}
+.mk-code .var,
+.mk-widget-code .var {
+  color: var(--var);
+}
+.mk-code .num,
+.mk-widget-code .num {
+  color: var(--num);
+}
+.mk-code .cmt,
+.mk-widget-code .cmt {
+  color: var(--cmt);
+  font-style: italic;
+}
+.mk-code .str,
+.mk-widget-code .str {
+  color: var(--str);
+}
+.mk-arrow {
+  color: var(--accent-strong);
+}
+
+/* 01 · compatible */
+.mk-viz-compat {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.mk-viz-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.mk-viz-arrow .mk-arrow {
+  font-size: 20px;
+}
+.mk-viz-mini,
+.mk-where-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mk-viz-mini {
+  height: 120px;
+}
+.mk-mini-box {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  background: var(--model);
+  box-shadow: 6px 6px 0 var(--model-3);
+  transform: rotate(-8deg);
+}
+
+/* 02 · pipeline */
+.mk-viz-pipe {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.mk-pipe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.mk-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--raised);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.mk-pipe .mk-arrow {
+  font-size: 18px;
+  line-height: 1;
+}
+.mk-pipe-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mk-pipe-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--raised);
+}
+.mk-pipe-card--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.mk-pipe-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mk-pipe-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.mk-pipe-num {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  /* 700 (not 600) so 22px counts as WCAG large text → 3:1 clears on the
+     accent-soft card, where accent-strong lands at ~4.35:1. */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent-strong);
+}
+.mk-pipe-num--muted {
+  color: var(--text);
+}
+.mk-pipe-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mk-pipe-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--series-cgal);
+  opacity: 0.85;
+}
+
+/* 03 · editor ↔ preview */
+.mk-viz-link {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mk-viz-link .mk-code {
+  line-height: 1.8;
+}
+.mk-viz-link .ln {
+  display: block;
+  padding: 0 8px;
+  color: var(--muted);
+}
+.mk-viz-link .mk-ln-active {
+  margin: 0 -8px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+.mk-link-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.mk-link-chip > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.mk-swatch-sm {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* 04 · customizer */
+.mk-viz-cust {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  align-items: center;
+}
+.mk-cust-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12px;
+}
+.mk-cust-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mk-cust-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 40%,
+    var(--border-strong) 40%
+  );
+  position: relative;
+}
+.mk-cust-knob {
+  position: absolute;
+  left: 40%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 2px solid var(--accent);
+}
+.mk-cust-num {
+  font-family: var(--font-mono);
+  width: 22px;
+  text-align: right;
+}
+.mk-cust-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--raised);
+}
+.mk-cust-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mk-cust-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent);
+  position: relative;
+}
+.mk-cust-toggle span {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--raised);
+}
+
+/* 05 · export */
+.mk-viz-export {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.mk-export-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.mk-export-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mk-export-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.mk-fmt {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.mk-fmt--on {
+  border-color: transparent;
+  background: var(--cta-bg);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+/* 06 · browser or desktop */
+.mk-viz-where {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.mk-where-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mk-where-frame {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.mk-where-url,
+.mk-where-title {
+  flex: 1;
+  text-align: center;
+}
+.mk-where-stage {
+  height: 96px;
+  border: 1px solid var(--border-strong);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 16px 16px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 16px 16px,
+    var(--raised);
+}
+.mk-where-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* ── Shootout ──────────────────────────────────────────────────────────────*/
+.mk-shootout {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px var(--space-10);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.mk-shootout-head {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.mk-shootout-head h2 {
+  margin: 0;
+  font-size: clamp(28px, 3.6vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  text-wrap: balance;
+}
+.mk-download-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+}
+
 /* Chart. */
 .mk-figure {
-  margin: 32px 0 0;
+  margin: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 22px;
-  text-align: left;
 }
 .mk-fig-title {
   font-weight: 700;
-  font-size: 15px;
-  margin-bottom: var(--space-8);
+  font-size: 14px;
+  margin-bottom: 18px;
 }
 .mk-fig-note {
   color: var(--muted);
@@ -320,8 +1176,8 @@ body.mk {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-8);
-  margin-bottom: var(--space-8);
-  font-size: 13px;
+  margin-bottom: 18px;
+  font-size: 12px;
   color: var(--muted);
 }
 .mk-legend-item {
@@ -330,9 +1186,9 @@ body.mk {
   gap: var(--space-4);
 }
 .mk-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
   flex-shrink: 0;
 }
 .mk-swatch--openrscad {
@@ -354,14 +1210,15 @@ body.mk {
    so lines and bars share exactly one scale. */
 .mk-grid {
   position: absolute;
-  left: calc(var(--label-w) + var(--space-8));
+  left: calc(var(--label-w) + 14px);
   right: var(--value-gutter);
   top: 0;
   bottom: 22px;
   pointer-events: none;
 }
 :root {
-  --value-gutter: 48px;
+  --value-gutter: 56px;
+  --label-w: 150px;
 }
 .mk-gridline {
   position: absolute;
@@ -373,10 +1230,11 @@ body.mk {
 }
 .mk-gridtick {
   position: absolute;
-  bottom: -16px;
+  bottom: -18px;
   left: 0;
   transform: translateX(-50%);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -384,12 +1242,9 @@ body.mk {
   position: relative;
   display: grid;
   grid-template-columns: var(--label-w) 1fr;
-  gap: var(--space-8);
+  gap: 14px;
   align-items: center;
-  padding: 8px 0;
-}
-:root {
-  --label-w: 168px;
+  padding: 7px 0;
 }
 .mk-row-label {
   min-width: 0;
@@ -407,44 +1262,72 @@ body.mk {
 .mk-bars {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  /* Reserve a gutter so the "×" value labels sit past the bar end without
+  gap: 3px;
+  /* Reserve a gutter so the value labels sit past the bar end without
      overflowing; the gridlines reserve the same gutter (see .mk-grid). */
   padding-right: var(--value-gutter);
 }
 .mk-track {
   position: relative;
-  height: 18px;
+  height: 14px;
 }
 .mk-bar {
   height: 100%;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  min-width: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  width: var(--w, 0);
+  border-radius: 0 3px 3px 0;
+  min-width: 0;
+  transition: width 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
-.mk-bar--openrscad {
-  background: var(--series-openrscad);
+/* Bars grow from zero once the chart scrolls into view (about.ts adds .in-view).
+   Before then they're collapsed; reduced-motion users get them instantly. */
+.mk-plot:not(.in-view) .mk-bar {
+  width: 0;
 }
 .mk-bar--cgal {
   background: var(--series-cgal);
 }
 .mk-bar--mfld {
   background: var(--series-mfld);
+  transition-delay: 0.1s;
+}
+.mk-bar--openrscad {
+  background: var(--series-openrscad);
+  transition-delay: 0.2s;
 }
 .mk-bar-value {
   position: absolute;
-  left: calc(100% + 6px);
-  font-size: 11px;
-  font-weight: 700;
+  left: calc(var(--w, 0) + 6px);
+  top: 0;
+  line-height: 14px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--text);
   white-space: nowrap;
+  transition: left 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.mk-plot:not(.in-view) .mk-bar-value {
+  left: 6px;
+}
+.mk-track--cgal .mk-bar-value {
+  transition-delay: 0s;
+}
+.mk-track--mfld .mk-bar-value {
+  transition-delay: 0.1s;
+}
+.mk-track--openrscad .mk-bar-value {
+  color: var(--accent-strong);
+  font-weight: 600;
+  transition-delay: 0.2s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-bar,
+  .mk-bar-value {
+    transition: none !important;
+  }
 }
 
 /* Table. */
 .mk-table-wrap {
-  margin: 24px 0 0;
   overflow-x: auto;
 }
 .mk-table {
@@ -455,7 +1338,7 @@ body.mk {
 }
 .mk-table th,
 .mk-table td {
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -481,71 +1364,51 @@ body.mk {
   font-size: 12px;
   color: var(--muted);
 }
-.mk-method code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1px 5px;
+.mk-method {
+  margin: 0;
 }
-
-/* Narrow screens: give the bars more room so the log-axis ticks don't collide,
-   and let the model note wrap under a tighter label column. */
-@media (max-width: 640px) {
-  :root {
-    --label-w: 96px;
-    --value-gutter: 38px;
-  }
-  .mk-shootout {
-    padding-left: var(--space-8);
-    padding-right: var(--space-8);
-  }
-  .mk-row-note {
-    display: none;
-  }
-  .mk-gridtick {
-    font-size: 10px;
-  }
-  .mk-bar-value {
-    font-size: 10px;
-  }
+.mk-method code {
+  font-size: 0.9em;
 }
 
 /* ── Download section ──────────────────────────────────────────────────────*/
 .mk-download {
-  max-width: 1040px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 56px var(--space-10) 40px;
+  padding: 40px var(--space-10) 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
   text-align: center;
 }
 .mk-download h2 {
-  margin: 0 0 var(--space-6);
-  font-size: clamp(26px, 4vw, 34px);
-  letter-spacing: -0.01em;
+  margin: 0;
+  font-size: clamp(28px, 3.6vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  font-weight: 800;
 }
-.mk-download-sub {
-  margin: 0 auto 32px;
-  max-width: 520px;
-  color: var(--muted);
+.mk-download .mk-download-sub {
+  max-width: 560px;
 }
 .mk-os-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: var(--space-6);
-  max-width: 800px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: 820px;
 }
 .mk-os-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: var(--space-2);
-  padding: 20px var(--space-8);
+  padding: 20px 16px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   color: var(--text) !important;
+  text-align: left;
 }
 .mk-os-card:hover {
   border-color: var(--accent);
@@ -553,8 +1416,23 @@ body.mk {
   text-decoration: none !important;
 }
 .mk-os-card--suggested {
+  position: relative;
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+}
+.mk-os-card--suggested::before {
+  content: "detected";
+  position: absolute;
+  top: -9px;
+  left: 14px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--cta-bg);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .mk-os-name {
   font-weight: 700;
@@ -565,8 +1443,8 @@ body.mk {
   color: var(--muted);
 }
 .mk-more {
-  margin: 32px 0 0;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
 }
 .mk-more-note {
   display: block;
@@ -575,11 +1453,86 @@ body.mk {
   font-size: 13px;
 }
 
+/* ── Brand page (brand.html) ───────────────────────────────────────────────*/
+.mk-brand-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px var(--space-10) 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  text-align: center;
+}
+.mk-brand-page h1 {
+  margin: 0;
+  font-size: clamp(28px, 3.6vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+.mk-brand-lead {
+  margin: 0;
+  max-width: 620px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.5;
+}
+.mk-brand-group {
+  margin: 28px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.mk-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-10);
+  width: 100%;
+  max-width: 720px;
+}
+.mk-asset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+}
+/* Preview tiles carry fixed light/dark backdrops (not theme tokens) so each
+   asset is shown on the surface it's meant for, whatever the page theme is. */
+.mk-asset-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 150px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+}
+.mk-asset-preview img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.mk-asset-preview--light {
+  background: #fbfaf7;
+}
+.mk-asset-preview--dark {
+  background: #14161b;
+}
+.mk-asset-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.mk-brand-foot {
+  margin-top: 12px;
+  max-width: 480px;
+}
+
 /* ── Footer ────────────────────────────────────────────────────────────────*/
 .mk-footer {
-  max-width: 1040px;
-  margin: 40px auto 0;
-  padding: 24px var(--space-10) 40px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px var(--space-10);
   border-top: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
@@ -598,4 +1551,43 @@ body.mk {
 }
 .mk-footer-links a:hover {
   color: var(--text);
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────*/
+/* Collapse the nav to a burger + full-screen menu below the desktop breakpoint. */
+@media (max-width: 880px) {
+  .mk-nav-links,
+  .mk-theme-toggle .mk-theme-label,
+  .mk-cta {
+    display: none;
+  }
+  .mk-burger {
+    display: flex;
+  }
+}
+/* Narrow screens: give the chart bars more room so the log-axis ticks don't
+   collide, and let the model note wrap under a tighter label column. */
+@media (max-width: 640px) {
+  :root {
+    --label-w: 96px;
+    --value-gutter: 42px;
+  }
+  .mk-shootout {
+    padding-left: var(--space-8);
+    padding-right: var(--space-8);
+  }
+  .mk-row-note {
+    display: none;
+  }
+  .mk-gridtick,
+  .mk-bar-value {
+    font-size: 10px;
+  }
+  .mk-stat {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .mk-stat:last-child {
+    border-bottom: none;
+  }
 }
