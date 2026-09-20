@@ -72,11 +72,15 @@ jobs:
             # the README can link releases/latest/download/<name> permanently.
             bundle-glob: "desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"
             stable-name: "OpenRSCAD-macos-aarch64.dmg"
+            # The .app the .dmg and updater .app.tar.gz are built from; its code
+            # signature is verified after the build (see the macOS step below).
+            app-glob: "desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app"
           - platform: macos-15-intel
             args: "--target x86_64-apple-darwin"
             rust-targets: "x86_64-apple-darwin"
             bundle-glob: "desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"
             stable-name: "OpenRSCAD-macos-x64.dmg"
+            app-glob: "desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app"
           - platform: ubuntu-22.04
             args: ""
             rust-targets: ""
@@ -218,6 +222,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # ---- Optional macOS code-signing + notarization (see RELEASING.md) ----
+          # Without these the bundler signs the .app with the ad-hoc identity "-"
+          # from tauri.conf.json (bundle.macOS.signingIdentity). That gives the
+          # bundle a VALID signature, so Gatekeeper offers "Open Anyway" on a
+          # quarantined download instead of calling it "damaged" — but first
+          # launch still needs that click. APPLE_SIGNING_IDENTITY overrides the
+          # config value, so uncommenting this block (with the secrets set) is all
+          # it takes to switch to Developer ID signing + notarization.
           # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -240,6 +251,31 @@ jobs:
           # Emits latest.json (the updater manifest) alongside the installers.
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      # The bundler ad-hoc signs the .app (bundle.macOS.signingIdentity = "-" in
+      # tauri.conf.json) unless an Apple identity is supplied via the env block
+      # above. A bundle that ships with NO bundle-level signature — only the
+      # linker's automatic per-binary stub on arm64, or nothing at all on
+      # x86_64 — fails Gatekeeper's integrity check on a quarantined download,
+      # and macOS reports it as "damaged and can't be opened" with no Open Anyway
+      # escape hatch. That is exactly what v0.14.0 shipped. Fail the leg if it
+      # ever regresses. (Runs after the upload because tauri-action builds and
+      # uploads in one step; a red job is the signal.)
+      - name: Verify macOS bundle signature
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          app=$(ls -d ${{ matrix.app-glob }} 2>/dev/null | head -n1)
+          if [ -z "$app" ]; then
+            echo "::error::No .app matched ${{ matrix.app-glob }}"; exit 1
+          fi
+          codesign -dv --verbose=2 "$app" 2>&1 \
+            | grep -E '^(Format|CodeDirectory|Signature|Authority|TeamIdentifier|Sealed Resources)' || true
+          if ! codesign --verify --deep --strict --verbose=2 "$app"; then
+            echo "::error::$app has no valid code signature — macOS would report the download as damaged. Check bundle.macOS.signingIdentity in tauri.conf.json and the APPLE_* env block."
+            exit 1
+          fi
+          echo "$app: valid code signature."
 
       # tauri-action names installers with the version embedded
       # (OpenRSCAD_0.0.4_aarch64.dmg), so there's no stable URL to link from a static

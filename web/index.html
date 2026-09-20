@@ -588,6 +588,22 @@
             page.</span
           >
         </p>
+
+        <!-- The macOS build is ad-hoc signed, not notarized, so Gatekeeper stops
+             the first launch of a downloaded copy. Say so here rather than let
+             the user discover it from the OS dialog. -->
+        <p class="mk-note mk-first-launch" id="mac-first-launch">
+          <strong>macOS:</strong> OpenRSCAD isn't notarized with Apple yet, so
+          the first launch says "Apple could not verify…". Click Done, then open
+          <strong>System Settings → Privacy &amp; Security</strong> and click
+          <strong>Open Anyway</strong> — once.
+          <a
+            href="https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Apple's guide&nbsp;↗</a
+          >
+        </p>
       </section>
     </main>
 

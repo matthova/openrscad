@@ -139,15 +139,23 @@ These require secrets, paid accounts, or GitHub UI actions an agent can't do.
 
 ### Recommended before a public launch — OS code-signing
 
-Without these, users get "unidentified developer" / SmartScreen warnings on
-first install (auto-update still works). Signing must be enabled in the release
-workflow (`.github/workflows/release.yml` has the macOS env block commented in).
+What ships today: the macOS `.app` is **ad-hoc signed** by the bundler
+(`bundle.macOS.signingIdentity: "-"` in `desktop/src-tauri/tauri.conf.json`),
+and the release workflow fails a macOS leg whose bundle doesn't pass
+`codesign --verify`. That is the floor, not the goal. An ad-hoc signature only
+keeps Gatekeeper from calling a quarantined download "damaged" (a dead end with
+no escape hatch — what v0.14.0 and earlier shipped); users still see "Apple could
+not verify…" on first launch and have to click **Open Anyway** in System
+Settings → Privacy & Security once. Windows shows a SmartScreen warning.
+Auto-update works either way.
 
 - [ ] **macOS**: enroll in the Apple Developer Program ($99/yr); create a
       "Developer ID Application" certificate; add secrets `APPLE_CERTIFICATE`,
       `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
       `APPLE_PASSWORD` (app-specific password), `APPLE_TEAM_ID`; uncomment the
-      Apple env block in the workflow. This also enables **notarization**.
+      Apple env block in the workflow. `APPLE_SIGNING_IDENTITY` overrides the
+      ad-hoc identity in `tauri.conf.json`, so nothing else changes. This also
+      enables **notarization**, which removes the Open Anyway step entirely.
 - [ ] **Windows**: obtain a code-signing certificate (Azure Trusted Signing is
       the cheapest modern option; an OV/EV cert also works) and wire it into the
       Windows bundle config / workflow.
