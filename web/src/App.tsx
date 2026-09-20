@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { EditorView, keymap, tooltips } from "@codemirror/view";
 import { EditorState, Compartment, Prec } from "@codemirror/state";
 import { syntaxHighlighting } from "@codemirror/language";
@@ -2502,6 +2502,7 @@ export function App() {
                   max={1}
                   step={0.01}
                   value={sectionT}
+                  style={{ "--fill": `${sectionT * 100}%` } as CSSProperties}
                   onChange={(e) =>
                     applySection(true, sectionAxis, Number(e.target.value))
                   }
@@ -2848,7 +2849,7 @@ export function App() {
       )}
 
       {!TAURI && !desktopCalloutDismissed && desktopDownloadUrl && (
-        <div className="update-banner" role="status">
+        <div className="update-banner promo" role="status">
           <div className="update-banner-row">
             <span className="update-banner-msg">
               Get the OpenRSCAD desktop app for native-speed rendering and local
@@ -3017,6 +3018,7 @@ export function App() {
                   max={1}
                   step={0.001}
                   value={time}
+                  style={{ "--fill": `${time * 100}%` } as CSSProperties}
                   onChange={(e) => seekTime(parseFloat(e.target.value))}
                   aria-label="Animation time $t (0–1)"
                 />
@@ -3210,7 +3212,7 @@ export function App() {
               onClick={() => renderNowRef.current()}
               title="Render the current model"
             >
-              Render
+              Render <span className="status-render-key">F6</span>
             </button>
           )}
         </span>
@@ -3262,7 +3264,10 @@ export function App() {
           onClick={() => setConsoleOpen((o) => !o)}
           title="Toggle console"
         >
-          console{consoleLines.length ? ` (${consoleLines.length})` : ""}
+          console
+          {consoleLines.length ? (
+            <span className="console-count">{consoleLines.length}</span>
+          ) : null}
         </button>
         <span className="status-version">{version && `engine ${version}`}</span>
       </footer>

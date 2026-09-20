@@ -19,10 +19,12 @@ interface Props {
   title?: string;
   /** Highlight the trigger (e.g. a non-default setting is active inside). */
   active?: boolean;
+  /** Drop the ▾ caret (for icon-only triggers like an ⋯ overflow button). */
+  hideCaret?: boolean;
   children: ReactNode;
 }
 
-export function Popover({ label, title, active, children }: Props) {
+export function Popover({ label, title, active, hideCaret, children }: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -98,7 +100,8 @@ export function Popover({ label, title, active, children }: Props) {
         title={title}
         onClick={() => setOpen((o) => !o)}
       >
-        {label} ▾
+        {label}
+        {hideCaret ? "" : " ▾"}
       </button>
       {open && (
         <div ref={panel} className="popover-panel" role="menu" style={position}>
