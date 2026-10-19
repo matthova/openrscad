@@ -9,7 +9,7 @@ export default defineConfig({
     lezer(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg"],
+      includeAssets: ["favicon.svg", "favicon-dark.svg", "favicon-light.svg"],
       // Precache the app shell + the wasm engine so the playground works
       // offline (libraries fetched from a CDN still need the network).
       workbox: {

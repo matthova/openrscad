@@ -96,6 +96,7 @@ import {
   type QualitySettings,
 } from "./prefs";
 import { usePref } from "./usePref";
+import { setFavicon } from "./favicon";
 import { buildObjectRows, type ObjectRow } from "./objectTree";
 import { EXAMPLES, decodeExampleRoute, exampleHash } from "./examples";
 import { decodeSharedProject, shareUrl } from "./share";
@@ -1167,6 +1168,7 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = mode;
     document.documentElement.style.colorScheme = mode;
+    setFavicon(mode);
     viewerRef.current?.setTheme(mode);
     if (viewRef.current) {
       viewRef.current.dispatch({

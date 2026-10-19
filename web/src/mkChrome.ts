@@ -8,6 +8,8 @@
 // A pre-paint script in the page <head> already set data-theme from a saved
 // choice or the OS. Here we keep the toggle button in sync, persist a manual
 // choice, and — only while there's no manual choice — follow later OS changes.
+import { setFavicon } from "./favicon";
+
 const THEME_KEY = "orscad-theme";
 
 function currentTheme(): "dark" | "light" {
@@ -16,6 +18,7 @@ function currentTheme(): "dark" | "light" {
 
 function applyTheme(t: "dark" | "light") {
   document.documentElement.dataset.theme = t;
+  setFavicon(t);
   const btn = document.getElementById("theme-toggle");
   const label = btn?.querySelector(".mk-theme-label");
   if (label) label.textContent = t === "dark" ? "Dark" : "Light";
