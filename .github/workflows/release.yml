@@ -1,7 +1,7 @@
 name: Release desktop app
 
-# Builds and uploads the desktop installers for an ALREADY-CREATED GitHub
-# Release. Two entry points:
+# Builds and uploads the desktop installers and the standalone CLI binaries for
+# an ALREADY-CREATED GitHub Release. Two entry points:
 #
 #   1. changesets (the normal path). Merging the "Version Packages" PR bumps the
 #      tree's version; changesets.yml then cuts the tag + Release and dispatches
@@ -315,14 +315,114 @@ jobs:
           cp "$src" "${{ matrix.stable-name }}"
           gh release upload "$TAG" "${{ matrix.stable-name }}" --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Mark the Release "Latest" once every installer is attached. changesets.yml
-  # creates it with --latest=false, so until this runs, releases/latest keeps
-  # serving the previous complete release. A Release marked Latest before its
-  # assets exist 404s every download link and the updater's latest.json.
-  # `needs` waits for the whole matrix, so one failed leg leaves the previous
-  # release as Latest. Re-running the failed jobs also re-runs this one.
+  # Prebuilt `openrscad` CLI binaries, so installing the CLI doesn't need a
+  # Rust + CMake toolchain (scripts/install.sh downloads these). Same triggers
+  # and bot guard as the desktop job; runs in parallel with it and uploads into
+  # the same Release.
+  #
+  # Asset names carry no version (openrscad-cli-<target>.tar.gz + .sha256), so
+  # releases/latest/download/<name> always resolves to the newest build — the
+  # same reason the desktop job uploads `stable-name` aliases.
+  cli:
+    if: >-
+      github.event_name != 'release' ||
+      github.event.release.author.login != 'github-actions[bot]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runner per arch, for the same reason as the desktop matrix:
+          # Manifold's CMake build only produces the runner's host arch.
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+          # 22.04 is the oldest hosted Ubuntu, so the binary gets the lowest
+          # glibc floor available (2.35).
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+    concurrency:
+      group: release-cli-${{ matrix.target }}-${{ github.event.release.tag_name || inputs.tag }}
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      ASSET: openrscad-cli-${{ matrix.target }}.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          submodules: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Same guard as the desktop job, against the crate the binary is built
+      # from, so `openrscad --version` always matches the Release it ships in.
+      - name: Assert openrscad-cli version matches the release tag
+        shell: bash
+        run: |
+          IN_REPO=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "openrscad-cli") | .version')
+          if [ "$IN_REPO" != "${TAG#v}" ]; then
+            echo "::error::openrscad-cli is $IN_REPO but the tag says $TAG."
+            exit 1
+          fi
+
+      - name: Cache cargo (cli)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-cli-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+
+      # The native Manifold C++ kernel (openrscad-geom -> manifold-csg-sys) needs cmake.
+      - name: Install cmake
+        uses: lukka/get-cmake@latest
+
+      - name: Build
+        env:
+          # Debug symbols are most of the binary's size and no use to end users.
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+        run: cargo build --release --locked -p openrscad-cli --target ${{ matrix.target }}
+
+      # Render a real model before publishing anything, so a binary that builds
+      # but can't run (missing dylib, wrong arch) never reaches the Release.
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/openrscad
+          "$bin" --version
+          "$bin" examples/cyl.scad -o "$RUNNER_TEMP/cyl.stl"
+          test -s "$RUNNER_TEMP/cyl.stl"
+
+      - name: Package and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tar -czf "$ASSET" \
+            -C target/${{ matrix.target }}/release openrscad \
+            -C "$GITHUB_WORKSPACE" LICENSE-APACHE LICENSE-MIT
+          shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Mark the Release "Latest" once every installer and CLI binary is attached.
+  # changesets.yml creates it with --latest=false, so until this runs,
+  # releases/latest keeps serving the previous complete release. A Release
+  # marked Latest before its assets exist 404s every download link, the
+  # updater's latest.json and scripts/install.sh. `needs` waits for both whole
+  # matrices, so one failed leg leaves the previous release as Latest.
+  # Re-running the failed jobs also re-runs this one.
   promote:
-    needs: release
+    needs: [release, cli]
     runs-on: ubuntu-latest
     # Two releases cut close together each promote. Serialize them so the
     # version check below and the edit can't interleave and leave the OLDER one

@@ -33,6 +33,22 @@ Need `.deb` / `.rpm` / `.msi` or an older version? <a href="https://github.com/m
 > xattr -cr /Applications/OpenRSCAD.app
 > ```
 
+### CLI
+
+Prebuilt `openrscad` binaries for macOS (Apple Silicon / Intel) and Linux
+(x86_64 / arm64) — no Rust or CMake needed:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/matthova/openrscad/main/scripts/install.sh | sh
+```
+
+This installs to `~/.local/bin` (override with `OPENRSCAD_INSTALL_DIR`; pin a
+release with `OPENRSCAD_VERSION=vX.Y.Z`). Prefer to do it by hand? Grab
+`openrscad-cli-<target>.tar.gz` and its `.sha256` from the
+<a href="https://github.com/matthova/openrscad/releases/latest" target="_blank" rel="noopener noreferrer">latest release</a>.
+Linux binaries need glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer);
+elsewhere, [build from source](#build-from-source).
+
 ---
 
 ## Run it anywhere
