@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.3
+
+### Patch Changes
+
+- [#136](https://github.com/matthova/openrscad/pull/136) [`1a45bd3`](https://github.com/matthova/openrscad/commit/1a45bd33f2886c32bda32fe6e8358a67ab03f5ef) Thanks [@kaitlynhova](https://github.com/kaitlynhova)! - web: self-host the Schibsted Grotesk and IBM Plex Mono fonts instead of loading them from Google Fonts — the site, playground, and brand page no longer contact a third party for type, and the desktop app and offline playground now keep the brand fonts without a network connection
+
 ## 0.14.2
 
 ### Patch Changes
