@@ -20,7 +20,8 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --font-sans:
-    "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    "Schibsted Grotesk Variable", "Schibsted Grotesk", ui-sans-serif, system-ui,
+    -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 

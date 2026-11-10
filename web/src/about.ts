@@ -10,6 +10,7 @@
 // plain <a> tags that work without any of this, the primary button ships
 // pointing at the releases page, and the hero copy/CTAs stand on their own if the
 // widget never hydrates.
+import "./fonts.css";
 import "./about.css";
 import { ASSETS, DL, detectOs, isAppleSilicon } from "./downloads";
 import { wireTheme, wireMenu, wireLogoContextMenu } from "./mkChrome";
