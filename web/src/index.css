@@ -44,10 +44,11 @@
   --motion-med: 200ms;
   --ease-standard: ease;
 
-  /* Type families — brand faces (loaded in playground.html) with system
-     fallbacks so text still renders if the web fonts are blocked/offline. */
+  /* Type families — self-hosted brand faces (see fonts.css) with
+     system fallbacks so text still renders if the font files fail to load. */
   --font-sans:
-    "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    "Schibsted Grotesk Variable", "Schibsted Grotesk", ui-sans-serif, system-ui,
+    -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 

@@ -10,10 +10,12 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
-      // Precache the app shell + the wasm engine so the playground works
-      // offline (libraries fetched from a CDN still need the network).
+      // Precache the app shell + the wasm engine + the self-hosted brand fonts
+      // so the playground works offline (libraries fetched from a CDN still
+      // need the network). woff2 only: every browser that runs the playground
+      // supports it, so the .woff fallbacks Fontsource also ships stay out.
       workbox: {
-        globPatterns: ["**/*.{js,css,html,wasm,svg}"],
+        globPatterns: ["**/*.{js,css,html,wasm,svg,woff2}"],
         // The OpenSCAD engine is opt-in and its wasm is ~9.6 MB; keep it out of
         // the precache so it's only fetched when a user selects that engine.
         globIgnores: ["**/openscad/**"],

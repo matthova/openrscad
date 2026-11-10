@@ -1,0 +1,14 @@
+/* Brand type, self-hosted: Schibsted Grotesk (display/UI) + IBM Plex Mono
+   (code/labels). Vite bundles the woff2 files from these Fontsource packages
+   into dist/assets, so every page serves its fonts from our own origin — no
+   request to Google Fonts, and the desktop app and offline PWA keep the brand
+   faces with no network. Each face is split into unicode-range subsets, so a
+   browser only downloads the subsets a page actually uses.
+
+   Imported by every entry point (main.tsx, about.ts, brand.ts). The family
+   names these register ("Schibsted Grotesk Variable", "IBM Plex Mono") are what
+   --font-sans / --font-mono in index.css and about.css refer to. */
+@import "@fontsource-variable/schibsted-grotesk/wght.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
